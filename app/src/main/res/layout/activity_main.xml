@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    tools:context=".MainActivity">
+
+    <Space
+        android:id="@+id/top_safe_zone"
+        android:layout_width="match_parent"
+        android:layout_height="100px"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/top_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="40px"
+        android:orientation="horizontal"
+        android:paddingHorizontal="40px"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toBottomOf="@id/top_safe_zone">
+
+        <TextView android:id="@+id/btn_flash" layout_width="0dp" layout_height="wrap_content" android:layout_weight="1" android:text="闪光灯" android:textColor="#00FFCC" android:gravity="center" android:textSize="40px" />
+        <TextView android:id="@+id/btn_grid" layout_width="0dp" layout_height="wrap_content" android:layout_weight="1" android:text="网格线" android:textColor="#00FFCC" android:gravity="center" android:textSize="40px" />
+        <TextView android:id="@+id/btn_histogram_toggle" layout_width="0dp" layout_height="wrap_content" android:layout_weight="1" android:text="直方图" android:textColor="#00FFCC" android:gravity="center" android:textSize="40px" />
+        <TextView android:id="@+id/btn_resolution" layout_width="0dp" layout_height="wrap_content" android:layout_weight="1" android:text="分辨率" android:textColor="#00FFCC" android:gravity="center" android:textSize="40px" />
+        <TextView android:id="@+id/btn_format" layout_width="0dp" layout_height="wrap_content" android:layout_weight="1" android:text="格式" android:textColor="#00FFCC" android:gravity="center" android:textSize="40px" />
+    </LinearLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/preview_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="60px"
+        app:layout_constraintDimensionRatio="3:4"
+        app:layout_constraintTop_toBottomOf="@id/top_toolbar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TextureView
+            android:id="@+id/camera_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <View
+            android:id="@+id/view_histogram"
+            android:layout_width="512px"
+            android:layout_height="192px"
+            android:layout_marginStart="20px"
+            android:layout_marginTop="20px"
+            android:background="#80000000"
+            android:visibility="gone"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <View
+            android:id="@+id/view_pip"
+            android:layout_width="300px"
+            android:layout_height="400px"
+            android:layout_marginEnd="20px"
+            android:layout_marginTop="20px"
+            android:background="#80000000"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <LinearLayout
+        android:id="@+id/lens_selector"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="80px"
+        android:orientation="horizontal"
+        android:gravity="center"
+        app:layout_constraintTop_toBottomOf="@id/preview_container">
+
+        <TextView android:id="@+id/lens_front" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="前" android:textColor="#00FFCC" android:textSize="50px" android:paddingHorizontal="40px" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="····" android:textColor="#555555" android:textSize="50px" />
+        <TextView android:id="@+id/lens_0_6x" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0.6x" android:textColor="#00FFCC" android:textSize="50px" android:paddingHorizontal="40px" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="····" android:textColor="#555555" android:textSize="50px" />
+        <TextView android:id="@+id/lens_1x" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="1x" android:textColor="#FFFFFF" android:textSize="50px" android:paddingHorizontal="40px" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="····" android:textColor="#555555" android:textSize="50px" />
+        <TextView android:id="@+id/lens_3x" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="3x" android:textColor="#00FFCC" android:textSize="50px" android:paddingHorizontal="40px" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/param_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="60px"
+        android:orientation="horizontal"
+        app:layout_constraintBottom_toTopOf="@id/bottom_action_bar">
+
+        <LinearLayout android:id="@+id/param_ev" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="曝光" android:textColor="#00FFCC" android:textSize="36px" />
+            <TextView android:id="@+id/val_ev" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10px" android:text="0.0" android:textColor="#FFFFFF" android:textSize="36px" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/param_wb" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="色温" android:textColor="#00FFCC" android:textSize="36px" />
+            <TextView android:id="@+id/val_wb" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10px" android:text="自动" android:textColor="#FFFFFF" android:textSize="36px" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/param_iso" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ISO" android:textColor="#00FFCC" android:textSize="36px" />
+            <TextView android:id="@+id/val_iso" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10px" android:text="自动" android:textColor="#FFFFFF" android:textSize="36px" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/param_shutter" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="快门" android:textColor="#00FFCC" android:textSize="36px" />
+            <TextView android:id="@+id/val_shutter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10px" android:text="自动" android:textColor="#FFFFFF" android:textSize="36px" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/param_focus" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="对焦" android:textColor="#00FFCC" android:textSize="36px" />
+            <TextView android:id="@+id/val_focus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10px" android:text="自动" android:textColor="#FFFFFF" android:textSize="36px" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/bottom_action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="300px"
+        android:layout_marginBottom="100px"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <View
+            android:id="@+id/btn_gallery"
+            android:layout_width="160px"
+            android:layout_height="160px"
+            android:layout_marginStart="80px"
+            android:background="@drawable/bg_gallery_placeholder"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <View
+            android:id="@+id/btn_shutter"
+            android:layout_width="220px"
+            android:layout_height="220px"
+            android:background="@drawable/bg_shutter_placeholder"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <View
+            android:id="@+id/btn_mode_switch"
+            android:layout_width="160px"
+            android:layout_height="160px"
+            android:layout_marginEnd="80px"
+            android:background="@drawable/bg_switch_placeholder"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
