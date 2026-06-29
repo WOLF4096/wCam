@@ -225,6 +225,8 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
+        logAllCameraStreams()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -325,6 +327,7 @@ class MainActivity : AppCompatActivity() {
         val viewW = textureView.width.toFloat()
         val viewH = textureView.height.toFloat()
         
+        // Use transform-aware mapping (simplified for typical landscape sensor)
         val sensorX = (y / viewH * sensorArraySize.width()).toInt()
         val sensorY = ((1.0f - x / viewW) * sensorArraySize.height()).toInt()
         
@@ -351,7 +354,6 @@ class MainActivity : AppCompatActivity() {
             previewRequestBuilder?.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
             previewRequestBuilder?.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
             resumePreview()
-            showToast("对焦中...")
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -417,10 +419,14 @@ class MainActivity : AppCompatActivity() {
         )
         
         // Relative coordinates for the overlay view
-        val relLeft = sensorLeft / sensorW
-        val relTop = sensorTop / sensorH
-        val relRight = (sensorLeft + currentW) / sensorW
-        val relBottom = (sensorTop + currentH) / sensorH
+        // Swap mapping for portrait display (assuming 90 deg sensor orientation)
+        val viewRelW = currentH / sensorH
+        val viewRelH = currentW / sensorW
+
+        val relLeft = (1.0f - viewRelW) / 2
+        val relTop = (1.0f - viewRelH) / 2
+        val relRight = relLeft + viewRelW
+        val relBottom = relTop + viewRelH
 
         runOnUiThread {
             viewCropOverlay.setCropRect(relLeft, relTop, relRight, relBottom)
@@ -870,7 +876,66 @@ class MainActivity : AppCompatActivity() {
             captureSession?.close()
 
             val texture = textureView.surfaceTexture ?: return
-            texture.setDefaultBufferSize(textureView.width, textureView.height)
+            
+            // Explicitly target 1920x1440 (4:3) for preview stream
+            val targetPreviewW = 1920
+            val targetPreviewH = 1440
+            
+            val characteristics = activeCameraCharacteristics
+            val map = characteristics?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val supportedSizes = map?.getOutputSizes(SurfaceTexture::class.java)
+            
+            // Check if 1920x1440 is supported, otherwise fallback to a close 4:3 size
+            val previewSize = supportedSizes?.find { it.width == targetPreviewW && it.height == targetPreviewH }
+                ?: supportedSizes?.filter { Math.abs(it.width.toFloat() / it.height - 4f/3f) < 0.01 }?.maxByOrNull { it.width }
+                ?: Size(targetPreviewW, targetPreviewH)
+
+            android.util.Log.i("CameraPreview", "Selected preview size: ${previewSize.width}x${previewSize.height}")
+
+            // Configure TextureView transformation to avoid stretching (Center Inside)
+            val viewW = textureView.width
+            val viewH = textureView.height
+            
+            if (viewW > 0 && viewH > 0) {
+                val matrix = android.graphics.Matrix()
+                val centerX = viewW / 2f
+                val centerY = viewH / 2f
+                
+                // Stream is usually landscape (W > H), e.g., 1920x1440
+                // We need to account for sensor orientation (typically 90 or 270)
+                val sensorOrientation = characteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+                val rotatedStreamW: Int
+                val rotatedStreamH: Int
+                if (sensorOrientation == 90 || sensorOrientation == 270) {
+                    rotatedStreamW = previewSize.height
+                    rotatedStreamH = previewSize.width
+                } else {
+                    rotatedStreamW = previewSize.width
+                    rotatedStreamH = previewSize.height
+                }
+
+                val streamRatio = rotatedStreamW.toFloat() / rotatedStreamH
+                val viewRatio = viewW.toFloat() / viewH
+                
+                var scaleX = 1f
+                var scaleY = 1f
+                
+                // Perfect Fill: Scale the stream to match the view exactly
+                // Since the view is now forced to 3:4 and the stream is 1920x1440 (3:4 rotated),
+                // they should match. We use Center Crop logic to ensure fill.
+                if (streamRatio > viewRatio) {
+                    // Stream is wider than view -> Scale by height
+                    scaleX = (viewH * streamRatio) / viewW
+                } else {
+                    // Stream is taller than view -> Scale by width
+                    scaleY = (viewW / streamRatio) / viewH
+                }
+                
+                matrix.setScale(scaleX, scaleY, centerX, centerY)
+                textureView.setTransform(matrix)
+            }
+
+            texture.setDefaultBufferSize(previewSize.width, previewSize.height)
             previewSurface?.release()
             previewSurface = Surface(texture)
             val surface = previewSurface ?: return
@@ -1594,6 +1659,56 @@ class MainActivity : AppCompatActivity() {
                 val top = (arrayRect.height() - cropH) / 2
                 builder.set(CaptureRequest.SCALER_CROP_REGION, android.graphics.Rect(left, top, left + cropW, top + cropH))
             }
+        }
+    }
+
+    private fun logAllCameraStreams() {
+        val manager = cameraManager()
+        try {
+            for (id in manager.cameraIdList) {
+                val chars = manager.getCameraCharacteristics(id)
+                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                    CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
+                    else -> "UNKNOWN"
+                }
+                android.util.Log.i("CameraStreamLog", "--- Camera ID: $id ($facing) ---")
+                
+                val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                if (map == null) {
+                    android.util.Log.e("CameraStreamLog", "  No StreamConfigurationMap for ID: $id")
+                    continue
+                }
+
+                val formats = map.outputFormats
+                for (format in formats) {
+                    val formatName = when (format) {
+                        ImageFormat.JPEG -> "JPEG"
+                        ImageFormat.RAW_SENSOR -> "RAW_SENSOR"
+                        ImageFormat.RAW10 -> "RAW10"
+                        ImageFormat.RAW12 -> "RAW12"
+                        ImageFormat.YUV_420_888 -> "YUV_420_888"
+                        ImageFormat.PRIVATE -> "PRIVATE/SurfaceTexture"
+                        ImageFormat.HEIC -> "HEIC"
+                        else -> "Format(0x${Integer.toHexString(format)})"
+                    }
+                    val sizes = map.getOutputSizes(format)
+                    android.util.Log.i("CameraStreamLog", "  Format: $formatName")
+                    sizes?.forEach { size ->
+                        android.util.Log.i("CameraStreamLog", "    > ${size.width} x ${size.height}")
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val physicalIds = chars.physicalCameraIds
+                    if (physicalIds.isNotEmpty()) {
+                        android.util.Log.i("CameraStreamLog", "  Physical IDs: $physicalIds")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CameraStreamLog", "Error logging camera streams", e)
         }
     }
 
