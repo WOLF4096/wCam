@@ -4,6 +4,7 @@
 #include <android/log.h>
 #include <cmath>
 #include <algorithm>
+#include <thread>
 
 #define LOG_TAG "wCam_Native"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -72,103 +73,99 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
         return val * wb[channel];
     };
 
-    if (algo == "None") {
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                float val = get_raw(x, y);
-                int v = to_srgb(val);
-                pixels[y * width + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
-            }
-        }
-    } else if (algo == "Mono") {
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                float val = get_pixel_wb(x, y);
-                int v = to_srgb(val);
-                pixels[y * width + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
-            }
-        }
-    } else {
-        for (int y = 0; y < height; ++y) {
+    int num_threads = std::max(1, (int)std::thread::hardware_concurrency());
+    std::vector<std::thread> threads;
+    int rows_per_thread = (height + num_threads - 1) / num_threads;
+
+    auto process_range = [&](int start_y, int end_y) {
+        for (int y = start_y; y < end_y && y < height; ++y) {
             int out_row = y * width;
             for (int x = 0; x < width; ++x) {
-                float r, g, b;
-                int channel = get_channel_type(x, y);
-
-                if (algo == "Fast" || algo == "DCB" || algo == "VNG4") {
-                    // Bilinear fallback
-                    if (channel == 0) { // Red position
-                        r = get_pixel_wb(x, y);
-                        g = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y) + get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.25f;
-                        b = (get_pixel_wb(x-1, y-1) + get_pixel_wb(x+1, y-1) + get_pixel_wb(x-1, y+1) + get_pixel_wb(x+1, y+1)) * 0.25f;
-                    } else if (channel == 3) { // Blue position
-                        b = get_pixel_wb(x, y);
-                        g = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y) + get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.25f;
-                        r = (get_pixel_wb(x-1, y-1) + get_pixel_wb(x+1, y-1) + get_pixel_wb(x-1, y+1) + get_pixel_wb(x+1, y+1)) * 0.25f;
-                    } else { // Green position
-                        g = get_pixel_wb(x, y);
-                        if (channel == 1) { // Gr (Red neighbor)
-                            // Need to find which neighbors are R and which are B.
-                            // This is pattern-dependent. For simplicity in bilinear,
-                            // we just take the avg of horizontal and vertical.
-                            r = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
-                            b = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
-                        } else { // Gb (Blue neighbor)
-                            b = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
-                            r = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
-                        }
-                    }
+                if (algo == "None") {
+                    float val = get_raw(x, y); // Raw intensity post-black level, no WB
+                    int v = to_srgb(val);
+                    int channel = get_channel_type(x, y);
+                    if (channel == 0) pixels[out_row + x] = 0xFF000000 | (v << 16);
+                    else if (channel == 1 || channel == 2) pixels[out_row + x] = 0xFF000000 | (v << 8);
+                    else pixels[out_row + x] = 0xFF000000 | v;
+                } else if (algo == "Mono") {
+                    float val = get_raw(x, y); // Raw intensity as luminance, no WB
+                    int v = to_srgb(val);
+                    pixels[out_row + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
                 } else {
-                    // Edge-aware (AHD-like simplified)
-                    if (channel == 0 || channel == 3) { // R or B position
-                        float center = get_pixel_wb(x, y);
-                        float g_h = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
-                        float g_v = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
-                        float dh = fabs(get_pixel_wb(x-2, y) - get_pixel_wb(x+2, y));
-                        float dv = fabs(get_pixel_wb(x, y-2) - get_pixel_wb(x, y+2));
-                        float g_val = (dh < dv) ? g_h : g_v;
+                    float r, g, b;
+                    int channel = get_channel_type(x, y);
 
-                        if (channel == 0) { r = center; g = g_val; } else { b = center; g = g_val; }
-
-                        // Estimate other channel
-                        if (channel == 0) { // R position, need B
+                    if (algo == "Fast" || algo == "DCB" || algo == "VNG4") {
+                        if (channel == 0) {
+                            r = get_pixel_wb(x, y);
+                            g = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y) + get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.25f;
                             b = (get_pixel_wb(x-1, y-1) + get_pixel_wb(x+1, y-1) + get_pixel_wb(x-1, y+1) + get_pixel_wb(x+1, y+1)) * 0.25f;
-                        } else { // B position, need R
+                        } else if (channel == 3) {
+                            b = get_pixel_wb(x, y);
+                            g = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y) + get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.25f;
                             r = (get_pixel_wb(x-1, y-1) + get_pixel_wb(x+1, y-1) + get_pixel_wb(x-1, y+1) + get_pixel_wb(x+1, y+1)) * 0.25f;
+                        } else {
+                            g = get_pixel_wb(x, y);
+                            if (channel == 1) {
+                                r = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
+                                b = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
+                            } else {
+                                b = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
+                                r = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
+                            }
                         }
-                    } else { // Green position
-                        g = get_pixel_wb(x, y);
-                        if (channel == 1) { // Gr
-                            r = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
-                            b = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
-                        } else { // Gb
-                            b = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
-                            r = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
+                    } else {
+                        if (channel == 0 || channel == 3) {
+                            float center = get_pixel_wb(x, y);
+                            float g_h = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
+                            float g_v = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
+                            float dh = fabs(get_pixel_wb(x-2, y) - get_pixel_wb(x+2, y));
+                            float dv = fabs(get_pixel_wb(x, y-2) - get_pixel_wb(x, y+2));
+                            float g_val = (dh < dv) ? g_h : g_v;
+                            if (channel == 0) { r = center; g = g_val; } else { b = center; g = g_val; }
+                            if (channel == 0) {
+                                b = (get_pixel_wb(x-1, y-1) + get_pixel_wb(x+1, y-1) + get_pixel_wb(x-1, y+1) + get_pixel_wb(x+1, y+1)) * 0.25f;
+                            } else {
+                                r = (get_pixel_wb(x-1, y-1) + get_pixel_wb(x+1, y-1) + get_pixel_wb(x-1, y+1) + get_pixel_wb(x+1, y+1)) * 0.25f;
+                            }
+                        } else {
+                            g = get_pixel_wb(x, y);
+                            if (channel == 1) {
+                                r = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
+                                b = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
+                            } else {
+                                b = (get_pixel_wb(x-1, y) + get_pixel_wb(x+1, y)) * 0.5f;
+                                r = (get_pixel_wb(x, y-1) + get_pixel_wb(x, y+1)) * 0.5f;
+                            }
                         }
                     }
+
+                    if (algo == "AMaZE" || algo == "EAHD") {
+                        r *= 1.05f; g *= 1.02f; b *= 1.05f;
+                    } else if (algo == "HPHD") {
+                        r = std::clamp(r * 1.1f - 0.05f, 0.0f, 1.0f);
+                        g = std::clamp(g * 1.1f - 0.05f, 0.0f, 1.0f);
+                        b = std::clamp(b * 1.1f - 0.05f, 0.0f, 1.0f);
+                    } else if (algo == "IGV") {
+                        g = (g + (get_pixel_wb(x-1,y)+get_pixel_wb(x+1,y)+get_pixel_wb(x,y-1)+get_pixel_wb(x,y+1))*0.25f)*0.5f;
+                    }
+
+                    float rr = 1.4f * r - 0.3f * g - 0.1f * b;
+                    float gg = -0.1f * r + 1.2f * g - 0.1f * b;
+                    float bb = -0.1f * r - 0.3f * g + 1.4f * b;
+                    pixels[out_row + x] = 0xFF000000 | (to_srgb(rr) << 16) | (to_srgb(gg) << 8) | to_srgb(bb);
                 }
-
-                // Add some artificial sharpening or contrast for distinct looks
-                if (algo == "AMaZE" || algo == "EAHD") {
-                    r *= 1.05f; g *= 1.02f; b *= 1.05f;
-                } else if (algo == "HPHD") {
-                    // Simplified "High pass" effect
-                    r = std::clamp(r * 1.1f - 0.05f, 0.0f, 1.0f);
-                    g = std::clamp(g * 1.1f - 0.05f, 0.0f, 1.0f);
-                    b = std::clamp(b * 1.1f - 0.05f, 0.0f, 1.0f);
-                } else if (algo == "IGV") {
-                    // Suppress moire - maybe slight blur
-                    g = (g + (get_pixel_wb(x-1,y)+get_pixel_wb(x+1,y)+get_pixel_wb(x,y-1)+get_pixel_wb(x,y+1))*0.25f)*0.5f;
-                }
-
-                // Color Matrix
-                float rr = 1.4f * r - 0.3f * g - 0.1f * b;
-                float gg = -0.1f * r + 1.2f * g - 0.1f * b;
-                float bb = -0.1f * r - 0.3f * g + 1.4f * b;
-
-                pixels[out_row + x] = 0xFF000000 | (to_srgb(rr) << 16) | (to_srgb(gg) << 8) | to_srgb(bb);
             }
         }
+    };
+
+    for (int i = 0; i < num_threads; ++i) {
+        threads.emplace_back(process_range, i * rows_per_thread, (i + 1) * rows_per_thread);
+    }
+
+    for (auto& t : threads) {
+        t.join();
     }
 
     env->ReleaseFloatArrayElements(wbGainsArray, wb, JNI_ABORT);
