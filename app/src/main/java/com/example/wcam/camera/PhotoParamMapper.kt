@@ -9,13 +9,42 @@ import kotlin.math.roundToInt
 
 object PhotoParamMapper {
 
+    fun formatShutterDisplay(exposureTimeNanos: Long): String {
+        if (exposureTimeNanos <= 0L) return "0"
+        val seconds = exposureTimeNanos / 1_000_000_000.0
+        return if (seconds >= 1.0) {
+            if (seconds == seconds.toLong().toDouble()) {
+                String.format(Locale.US, "%d", seconds.toLong())
+            } else {
+                String.format(Locale.US, "%.1f", seconds)
+            }
+        } else {
+            val denominator = (1.0 / seconds).roundToInt().coerceAtLeast(1)
+            if (denominator >= 1000) {
+                val kValue = denominator / 1000.0
+                if (kValue == kValue.toInt().toDouble()) {
+                    "1/${kValue.toInt()}K"
+                } else {
+                    String.format(Locale.US, "1/%.1fK", kValue)
+                }
+            } else {
+                "1/$denominator"
+            }
+        }
+    }
+
     fun parseShutterLabel(label: String): Long {
-        val normalized = label.removeSuffix("s")
+        val normalized = label // No more 's' suffix
         return if (normalized.contains("/")) {
             val parts = normalized.split("/")
             if (parts.size == 2) {
                 val numerator = parts[0].toDoubleOrNull() ?: 1.0
-                val denominator = parts[1].toDoubleOrNull() ?: 1.0
+                val denominatorStr = parts[1]
+                val denominator = if (denominatorStr.endsWith("K")) {
+                    (denominatorStr.removeSuffix("K").toDoubleOrNull() ?: 1.0) * 1000
+                } else {
+                    denominatorStr.toDoubleOrNull() ?: 1.0
+                }
                 ((numerator / denominator) * 1_000_000_000L).toLong()
             } else {
                 100_000_000L // Fallback 1/10s
@@ -82,29 +111,11 @@ object PhotoParamMapper {
         return String.format(Locale.US, "%+.1f", value)
     }
 
-    fun formatShutterDisplay(exposureTimeNanos: Long): String {
-        if (exposureTimeNanos <= 0L) return "0s"
-        val seconds = exposureTimeNanos / 1_000_000_000.0
-        return if (seconds >= 1.0) {
-            if (seconds == seconds.toLong().toDouble()) {
-                String.format(Locale.US, "%ds", seconds.toLong())
-            } else {
-                String.format(Locale.US, "%.1fs", seconds)
-            }
-        } else {
-            val denominator = (1.0 / seconds).roundToInt().coerceAtLeast(1)
-            "1/${denominator}s"
-        }
-    }
 
     fun formatFocusDistanceDisplay(focusDistance: Float): String {
-        if (focusDistance <= 0.01f) return "∞"
+        if (focusDistance < 0.011f) return "∞" // Less than ~0.011 diopters (roughly > 90m)
         val meters = 1f / focusDistance
-        return if (meters < 1.0f) {
-            String.format(Locale.US, "%dcm", (meters * 100).toInt())
-        } else {
-            String.format(Locale.US, "%.1fm", meters)
-        }
+        return if (meters >= 86f) "∞" else String.format(Locale.US, "%.2fm", meters)
     }
 
     fun gainsToKelvinLabel(gains: RggbChannelVector, supportedValues: List<Int>): String {
@@ -194,11 +205,7 @@ object PhotoParamMapper {
                     currentState
                 } else {
                     val focusDistance = if (label == "∞") 0f else {
-                        val meters = if (label.endsWith("cm")) {
-                            label.removeSuffix("cm").toFloat() / 100f
-                        } else {
-                            label.removeSuffix("m").toFloat()
-                        }
+                        val meters = label.removeSuffix("m").toFloat()
                         1f / meters
                     }
                     currentState.copy(

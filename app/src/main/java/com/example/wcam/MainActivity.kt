@@ -1994,23 +1994,32 @@ class MainActivity : AppCompatActivity() {
         val wbValues = (2000..8000 step 200).map { "${it}K" }
         
         // ISO: 50 to 19.2k (Logarithmic)
-        val isoValues = generateLogValues(50.0, 19200.0, 40).map { 
-            if (it >= 1000) String.format(java.util.Locale.US, "%.1fk", it / 1000.0)
-            else it.toInt().toString()
-        }
+        // Standard steps: 50, 64, 80, 100, 125, 160, 200, 250, 320, 400...
+        // We'll generate a dense logarithmic scale and format it.
+        val isoValues = generateLogValues(50.0, 19200.0, 60).map { 
+            val iso = Math.round(it).toInt()
+            if (iso >= 1000) {
+                val kValue = iso / 1000.0
+                if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dk", kValue.toInt())
+                else String.format(java.util.Locale.US, "%.1fk", kValue)
+            } else iso.toString()
+        }.distinct()
         
-        // S: 1/12000s to 32s (Logarithmic)
+        // S: 1/12000s to 32s (Logarithmic), no 's' suffix
         val sRangeMin = 1_000_000_000L / 12000
         val sRangeMax = 32_000_000_000L
-        val sValues = generateLogValues(sRangeMin.toDouble(), sRangeMax.toDouble(), 50).map { 
+        val sValues = generateLogValues(sRangeMin.toDouble(), sRangeMax.toDouble(), 100).map { 
             PhotoParamMapper.formatShutterDisplay(it.toLong()) 
-        }
+        }.distinct()
         
-        // AF: 15cm to Infinity (Logarithmic)
-        // Camera2 focus distance is in diopters (1/m). 15cm = 6.66 diopters. Infinity = 0 diopters.
-        val afValues = generateLogValues(0.01, 6.67, 40).reversed().map {
-            PhotoParamMapper.formatFocusDistanceDisplay(it.toFloat())
-        } + "∞"
+        // AF: Custom extended steps as requested
+        val afValues = listOf(
+            "0.10m", "0.12m", "0.14m", "0.17m", "0.21m", "0.25m", "0.30m", "0.36m",
+            "0.43m", "0.52m", "0.62m", "0.74m", "0.89m", "1.07m", "1.28m", "1.54m",
+            "1.85m", "2.22m", "2.66m", "3.19m", "3.83m", "4.60m", "5.52m", "6.62m",
+            "7.95m", "9.54m", "11.45m", "13.74m", "16.48m", "19.78m", "23.74m",
+            "28.49m", "34.18m", "41.02m", "49.22m", "59.07m", "70.88m", "85.06m", "∞"
+        )
 
         ParamController(R.id.layout_param_ev, tvValEv, evValues, evValues.indexOf("+0.0").coerceAtLeast(0), ParamKey.EV).setup()
         ParamController(R.id.layout_param_wb, tvValWb, wbValues, wbValues.indexOf("5200K").coerceAtLeast(0), ParamKey.WB).setup()
