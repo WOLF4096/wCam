@@ -152,6 +152,9 @@ class MainActivity : AppCompatActivity() {
     private var isPhotoMode = true
     private var isFormatPanelOpen = false
 
+    private var aeState = CameraMetadata.CONTROL_AE_STATE_INACTIVE
+    private var isPrecaptureCallbackActive = false
+
     private var currentZoomRatio = 1.0f
     private var maxZoomRatio = 10.0f
     private lateinit var scaleGestureDetector: ScaleGestureDetector
@@ -201,6 +204,20 @@ class MainActivity : AppCompatActivity() {
         })
 
         textureView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                if (isFormatPanelOpen) {
+                    val location = IntArray(2)
+                    panelFormatSettings.getLocationOnScreen(location)
+                    val x = event.rawX
+                    val y = event.rawY
+                    if (x < location[0] || x > location[0] + panelFormatSettings.width ||
+                        y < location[1] || y > location[1] + panelFormatSettings.height) {
+                        isFormatPanelOpen = false
+                        panelFormatSettings.visibility = View.GONE
+                        btnFormat.setTextColor(Color.WHITE)
+                    }
+                }
+            }
             scaleGestureDetector.onTouchEvent(event)
             true
         }
@@ -606,6 +623,7 @@ class MainActivity : AppCompatActivity() {
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
+            aeState = result.get(CaptureResult.CONTROL_AE_STATE) ?: CameraMetadata.CONTROL_AE_STATE_INACTIVE
             updateAutoValuesFromResult(result)
             runOnUiThread {
                 refreshParamViews()
@@ -712,7 +730,7 @@ class MainActivity : AppCompatActivity() {
         val imageReader = rawImageReader
         val surface = previewSurface
         if (camera == null || session == null || imageReader == null) {
-            showToast("RAW 拍照尚未就绪")
+            showToast("拍照尚未就绪")
             return
         }
 
@@ -724,10 +742,28 @@ class MainActivity : AppCompatActivity() {
         pendingRawImage?.close()
         pendingRawImage = null
 
+        if (currentFlashMode == FlashMode.SINGLE) {
+            runPrecaptureSequence {
+                executeStillCapture(camera, session, imageReader.surface, surface)
+            }
+        } else {
+            executeStillCapture(camera, session, imageReader.surface, surface)
+        }
+    }
+
+    private fun executeStillCapture(
+        camera: CameraDevice,
+        session: CameraCaptureSession,
+        targetSurface: Surface,
+        previewSurface: Surface?
+    ) {
         try {
             val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                addTarget(imageReader.surface)
-                surface?.let { addTarget(it) }
+                addTarget(targetSurface)
+                previewSurface?.let { addTarget(it) }
+                if (isJpgAndRaw() || (!isRawOnly() && !isPhotoMode)) { // Logic for JPG from RAW
+                     rawImageReader?.surface?.let { addTarget(it) }
+                }
                 applyPhotoParamsToRequest(this)
                 currentFlashMode.applyToRequest(this, isStillCapture = true)
                 set(
@@ -743,7 +779,24 @@ class MainActivity : AppCompatActivity() {
             session.stopRepeating()
             session.capture(captureBuilder.build(), stillCaptureCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
-            finishCaptureWithError("RAW 拍照失败")
+            finishCaptureWithError("拍照失败")
+        }
+    }
+
+    private fun runPrecaptureSequence(onReady: () -> Unit) {
+        val session = captureSession ?: return
+        val builder = previewRequestBuilder ?: return
+
+        try {
+            builder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START)
+            session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                    builder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
+                    onReady()
+                }
+            }, backgroundHandler)
+        } catch (e: CameraAccessException) {
+            onReady()
         }
     }
 
@@ -777,19 +830,46 @@ class MainActivity : AppCompatActivity() {
         }
 
         pendingRawImage = null
-        try {
-            val rotation = CaptureOrientationCalculator.captureRotation(
-                sensorOrientation = currentSensorOrientation,
-                lensFacing = currentLensFacing,
-                deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
-            )
-            rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
-            image.close()
-            isRawCaptureComplete = true
-            checkCaptureCompletion()
-        } catch (e: IOException) {
-            image.close()
-            finishCaptureWithError("RAW 保存失败")
+        backgroundHandler?.post {
+            try {
+                val rotation = CaptureOrientationCalculator.captureRotation(
+                    sensorOrientation = currentSensorOrientation,
+                    lensFacing = currentLensFacing,
+                    deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
+                )
+
+                if (isRawOnly() || isJpgAndRaw()) {
+                    rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
+                }
+                
+                if (!isRawOnly()) {
+                    // Demosaic RAW to JPG
+                    val algo = spinnerDemosaicAlgo.selectedItem?.toString() ?: "Fast"
+                    var bitmap = com.example.wcam.camera.DemosaicEngine.process(image, algo)
+
+                    if (isFollowZoom) {
+                        val cropW = (bitmap.width / currentZoomRatio).toInt()
+                        val cropH = (bitmap.height / currentZoomRatio).toInt()
+                        val left = (bitmap.width - cropW) / 2
+                        val top = (bitmap.height - cropH) / 2
+                        bitmap = Bitmap.createBitmap(bitmap, left, top, cropW, cropH)
+                    } else if (selectedResolution != null) {
+                        bitmap = Bitmap.createScaledBitmap(bitmap, selectedResolution!!.width, selectedResolution!!.height, true)
+                    }
+
+                    val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
+                    updateRecentPhotoPreview(savedUri)
+                    bitmap.recycle()
+                }
+
+                image.close()
+                isRawCaptureComplete = true
+                isJpegCaptureComplete = true
+                checkCaptureCompletion()
+            } catch (e: Exception) {
+                image.close()
+                finishCaptureWithError("照片保存失败")
+            }
         }
     }
 
@@ -887,55 +967,12 @@ class MainActivity : AppCompatActivity() {
             jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2).apply {
                 setOnImageAvailableListener({ reader ->
                     val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                    pendingJpegImage?.close()
-                    pendingJpegImage = image
-                    maybePersistPendingJpeg()
+                    image.close() // Hardware JPEGs are no longer used for persistence
                 }, backgroundHandler)
             }
         }
 
         return true
-    }
-
-    private fun maybePersistPendingJpeg() {
-        val image = pendingJpegImage ?: return
-        val captureResult = pendingCaptureResult ?: return
-        
-        pendingJpegImage = null
-        backgroundHandler?.post {
-            try {
-                val buffer = image.planes[0].buffer
-                val bytes = ByteArray(buffer.remaining())
-                buffer.get(bytes)
-                var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-
-                if (isFollowZoom) {
-                    val cropW = (bitmap.width / currentZoomRatio).toInt()
-                    val cropH = (bitmap.height / currentZoomRatio).toInt()
-                    val left = (bitmap.width - cropW) / 2
-                    val top = (bitmap.height - cropH) / 2
-                    bitmap = Bitmap.createBitmap(bitmap, left, top, cropW, cropH)
-                } else if (selectedResolution != null) {
-                    bitmap = Bitmap.createScaledBitmap(bitmap, selectedResolution!!.width, selectedResolution!!.height, true)
-                }
-
-                val rotation = CaptureOrientationCalculator.captureRotation(
-                    sensorOrientation = currentSensorOrientation,
-                    lensFacing = currentLensFacing,
-                    deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
-                )
-                
-                val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
-                updateRecentPhotoPreview(savedUri)
-                bitmap.recycle()
-                image.close()
-                isJpegCaptureComplete = true
-                checkCaptureCompletion()
-            } catch (e: Exception) {
-                image.close()
-                finishCaptureWithError("JPG 保存失败")
-            }
-        }
     }
 
     private fun checkCaptureCompletion() {
@@ -1104,12 +1141,12 @@ class MainActivity : AppCompatActivity() {
         if (isCaptureInProgress) return
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
-        val imageReader = jpegImageReader ?: return
+        val rawReader = rawImageReader ?: return
         val surface = previewSurface
 
         isCaptureInProgress = true
         isJpegCaptureComplete = false
-        isRawCaptureComplete = !isJpgAndRaw()
+        isRawCaptureComplete = false
         btnShutter.isEnabled = false
         pendingCaptureResult = null
         pendingJpegImage?.close()
@@ -1117,30 +1154,26 @@ class MainActivity : AppCompatActivity() {
         pendingRawImage?.close()
         pendingRawImage = null
 
-        try {
-            val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                addTarget(imageReader.surface)
-                if (isJpgAndRaw()) {
-                    rawImageReader?.surface?.let { addTarget(it) }
+        val captureAction = {
+            try {
+                val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                    addTarget(rawReader.surface) // Always capture RAW for demosaicing
+                    surface?.let { addTarget(it) }
+                    applyPhotoParamsToRequest(this)
+                    currentFlashMode.applyToRequest(this, isStillCapture = true)
                 }
-                surface?.let { addTarget(it) }
-                applyPhotoParamsToRequest(this)
-                currentFlashMode.applyToRequest(this, isStillCapture = true)
-            }
 
-            session.stopRepeating()
-            session.capture(captureBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                    pendingCaptureResult = result
-                    maybePersistPendingJpeg()
-                    if (isJpgAndRaw()) maybePersistPendingRaw()
-                }
-                override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
-                    finishCaptureWithError("拍照失败")
-                }
-            }, backgroundHandler)
-        } catch (e: CameraAccessException) {
-            finishCaptureWithError("拍照失败")
+                session.stopRepeating()
+                session.capture(captureBuilder.build(), stillCaptureCallback, backgroundHandler)
+            } catch (e: CameraAccessException) {
+                finishCaptureWithError("拍照失败")
+            }
+        }
+
+        if (currentFlashMode == FlashMode.SINGLE) {
+            runPrecaptureSequence { captureAction() }
+        } else {
+            captureAction()
         }
     }
 
@@ -1193,6 +1226,43 @@ class MainActivity : AppCompatActivity() {
         } else {
             characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 10.0f
         }
+        
+        runOnUiThread {
+            setupDynamicParamGestures()
+        }
+    }
+
+    private fun setupDynamicParamGestures() {
+        val caps = cameraCapabilities
+        
+        val evRange = caps.aeCompensationRange?.let { it.lower..it.upper } ?: 0..0
+        val evStep = caps.aeCompensationStep ?: 1f
+        val evValues = if (evRange.first != evRange.last) {
+             (evRange.first..evRange.last step 1).map { PhotoParamMapper.formatEvDisplay(it, evStep) }
+        } else listOf("0.0")
+
+        val wbValues = (2000..8000 step 100).map { "${it}K" }
+        
+        val isoRange = caps.isoRange?.let { it.lower..it.upper } ?: 100..6400
+        val isoValues = generateLogValues(isoRange.first.toDouble(), isoRange.last.toDouble(), 40).map { it.toInt().toString() }
+        
+        val sRange = caps.exposureTimeRange?.let { it.lower..it.upper } ?: 1000000L..1000000000L
+        val sValues = generateLogValues(sRange.first.toDouble(), sRange.last.toDouble(), 40).map { PhotoParamMapper.formatShutterDisplay(it.toLong()) }
+        
+        val afValues = (0..100).map { (it / 100.0).toString() }
+
+        ParamController(R.id.layout_param_ev, tvValEv, evValues, evValues.indexOf("0.0").coerceAtLeast(0), ParamKey.EV).setup()
+        ParamController(R.id.layout_param_wb, tvValWb, wbValues, wbValues.indexOf("5200K").coerceAtLeast(0), ParamKey.WB).setup()
+        ParamController(R.id.layout_param_iso, tvValIso, isoValues, isoValues.indexOf("100").coerceAtLeast(0), ParamKey.ISO).setup()
+        ParamController(R.id.layout_param_s, tvValS, sValues, sValues.indexOf("1/125s").coerceAtLeast(0), ParamKey.SHUTTER).setup()
+        ParamController(R.id.layout_param_af, tvValAf, afValues, 50, ParamKey.AF).setup()
+    }
+
+    private fun generateLogValues(min: Double, max: Double, steps: Int): List<Double> {
+        val logMin = Math.log(min.coerceAtLeast(1.0))
+        val logMax = Math.log(max.coerceAtLeast(1.0))
+        val delta = (logMax - logMin) / (steps - 1)
+        return (0 until steps).map { Math.exp(logMin + it * delta) }
     }
 
     private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)

@@ -11,12 +11,19 @@ object PhotoParamMapper {
 
     fun parseShutterLabel(label: String): Long {
         val normalized = label.removeSuffix("s")
-        val parts = normalized.split("/")
-        require(parts.size == 2) { "Invalid shutter label: $label" }
-        val numerator = parts[0].toDouble()
-        val denominator = parts[1].toDouble()
-        val seconds = numerator / denominator
-        return (seconds * 1_000_000_000L).toLong()
+        return if (normalized.contains("/")) {
+            val parts = normalized.split("/")
+            if (parts.size == 2) {
+                val numerator = parts[0].toDoubleOrNull() ?: 1.0
+                val denominator = parts[1].toDoubleOrNull() ?: 1.0
+                ((numerator / denominator) * 1_000_000_000L).toLong()
+            } else {
+                100_000_000L // Fallback 1/10s
+            }
+        } else {
+            val seconds = normalized.toDoubleOrNull() ?: 0.1
+            (seconds * 1_000_000_000L).toLong()
+        }
     }
 
     fun clampIso(value: Int, range: IntRange): Int = value.coerceIn(range)
@@ -71,7 +78,11 @@ object PhotoParamMapper {
         if (exposureTimeNanos <= 0L) return "0s"
         val seconds = exposureTimeNanos / 1_000_000_000.0
         return if (seconds >= 1.0) {
-            String.format(Locale.US, "%.1fs", seconds)
+            if (seconds == seconds.toLong().toDouble()) {
+                String.format(Locale.US, "%ds", seconds.toLong())
+            } else {
+                String.format(Locale.US, "%.1fs", seconds)
+            }
         } else {
             val denominator = (1.0 / seconds).roundToInt().coerceAtLeast(1)
             "1/${denominator}s"
