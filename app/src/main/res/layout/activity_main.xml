@@ -28,11 +28,11 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <TextView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="闪光灯" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="闪光灯" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
         <TextView android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="直方图" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
         <TextView android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="网格线" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="分辨率" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="格式"   android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="分辨率" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_format" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="格式"   android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
     </LinearLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -134,7 +134,7 @@
 
         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="前置" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="广角" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="主摄" android:textColor="#FFCC00" android:textSize="18sp" android:textStyle="bold" android:gravity="center" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:text="主摄" android:layout_weight="1" android:textColor="#FFCC00" android:textSize="18sp" android:textStyle="bold" android:gravity="center" />
         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="长焦" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
     </LinearLayout>
 
@@ -199,7 +199,98 @@
             app:layout_constraintBottom_toBottomOf="@id/view_pip"
             app:layout_constraintStart_toStartOf="@id/view_pip"
             app:layout_constraintEnd_toEndOf="@id/view_pip"/>
-
     </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <LinearLayout
+        android:id="@+id/panel_format_settings"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_glass_panel"
+        android:padding="16dp"
+        android:visibility="gone"
+        android:elevation="8dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="8dp"
+        app:layout_constraintTop_toBottomOf="@id/top_toolbar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="输出格式:"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+            <Spinner
+                android:id="@+id/spinner_main_format"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="16dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_jpg_advanced_options"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="16dp"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#33FFFFFF"
+                android:layout_marginBottom="12dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="去马赛克:"
+                    android:textColor="#E0E0E0"
+                    android:textSize="13sp" />
+                <Spinner
+                    android:id="@+id/spinner_demosaic_algo"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="16dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="14dp">
+                <TextView
+                    android:id="@+id/tv_jpg_quality_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="JPG 质量: 95%"
+                    android:textColor="#E0E0E0"
+                    android:textSize="13sp" />
+                <SeekBar
+                    android:id="@+id/seekbar_jpg_quality"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:max="100"
+                    android:progress="95"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
