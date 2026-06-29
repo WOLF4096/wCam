@@ -3,6 +3,7 @@ package com.example.wcam
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
@@ -14,18 +15,18 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import android.view.TextureView
+import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.os.Build
 import android.view.WindowManager
-
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,6 +37,16 @@ class MainActivity : AppCompatActivity() {
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
+
+    // 网格线相关控件
+    private lateinit var btnGridLines: TextView
+    private lateinit var viewGridLines: GridLineView
+    private var isGridVisible = false
+
+    // 新增：直方图相关控件
+    private lateinit var btnHistogram: TextView
+    private lateinit var viewHistogram: View
+    private var isHistogramVisible = false
 
     companion object {
         private const val REQUEST_CAMERA_PERMISSION = 1
@@ -58,6 +69,34 @@ class MainActivity : AppCompatActivity() {
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
 
         textureView = findViewById(R.id.camera_preview)
+
+        // 初始化顶部菜单开关控制
+        setupToolbarToggles()
+    }
+
+    // 配置工具栏的开关点击事件
+    private fun setupToolbarToggles() {
+        // 1. 网格线控制
+        btnGridLines = findViewById(R.id.btn_grid_lines)
+        viewGridLines = findViewById(R.id.view_grid_lines)
+
+        btnGridLines.setOnClickListener {
+            isGridVisible = !isGridVisible
+            viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
+            val textColor = if (isGridVisible) Color.parseColor("#FFCC00") else Color.WHITE
+            btnGridLines.setTextColor(textColor)
+        }
+
+        // 2. 新增：直方图显示控制
+        btnHistogram = findViewById(R.id.btn_histogram)
+        viewHistogram = findViewById(R.id.view_histogram)
+
+        btnHistogram.setOnClickListener {
+            isHistogramVisible = !isHistogramVisible
+            viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
+            val textColor = if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE
+            btnHistogram.setTextColor(textColor)
+        }
     }
 
     override fun onResume() {
@@ -96,7 +135,7 @@ class MainActivity : AppCompatActivity() {
 
         val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
-            // 获取默认后置摄像头（通常逻辑ID为"0"，包含了你说的ID2,3,4物理镜头）
+            // 获取默认后置摄像头
             val cameraId = manager.cameraIdList[0]
             manager.openCamera(cameraId, stateCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
@@ -125,7 +164,6 @@ class MainActivity : AppCompatActivity() {
     private fun createCameraPreviewSession() {
         try {
             val texture = textureView.surfaceTexture!!
-            // 此处暂时使用默认分辨率，后续可按你的需求修改
             texture.setDefaultBufferSize(textureView.width, textureView.height)
             val surface = Surface(texture)
 
@@ -141,7 +179,7 @@ class MainActivity : AppCompatActivity() {
                         if (cameraDevice == null) return
                         captureSession = session
                         try {
-                            // 自动对焦/自动曝光 (后续这里可以替换为你需求里的手动ISO/快门控制)
+                            // 自动对焦/自动曝光
                             previewRequestBuilder!!.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                             // 开启循环预览
                             captureSession!!.setRepeatingRequest(previewRequestBuilder!!.build(), null, backgroundHandler)
