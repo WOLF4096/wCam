@@ -1664,52 +1664,55 @@ class MainActivity : AppCompatActivity() {
 
     private fun logAllCameraStreams() {
         val manager = cameraManager()
-        try {
-            for (id in manager.cameraIdList) {
+        // 根据你代码中定义的镜头 ID: 主摄"2", 广角"4", 长焦"3", 前置"1"
+        val physicalIds = listOf("2", "4", "3", "1")
+        
+        android.util.Log.i("CameraVideoLog", "--- 开始获取四个物理摄像头视频能力 ---")
+        
+        for (id in physicalIds) {
+            try {
                 val chars = manager.getCameraCharacteristics(id)
-                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
-                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
-                    CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
-                    else -> "UNKNOWN"
-                }
-                android.util.Log.i("CameraStreamLog", "--- Camera ID: $id ($facing) ---")
-                
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 if (map == null) {
-                    android.util.Log.e("CameraStreamLog", "  No StreamConfigurationMap for ID: $id")
+                    android.util.Log.e("CameraVideoLog", "Camera ID: $id -> 无流配置表")
                     continue
                 }
 
-                val formats = map.outputFormats
-                for (format in formats) {
-                    val formatName = when (format) {
-                        ImageFormat.JPEG -> "JPEG"
-                        ImageFormat.RAW_SENSOR -> "RAW_SENSOR"
-                        ImageFormat.RAW10 -> "RAW10"
-                        ImageFormat.RAW12 -> "RAW12"
-                        ImageFormat.YUV_420_888 -> "YUV_420_888"
-                        ImageFormat.PRIVATE -> "PRIVATE/SurfaceTexture"
-                        ImageFormat.HEIC -> "HEIC"
-                        else -> "Format(0x${Integer.toHexString(format)})"
-                    }
-                    val sizes = map.getOutputSizes(format)
-                    android.util.Log.i("CameraStreamLog", "  Format: $formatName")
-                    sizes?.forEach { size ->
-                        android.util.Log.i("CameraStreamLog", "    > ${size.width} x ${size.height}")
+                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                    else -> "EXTERNAL"
+                }
+
+                android.util.Log.i("CameraVideoLog", "==== 摄像头 ID: $id ($facing) ====")
+
+                // 获取支持视频的分辨率（通常使用 SurfaceTexture 或 MediaRecorder 对应的配置）
+                val videoSizes = map.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+                videoSizes?.sortedByDescending { it.width * it.height }?.forEach { size ->
+                    // 获取该分辨率下的最小帧间隔，从而换算最大帧率
+                    val minDuration = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, size)
+                    val maxFps = if (minDuration > 0) (1_000_000_000L / minDuration).toInt() else 0
+                    
+                    android.util.Log.i("CameraVideoLog", "  > 分辨率: ${size.width} x ${size.height} | 最大帧率: ${maxFps}fps")
+                }
+
+                // 输出 AE 支持的目标帧率范围
+                val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                android.util.Log.i("CameraVideoLog", "  > 支持的 AE 帧率范围: ${fpsRanges?.contentToString()}")
+
+                // 如果支持高倍速视频 (Slow Motion)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    map.highSpeedVideoSizes?.forEach { hsSize ->
+                        val hsFps = map.getHighSpeedVideoFpsRangesFor(hsSize)
+                        android.util.Log.i("CameraVideoLog", "  > [高速] ${hsSize.width}x${hsSize.height}: ${hsFps.contentToString()}")
                     }
                 }
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    val physicalIds = chars.physicalCameraIds
-                    if (physicalIds.isNotEmpty()) {
-                        android.util.Log.i("CameraStreamLog", "  Physical IDs: $physicalIds")
-                    }
-                }
+            } catch (e: Exception) {
+                android.util.Log.e("CameraVideoLog", "无法读取摄像头 $id 的信息: ${e.message}")
             }
-        } catch (e: Exception) {
-            android.util.Log.e("CameraStreamLog", "Error logging camera streams", e)
         }
+        android.util.Log.i("CameraVideoLog", "--- 摄像头能力获取完毕 ---")
     }
 
     private fun showToast(message: String) {
