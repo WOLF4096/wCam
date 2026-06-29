@@ -10,6 +10,9 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
@@ -17,6 +20,7 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
@@ -32,8 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import android.os.Build
-import android.view.WindowManager
+import java.util.concurrent.Executor
 
 class MainActivity : AppCompatActivity() {
 
@@ -56,6 +59,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewGridLines: GridLineView
     private lateinit var viewHistogram: View
 
+    // 镜头选择控件
+    private lateinit var btnLensFront: TextView
+    private lateinit var btnLensWide: TextView
+    private lateinit var btnLensMain: TextView
+    private lateinit var btnLensTele: TextView
+
     // 格式设置面板控件组
     private lateinit var panelFormatSettings: LinearLayout
     private lateinit var spinnerMainFormat: Spinner
@@ -64,10 +73,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvJpgQualityTitle: TextView
     private lateinit var seekbarJpgQuality: SeekBar
 
-    // 核心状态控制机
+    // ★ 核心相机状态记录
+    private var currentLogicalCameraId = "0"     // 逻辑ID：0为后置组，1为前置
+    private var currentPhysicalCameraId: String? = "2" // 物理ID：2主摄，3长焦，4广角 (前置为空)
+
     private var isGridVisible = false
     private var isHistogramVisible = false
-    private var isPhotoMode = true // 默认拍照模式
+    private var isPhotoMode = true
     private var isFormatPanelOpen = false
 
     companion object {
@@ -104,6 +116,11 @@ class MainActivity : AppCompatActivity() {
         viewGridLines = findViewById(R.id.view_grid_lines)
         viewHistogram = findViewById(R.id.view_histogram)
 
+        btnLensFront = findViewById(R.id.btn_lens_front)
+        btnLensWide = findViewById(R.id.btn_lens_wide)
+        btnLensMain = findViewById(R.id.btn_lens_main)
+        btnLensTele = findViewById(R.id.btn_lens_tele)
+
         panelFormatSettings = findViewById(R.id.panel_format_settings)
         spinnerMainFormat = findViewById(R.id.spinner_main_format)
         layoutJpgAdvancedOptions = findViewById(R.id.layout_jpg_advanced_options)
@@ -113,7 +130,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        // 1. 闪光灯下拉菜单控制
+        setupLensSelector()
+
         btnFlash.setOnClickListener { view ->
             val popup = PopupMenu(this, view)
             popup.menu.add("关闭")
@@ -127,35 +145,31 @@ class MainActivity : AppCompatActivity() {
             popup.show()
         }
 
-        // 2. 直方图控制
         btnHistogram.setOnClickListener {
             isHistogramVisible = !isHistogramVisible
             viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
             btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         }
 
-        // 3. 网格线控制
         btnGridLines.setOnClickListener {
             isGridVisible = !isGridVisible
             viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
             btnGridLines.setTextColor(if (isGridVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         }
 
-        // 4. 分辨率下拉菜单控制
         btnResolution.setOnClickListener { view ->
             val popup = PopupMenu(this, view)
             popup.menu.add("4096 x 3072 px @ 12.6MP")
             popup.menu.add("3840 x 2160 px @ 8.3MP")
             popup.menu.add("1920 x 1080 px @ 2.1MP")
             popup.setOnMenuItemClickListener { item ->
-                btnResolution.text = item.title.toString().split(" ")[0] // 简写显示分辨率宽度
+                btnResolution.text = item.title.toString().split(" ")[0]
                 btnResolution.setTextColor(Color.parseColor("#FFCC00"))
                 true
             }
             popup.show()
         }
 
-        // 5. 格式高级悬浮面板控制
         btnFormat.setOnClickListener {
             isFormatPanelOpen = !isFormatPanelOpen
             if (isFormatPanelOpen) {
@@ -168,7 +182,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 6. 模式切换控制器 (拍照/录像切换)
         btnModeSwitch.setOnClickListener {
             isPhotoMode = !isPhotoMode
             if (isPhotoMode) {
@@ -178,13 +191,9 @@ class MainActivity : AppCompatActivity() {
                 btnModeSwitch.text = "照片"
                 Toast.makeText(this, "已切换至录像模式", Toast.LENGTH_SHORT).show()
             }
-            // 如果格式面板当前正处于打开状态，跟随实时刷新选项
-            if (isFormatPanelOpen) {
-                updateFormatPanelUI()
-            }
+            if (isFormatPanelOpen) updateFormatPanelUI()
         }
 
-        // 7. JPG 质量滑块联动
         seekbarJpgQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvJpgQualityTitle.text = "JPG 质量: $progress%"
@@ -194,14 +203,45 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // 动态刷新格式设置面板
+    // ★ 物理镜头切换逻辑
+    private fun setupLensSelector() {
+        val buttons = listOf(btnLensFront, btnLensWide, btnLensMain, btnLensTele)
+
+        val switchLens = { selectedBtn: TextView, logicalId: String, physicalId: String? ->
+            // UI 更新
+            buttons.forEach {
+                it.setTextColor(Color.parseColor("#B3FFFFFF"))
+                it.textSize = 14f
+                it.setTypeface(null, android.graphics.Typeface.NORMAL)
+            }
+            selectedBtn.setTextColor(Color.parseColor("#FFCC00"))
+            selectedBtn.textSize = 18f
+            selectedBtn.setTypeface(null, android.graphics.Typeface.BOLD)
+
+            // 相机逻辑流转
+            if (currentLogicalCameraId != logicalId) {
+                // 如果是跨逻辑相机切换（比如前后置切换），必须整体重启 CameraDevice
+                currentLogicalCameraId = logicalId
+                currentPhysicalCameraId = physicalId
+                closeCamera()
+                if (textureView.isAvailable) openCamera()
+            } else if (currentPhysicalCameraId != physicalId) {
+                // 如果只是同逻辑下的物理镜头切换（如广角切主摄），只需重建 Session 即可实现平滑切换
+                currentPhysicalCameraId = physicalId
+                createCameraPreviewSession()
+            }
+        }
+
+        btnLensFront.setOnClickListener { switchLens(btnLensFront, "1", null) }
+        btnLensWide.setOnClickListener { switchLens(btnLensWide, "0", "4") }
+        btnLensMain.setOnClickListener { switchLens(btnLensMain, "0", "2") }
+        btnLensTele.setOnClickListener { switchLens(btnLensTele, "0", "3") }
+    }
+
     private fun updateFormatPanelUI() {
         if (isPhotoMode) {
-            // 拍照模式下的选项组
             val photoFormats = listOf("JPG", "JPG + RAW", "RAW")
-            val mainAdapter = createWhiteTextAdapter(photoFormats)
-            spinnerMainFormat.adapter = mainAdapter
-
+            spinnerMainFormat.adapter = createWhiteTextAdapter(photoFormats)
             spinnerMainFormat.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     val selected = photoFormats[position]
@@ -215,27 +255,19 @@ class MainActivity : AppCompatActivity() {
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
         } else {
-            // 录像模式下的选项组
             val videoFormats = listOf("H264", "H265", "ProRes", "MPEG4")
-            val mainAdapter = createWhiteTextAdapter(videoFormats)
-            spinnerMainFormat.adapter = mainAdapter
-
-            // 录像不需要高级算法及质量调节
+            spinnerMainFormat.adapter = createWhiteTextAdapter(videoFormats)
             layoutJpgAdvancedOptions.visibility = View.GONE
             spinnerMainFormat.onItemSelectedListener = null
         }
     }
 
-    // 初始化去马赛克算法下拉框数据
     private fun setupDemosaicSpinner() {
         val algos = listOf("AMaZE", "RCD", "DCB", "LMMSE", "IGV", "AHD", "EAHD", "HPHD", "VNG4", "Fast", "黑白", "像素偏移", "无")
-        val algoAdapter = createWhiteTextAdapter(algos)
-        spinnerDemosaicAlgo.adapter = algoAdapter
-        // 默认定位到第一个：AMaZE 算法
+        spinnerDemosaicAlgo.adapter = createWhiteTextAdapter(algos)
         spinnerDemosaicAlgo.setSelection(0)
     }
 
-    // 辅助工具：构建在全黑背景相机下可清晰阅读的白色文字下拉适配器
     private fun createWhiteTextAdapter(data: List<String>): ArrayAdapter<String> {
         return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, data) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -244,10 +276,8 @@ class MainActivity : AppCompatActivity() {
                 (v as? TextView)?.textSize = 14f
                 return v
             }
-
             override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val v = super.getDropDownView(position, convertView, parent)
-                // 下拉弹窗展开后的行高和文字颜色设置
                 (v as? TextView)?.setTextColor(Color.BLACK)
                 return v
             }
@@ -289,8 +319,8 @@ class MainActivity : AppCompatActivity() {
 
         val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
-            val cameraId = manager.cameraIdList[0]
-            manager.openCamera(cameraId, stateCallback, backgroundHandler)
+            // ★ 修改：使用当前指定的逻辑 Camera ID 打开相机
+            manager.openCamera(currentLogicalCameraId, stateCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
@@ -312,8 +342,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ★ 修改：全面应用 SessionConfiguration 指定特定的物理镜头
     private fun createCameraPreviewSession() {
+        if (cameraDevice == null) return
+
         try {
+            // 清理旧的 Session 防止阻塞
+            captureSession?.close()
+
             val texture = textureView.surfaceTexture!!
             texture.setDefaultBufferSize(textureView.width, textureView.height)
             val surface = Surface(texture)
@@ -321,26 +357,59 @@ class MainActivity : AppCompatActivity() {
             previewRequestBuilder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             previewRequestBuilder!!.addTarget(surface)
 
-            // 🌟 修复这里的拼写错误：改为 createCaptureSession
-            cameraDevice!!.createCaptureSession(
-                listOf(surface),
-                object : CameraCaptureSession.StateCallback() {
-                    override fun onConfigured(session: CameraCaptureSession) {
-                        if (cameraDevice == null) return
-                        captureSession = session
-                        try {
-                            previewRequestBuilder!!.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                            captureSession!!.setRepeatingRequest(previewRequestBuilder!!.build(), null, backgroundHandler)
-                        } catch (e: CameraAccessException) {
-                            e.printStackTrace()
+            // API 28+ 物理摄像头路由支持
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val outputConfig = OutputConfiguration(surface)
+
+                // 如果指定了物理摄像头ID（例如 2, 3, 4），则绑定之
+                if (currentPhysicalCameraId != null) {
+                    outputConfig.setPhysicalCameraId(currentPhysicalCameraId)
+                }
+
+                // 转换 backgroundHandler 为 Executor 提供给 Session
+                val executor = Executor { command -> backgroundHandler?.post(command) }
+
+                val sessionConfig = SessionConfiguration(
+                    SessionConfiguration.SESSION_REGULAR,
+                    listOf(outputConfig),
+                    executor,
+                    object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(session: CameraCaptureSession) {
+                            if (cameraDevice == null) return
+                            captureSession = session
+                            try {
+                                previewRequestBuilder!!.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                                captureSession!!.setRepeatingRequest(previewRequestBuilder!!.build(), null, backgroundHandler)
+                            } catch (e: CameraAccessException) {
+                                e.printStackTrace()
+                            }
+                        }
+                        override fun onConfigureFailed(session: CameraCaptureSession) {
+                            Toast.makeText(this@MainActivity, "配置物理镜头预览失败", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    override fun onConfigureFailed(session: CameraCaptureSession) {
-                        Toast.makeText(this@MainActivity, "配置预览失败", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                backgroundHandler
-            )
+                )
+                cameraDevice!!.createCaptureSession(sessionConfig)
+            } else {
+                // 降级方案 (不支持物理镜头级别的手动分流)
+                cameraDevice!!.createCaptureSession(
+                    listOf(surface),
+                    object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(session: CameraCaptureSession) {
+                            if (cameraDevice == null) return
+                            captureSession = session
+                            try {
+                                previewRequestBuilder!!.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                                captureSession!!.setRepeatingRequest(previewRequestBuilder!!.build(), null, backgroundHandler)
+                            } catch (e: CameraAccessException) {
+                                e.printStackTrace()
+                            }
+                        }
+                        override fun onConfigureFailed(session: CameraCaptureSession) {}
+                    },
+                    backgroundHandler
+                )
+            }
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
