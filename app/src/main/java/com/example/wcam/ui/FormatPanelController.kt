@@ -15,7 +15,20 @@ import android.widget.TextView
 object FormatOptions {
     val PHOTO_FORMATS = listOf("JPG", "JPG + RAW", "RAW")
     val VIDEO_FORMATS = listOf("H264", "H265", "ProRes", "MPEG4")
-    val DEMOSAIC_ALGORITHMS = listOf("AMaZE", "RCD", "DCB", "LMMSE", "IGV", "AHD", "EAHD", "HPHD", "VNG4", "Fast")
+    val DEMOSAIC_ALGORITHMS = listOf(
+        "AMaZE：顶尖画质细节丰富",
+        "RCD：新默认均衡型算",
+        "DCB：经典均衡速度尚可",
+        "LMMSE：基于学习的精准重建",
+        "IGV：擅长抑制摩尔纹",
+        "AHD：经典自适应去拉链",
+        "EAHD：AHD的强化升级版",
+        "HPHD：提升边缘清晰度",
+        "VNG4：梯度检测辅助处理",
+        "Fast：速度优先快速处理",
+        "黑白：显示原始灰度",
+        "无：显示原始拜尔"
+    )
 
     fun showsJpgAdvancedOptions(format: String): Boolean {
         return format == "JPG" || format == "JPG + RAW"
@@ -97,9 +110,10 @@ class FormatPanelController(
         spinnerDemosaicAlgo.adapter = createWhiteTextAdapter(algos)
         
         val initialIdx = if (currentDemosaic.isNotEmpty()) {
-            algos.indexOf(currentDemosaic).coerceAtLeast(0)
+            val found = algos.indexOfFirst { it.startsWith(currentDemosaic) }
+            if (found != -1) found else algos.indexOfFirst { it.startsWith("Fast") }.coerceAtLeast(0)
         } else {
-            algos.indexOf("Fast").coerceAtLeast(0)
+            algos.indexOfFirst { it.startsWith("Fast") }.coerceAtLeast(0)
         }
         spinnerDemosaicAlgo.setSelection(initialIdx)
 

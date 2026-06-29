@@ -90,6 +90,8 @@ class MainActivity : AppCompatActivity() {
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
+    private var processingThread: HandlerThread? = null
+    private var processingHandler: Handler? = null
 
     private lateinit var btnFlash: TextView
     private lateinit var btnHistogram: TextView
@@ -1383,7 +1385,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         pendingRawImage = null
-        backgroundHandler?.post {
+        processingHandler?.post {
             try {
                 val rotation = CaptureOrientationCalculator.captureRotation(
                     sensorOrientation = currentSensorOrientation,
@@ -1397,7 +1399,8 @@ class MainActivity : AppCompatActivity() {
                 
                 if (!isRawOnly()) {
                     // Demosaic RAW to JPG
-                    val algo = spinnerDemosaicAlgo.selectedItem?.toString() ?: "Fast"
+                    val fullAlgo = spinnerDemosaicAlgo.selectedItem?.toString() ?: "Fast"
+                    val algo = fullAlgo.split("：")[0]
                     
                     val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
                     val wbArray = if (wbGains != null) {
@@ -1654,14 +1657,20 @@ class MainActivity : AppCompatActivity() {
     private fun startBackgroundThread() {
         backgroundThread = HandlerThread("CameraBackground").also { it.start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
+        processingThread = HandlerThread("ImageProcessing").also { it.start() }
+        processingHandler = Handler(processingThread!!.looper)
     }
 
     private fun stopBackgroundThread() {
         backgroundThread?.quitSafely()
+        processingThread?.quitSafely()
         try {
             backgroundThread?.join()
+            processingThread?.join()
             backgroundThread = null
             backgroundHandler = null
+            processingThread = null
+            processingHandler = null
         } catch (e: InterruptedException) {
             showToast("后台线程停止失败")
         }
