@@ -2,6 +2,7 @@ package com.example.wcam.ui
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
@@ -27,6 +28,10 @@ class FormatPanelController(
     private val spinnerDemosaicAlgo: Spinner,
 ) {
     fun update(isPhotoMode: Boolean) {
+        val popupBg = ColorDrawable(Color.parseColor("#CC1A1A1A"))
+        spinnerMainFormat.setPopupBackgroundDrawable(popupBg)
+        spinnerDemosaicAlgo.setPopupBackgroundDrawable(popupBg)
+
         if (isPhotoMode) {
             spinnerMainFormat.adapter = createWhiteTextAdapter(FormatOptions.PHOTO_FORMATS)
             spinnerMainFormat.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -65,7 +70,15 @@ class FormatPanelController(
 
             override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getDropDownView(position, convertView, parent)
-                (view as? TextView)?.setTextColor(Color.BLACK)
+                (view as? TextView)?.apply {
+                    setTextColor(Color.WHITE)
+                    // Reduce vertical padding by 50% to shrink spacing
+                    val newTopPadding = (paddingTop * 0.5f).toInt()
+                    val newBottomPadding = (paddingBottom * 0.5f).toInt()
+                    setPadding(paddingLeft, newTopPadding, paddingRight, newBottomPadding)
+                }
+                // Set drop down background to match panel
+                view.setBackgroundColor(Color.parseColor("#CC1A1A1A"))
                 return view
             }
         }.apply {

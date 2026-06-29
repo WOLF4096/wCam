@@ -25,8 +25,11 @@ import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
 import android.media.ImageReader
 import android.net.Uri
+import android.content.ContentValues
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.provider.MediaStore
@@ -34,14 +37,19 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Size
+import android.view.ScaleGestureDetector
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.ListPopupWindow
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -88,6 +96,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var viewGridLines: GridLineView
     private lateinit var viewHistogram: View
+    private lateinit var viewPip: View
+    private lateinit var viewPipInner: View
 
     private lateinit var btnLensFront: TextView
     private lateinit var btnLensWide: TextView
@@ -113,9 +123,17 @@ class MainActivity : AppCompatActivity() {
     private var currentPhysicalCameraId: String? = "2"
     private var activeCameraCharacteristics: CameraCharacteristics? = null
     private var rawImageReader: ImageReader? = null
+    private var jpegImageReader: ImageReader? = null
     private var pendingRawImage: Image? = null
+    private var pendingJpegImage: Image? = null
     private var pendingCaptureResult: TotalCaptureResult? = null
     private var isCaptureInProgress = false
+    private var isRawCaptureComplete = false
+    private var isJpegCaptureComplete = false
+
+    private var selectedResolution: Size? = null
+    private var isFollowZoom = true
+
     private var photoParamState: PhotoParamState = PhotoParamState.default()
     private var previewAutoIso: Int? = null
     private var previewAutoShutterNanos: Long? = null
@@ -133,6 +151,10 @@ class MainActivity : AppCompatActivity() {
     private var isHistogramVisible = false
     private var isPhotoMode = true
     private var isFormatPanelOpen = false
+
+    private var currentZoomRatio = 1.0f
+    private var maxZoomRatio = 10.0f
+    private lateinit var scaleGestureDetector: ScaleGestureDetector
 
     companion object {
         private const val REQUEST_CAMERA_PERMISSION = 1
@@ -156,6 +178,40 @@ class MainActivity : AppCompatActivity() {
         initViews()
         setupListeners()
         setupParamGestures()
+        setupZoomGesture()
+    }
+
+    private fun setupZoomGesture() {
+        scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                currentZoomRatio = (currentZoomRatio * detector.scaleFactor).coerceIn(1.0f, maxZoomRatio)
+                applyPhotoParamsToPreview()
+                updatePipUI()
+                viewPip.visibility = View.VISIBLE
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                viewPip.postDelayed({
+                    if (!scaleGestureDetector.isInProgress) {
+                        viewPip.visibility = View.GONE
+                    }
+                }, 2000)
+            }
+        })
+
+        textureView.setOnTouchListener { _, event ->
+            scaleGestureDetector.onTouchEvent(event)
+            true
+        }
+    }
+
+    private fun updatePipUI() {
+        val params = viewPipInner.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
+        val fraction = 1.0f / currentZoomRatio
+        params.width = (viewPip.width * fraction).toInt()
+        params.height = (viewPip.height * fraction).toInt()
+        viewPipInner.layoutParams = params
     }
 
     private fun initViews() {
@@ -171,6 +227,8 @@ class MainActivity : AppCompatActivity() {
 
         viewGridLines = findViewById(R.id.view_grid_lines)
         viewHistogram = findViewById(R.id.view_histogram)
+        viewPip = findViewById(R.id.view_pip)
+        viewPipInner = findViewById(R.id.view_pip_inner)
 
         btnLensFront = findViewById(R.id.btn_lens_front)
         btnLensWide = findViewById(R.id.btn_lens_wide)
@@ -204,16 +262,17 @@ class MainActivity : AppCompatActivity() {
         setupLensSelector()
 
         btnShutter.setOnClickListener {
-            captureRawPhoto()
+            if (isRawOnly()) {
+                captureRawPhoto()
+            } else {
+                captureJpgPhoto()
+            }
         }
 
         btnFlash.setOnClickListener { view ->
-            val popup = PopupMenu(this, view)
-            popup.menu.add("关闭")
-            popup.menu.add("打开")
-            popup.menu.add("常亮")
-            popup.setOnMenuItemClickListener { item ->
-                val requestedMode = when (item.title.toString()) {
+            val options = listOf("关闭", "打开", "常亮")
+            showStyledPopup(view, options) { selected ->
+                val requestedMode = when (selected) {
                     "打开" -> FlashMode.SINGLE
                     "常亮" -> FlashMode.TORCH
                     else -> FlashMode.OFF
@@ -227,9 +286,7 @@ class MainActivity : AppCompatActivity() {
                 btnFlash.text = currentFlashMode.label
                 btnFlash.setTextColor(currentFlashMode.textColor)
                 applyPhotoParamsToPreview()
-                true
             }
-            popup.show()
         }
 
         btnHistogram.setOnClickListener {
@@ -245,16 +302,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnResolution.setOnClickListener { view ->
-            val popup = PopupMenu(this, view)
-            popup.menu.add("4096 x 3072 px @ 12.6MP")
-            popup.menu.add("3840 x 2160 px @ 8.3MP")
-            popup.menu.add("1920 x 1080 px @ 2.1MP")
-            popup.setOnMenuItemClickListener { item ->
-                btnResolution.text = item.title.toString().split(" ")[0]
-                btnResolution.setTextColor(Color.parseColor("#FFCC00"))
-                true
+            if (isRawOnly()) {
+                showToast("RAW 模式下无法选择分辨率")
+                return@setOnClickListener
             }
-            popup.show()
+            showResolutionPopup(view)
         }
 
         btnFormat.setOnClickListener {
@@ -443,7 +495,7 @@ class MainActivity : AppCompatActivity() {
                 currentPhysicalCameraId = physicalId
                 refreshActiveCameraCharacteristics()
                 refreshCameraCapabilities()
-                configureRawImageReader()
+                configureImageReaders()
                 if (cameraDevice == null) {
                     openCamera()
                 } else {
@@ -519,8 +571,8 @@ class MainActivity : AppCompatActivity() {
         try {
             refreshActiveCameraCharacteristics()
             refreshCameraCapabilities()
-            if (!configureRawImageReader()) {
-                showToast("当前镜头不支持 RAW")
+            if (!configureImageReaders()) {
+                showToast("当前镜头不支持预览")
                 return
             }
             cameraManager().openCamera(currentLogicalCameraId, stateCallback, backgroundHandler)
@@ -588,7 +640,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun createCameraPreviewSession() {
         val camera = cameraDevice ?: return
-        val imageReader = rawImageReader ?: return
+        val rawReader = rawImageReader ?: return
+        val jpegReader = jpegImageReader ?: return
 
         try {
             captureSession?.close()
@@ -618,23 +671,24 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            val outputSurfaces = mutableListOf(surface, rawReader.surface, jpegReader.surface)
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val previewOutput = OutputConfiguration(surface).apply {
-                    currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
-                }
-                val rawOutput = OutputConfiguration(imageReader.surface).apply {
-                    currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
+                val outputConfigs = outputSurfaces.map { s ->
+                    OutputConfiguration(s).apply {
+                        currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
+                    }
                 }
                 val sessionConfig = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
-                    listOf(previewOutput, rawOutput),
+                    outputConfigs,
                     Executor { command -> backgroundHandler?.post(command) },
                     previewStateCallback
                 )
                 camera.createCaptureSession(sessionConfig)
             } else {
                 camera.createCaptureSession(
-                    listOf(surface, imageReader.surface),
+                    outputSurfaces,
                     previewStateCallback,
                     backgroundHandler
                 )
@@ -663,6 +717,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         isCaptureInProgress = true
+        isRawCaptureComplete = false
+        isJpegCaptureComplete = true
         btnShutter.isEnabled = false
         pendingCaptureResult = null
         pendingRawImage?.close()
@@ -717,24 +773,20 @@ class MainActivity : AppCompatActivity() {
         if (characteristics == null) {
             image.close()
             pendingRawImage = null
-            pendingCaptureResult = null
-            finishCaptureWithError("缺少 RAW 元数据")
             return
         }
 
         pendingRawImage = null
-        pendingCaptureResult = null
-
         try {
             val rotation = CaptureOrientationCalculator.captureRotation(
                 sensorOrientation = currentSensorOrientation,
                 lensFacing = currentLensFacing,
                 deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
             )
-            val savedUri = rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
-            updateRecentPhotoPreview(savedUri)
+            rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
             image.close()
-            finishCaptureSuccessfully()
+            isRawCaptureComplete = true
+            checkCaptureCompletion()
         } catch (e: IOException) {
             image.close()
             finishCaptureWithError("RAW 保存失败")
@@ -802,34 +854,124 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun configureRawImageReader(): Boolean {
+    private fun configureImageReaders(): Boolean {
         val characteristics = activeCameraCharacteristics ?: return false
         val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return false
+        
+        // RAW
         val largestRawSize = streamMap.getOutputSizes(ImageFormat.RAW_SENSOR)
+            ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
+        
+        if (largestRawSize != null) {
+            if (rawImageReader == null || rawImageReader!!.width != largestRawSize.width || rawImageReader!!.height != largestRawSize.height) {
+                rawImageReader?.close()
+                rawImageReader = ImageReader.newInstance(largestRawSize.width, largestRawSize.height, ImageFormat.RAW_SENSOR, 2).apply {
+                    setOnImageAvailableListener({ reader ->
+                        val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                        pendingRawImage?.close()
+                        pendingRawImage = image
+                        maybePersistPendingRaw()
+                    }, backgroundHandler)
+                }
+            }
+        }
+
+        // JPEG/YUV for processing
+        val largestJpgSize = streamMap.getOutputSizes(ImageFormat.JPEG)
             ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
             ?: return false
 
-        val currentReader = rawImageReader
-        if (currentReader != null && currentReader.width == largestRawSize.width && currentReader.height == largestRawSize.height) {
-            return true
+        if (jpegImageReader == null || jpegImageReader!!.width != largestJpgSize.width || jpegImageReader!!.height != largestJpgSize.height) {
+            jpegImageReader?.close()
+            jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2).apply {
+                setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    pendingJpegImage?.close()
+                    pendingJpegImage = image
+                    maybePersistPendingJpeg()
+                }, backgroundHandler)
+            }
         }
 
-        releaseRawResources()
-        rawImageReader = ImageReader.newInstance(
-            largestRawSize.width,
-            largestRawSize.height,
-            ImageFormat.RAW_SENSOR,
-            2
-        ).apply {
-            setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                pendingRawImage?.close()
-                pendingRawImage = image
-                maybePersistPendingRaw()
-            }, backgroundHandler)
-        }
         return true
+    }
+
+    private fun maybePersistPendingJpeg() {
+        val image = pendingJpegImage ?: return
+        val captureResult = pendingCaptureResult ?: return
+        
+        pendingJpegImage = null
+        backgroundHandler?.post {
+            try {
+                val buffer = image.planes[0].buffer
+                val bytes = ByteArray(buffer.remaining())
+                buffer.get(bytes)
+                var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+
+                if (isFollowZoom) {
+                    val cropW = (bitmap.width / currentZoomRatio).toInt()
+                    val cropH = (bitmap.height / currentZoomRatio).toInt()
+                    val left = (bitmap.width - cropW) / 2
+                    val top = (bitmap.height - cropH) / 2
+                    bitmap = Bitmap.createBitmap(bitmap, left, top, cropW, cropH)
+                } else if (selectedResolution != null) {
+                    bitmap = Bitmap.createScaledBitmap(bitmap, selectedResolution!!.width, selectedResolution!!.height, true)
+                }
+
+                val rotation = CaptureOrientationCalculator.captureRotation(
+                    sensorOrientation = currentSensorOrientation,
+                    lensFacing = currentLensFacing,
+                    deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
+                )
+                
+                val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
+                updateRecentPhotoPreview(savedUri)
+                bitmap.recycle()
+                image.close()
+                isJpegCaptureComplete = true
+                checkCaptureCompletion()
+            } catch (e: Exception) {
+                image.close()
+                finishCaptureWithError("JPG 保存失败")
+            }
+        }
+    }
+
+    private fun checkCaptureCompletion() {
+        if (isRawCaptureComplete && isJpegCaptureComplete) {
+            pendingCaptureResult = null
+            finishCaptureSuccessfully()
+        }
+    }
+
+    private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int): Uri {
+        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        
+        val fileName = createPhotoDisplayName(extension = "jpg")
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
+            }
+        }
+
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("Failed to create MediaStore entry")
+
+        contentResolver.openOutputStream(uri)?.use { os ->
+            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, os)
+        } ?: throw IOException("Failed to open output stream")
+        
+        if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
+        return uri
+    }
+
+    private fun createPhotoDisplayName(extension: String): String {
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        return "IMG_$timestamp.$extension"
     }
 
     private fun closeCamera() {
@@ -840,15 +982,19 @@ class MainActivity : AppCompatActivity() {
         previewSurface?.release()
         previewSurface = null
         isCaptureInProgress = false
-        releaseRawResources()
+        releaseImageResources()
     }
 
-    private fun releaseRawResources() {
+    private fun releaseImageResources() {
         pendingRawImage?.close()
         pendingRawImage = null
+        pendingJpegImage?.close()
+        pendingJpegImage = null
         pendingCaptureResult = null
         rawImageReader?.close()
         rawImageReader = null
+        jpegImageReader?.close()
+        jpegImageReader = null
     }
 
     private fun startBackgroundThread() {
@@ -878,6 +1024,123 @@ class MainActivity : AppCompatActivity() {
     private fun hasAllRequiredPermissions(): Boolean {
         return requiredPermissions().all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun isRawOnly(): Boolean {
+        val selected = spinnerMainFormat.selectedItem?.toString() ?: ""
+        return selected == "RAW"
+    }
+
+    private fun isJpgAndRaw(): Boolean {
+        val selected = spinnerMainFormat.selectedItem?.toString() ?: ""
+        return selected == "JPG + RAW"
+    }
+
+    private fun showResolutionPopup(view: View) {
+        val characteristics = activeCameraCharacteristics ?: return
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return
+        val sizes = map.getOutputSizes(ImageFormat.JPEG) ?: return
+
+        // Filter for 4:3
+        val fourThreeSizes = sizes.filter {
+            val ratio = it.width.toFloat() / it.height
+            abs(ratio - 4f/3f) < 0.05 || abs(ratio - 3f/4f) < 0.05
+        }.sortedByDescending { it.width * it.height }
+
+        val options = mutableListOf("跟随缩放 (Follow Zoom)")
+        fourThreeSizes.forEach { size ->
+            val mp = (size.width * size.height / 1000000.0)
+            options.add("4:3 | ${size.width} x ${size.height} px | ${String.format("%.1f", mp)}MP")
+        }
+
+        showStyledPopup(view, options) { selected ->
+            if (selected == "跟随缩放 (Follow Zoom)") {
+                isFollowZoom = true
+                selectedResolution = null
+                btnResolution.text = "跟随缩放"
+            } else {
+                isFollowZoom = false
+                // Find matching size by parsing the string or index
+                val index = options.indexOf(selected) - 1
+                if (index >= 0) {
+                    selectedResolution = fourThreeSizes[index]
+                    btnResolution.text = "${selectedResolution!!.width}x${selectedResolution!!.height}"
+                }
+            }
+            btnResolution.setTextColor(Color.parseColor("#FFCC00"))
+        }
+    }
+
+    private fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) {
+        val listPopupWindow = ListPopupWindow(this)
+        listPopupWindow.anchorView = anchor
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent)
+                (view as? TextView)?.apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 14f
+                    // Reduce vertical padding by 50%
+                    val newTopPadding = (paddingTop * 0.5f).toInt()
+                    val newBottomPadding = (paddingBottom * 0.5f).toInt()
+                    setPadding(paddingLeft, newTopPadding, paddingRight, newBottomPadding)
+                }
+                view.setBackgroundColor(Color.parseColor("#CC1A1A1A"))
+                return view
+            }
+        }
+        listPopupWindow.setAdapter(adapter)
+        listPopupWindow.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.parseColor("#CC1A1A1A")))
+        listPopupWindow.setOnItemClickListener { _, _, position, _ ->
+            onSelected(options[position])
+            listPopupWindow.dismiss()
+        }
+        listPopupWindow.width = 960
+        listPopupWindow.show()
+    }
+
+    private fun captureJpgPhoto() {
+        if (isCaptureInProgress) return
+        val camera = cameraDevice ?: return
+        val session = captureSession ?: return
+        val imageReader = jpegImageReader ?: return
+        val surface = previewSurface
+
+        isCaptureInProgress = true
+        isJpegCaptureComplete = false
+        isRawCaptureComplete = !isJpgAndRaw()
+        btnShutter.isEnabled = false
+        pendingCaptureResult = null
+        pendingJpegImage?.close()
+        pendingJpegImage = null
+        pendingRawImage?.close()
+        pendingRawImage = null
+
+        try {
+            val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(imageReader.surface)
+                if (isJpgAndRaw()) {
+                    rawImageReader?.surface?.let { addTarget(it) }
+                }
+                surface?.let { addTarget(it) }
+                applyPhotoParamsToRequest(this)
+                currentFlashMode.applyToRequest(this, isStillCapture = true)
+            }
+
+            session.stopRepeating()
+            session.capture(captureBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                    pendingCaptureResult = result
+                    maybePersistPendingJpeg()
+                    if (isJpgAndRaw()) maybePersistPendingRaw()
+                }
+                override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
+                    finishCaptureWithError("拍照失败")
+                }
+            }, backgroundHandler)
+        } catch (e: CameraAccessException) {
+            finishCaptureWithError("拍照失败")
         }
     }
 
@@ -925,6 +1188,11 @@ class MainActivity : AppCompatActivity() {
             supportsManualWhiteBalance = supportsManualWhiteBalance,
         )
         currentFlashSupported = hasFlash
+        maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 10.0f
+        } else {
+            characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 10.0f
+        }
     }
 
     private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)
@@ -938,6 +1206,20 @@ class MainActivity : AppCompatActivity() {
             fallbackAutoShutterNanos = previewAutoShutterNanos,
         )
         currentFlashMode.applyToRequest(builder, isStillCapture = false)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, currentZoomRatio)
+        } else {
+            val characteristics = activeCameraCharacteristics
+            val arrayRect = characteristics?.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+            if (arrayRect != null) {
+                val cropW = (arrayRect.width() / currentZoomRatio).toInt()
+                val cropH = (arrayRect.height() / currentZoomRatio).toInt()
+                val left = (arrayRect.width() - cropW) / 2
+                val top = (arrayRect.height() - cropH) / 2
+                builder.set(CaptureRequest.SCALER_CROP_REGION, android.graphics.Rect(left, top, left + cropW, top + cropH))
+            }
+        }
     }
 
     private fun showToast(message: String) {
