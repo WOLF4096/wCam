@@ -913,6 +913,7 @@ class MainActivity : AppCompatActivity() {
         val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toSet().orEmpty()
         val supportsManualSensor = capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
         val supportsManualWhiteBalance = capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)
+        val hasFlash = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
 
         cameraCapabilities = CameraCapabilities(
             aeCompensationRange = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE),
@@ -923,6 +924,7 @@ class MainActivity : AppCompatActivity() {
             supportsManualSensor = supportsManualSensor,
             supportsManualWhiteBalance = supportsManualWhiteBalance,
         )
+        currentFlashSupported = hasFlash
     }
 
     private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)
