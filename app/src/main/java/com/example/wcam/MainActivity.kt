@@ -116,6 +116,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var spinnerDemosaicAlgo: Spinner
     private lateinit var tvJpgQualityTitle: TextView
     private lateinit var seekbarJpgQuality: SeekBar
+
+    private lateinit var layoutVideoAdvancedOptions: LinearLayout
+    private lateinit var spinnerVideoFps: Spinner
+    private lateinit var spinnerVideoRes: Spinner
+    private lateinit var seekbarVideoBitrate: SeekBar
+    private lateinit var tvVideoBitrateTitle: TextView
+
     private lateinit var formatPanelController: FormatPanelController
     private lateinit var rawMediaStore: RawMediaStore
     private lateinit var preferenceManager: PreferenceManager
@@ -169,6 +176,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedVideoRatioStr: String = "16:9"
     private var selectedVideoSizeStr: String = "1920x1080"
     private var selectedVideoFps: Int = 30
+    private var selectedVideoBitrate: Float = 20.0f
     private var allVideoCapabilities = mutableMapOf<String, List<VideoSizeInfo>>()
 
     private var aeState = CameraMetadata.CONTROL_AE_STATE_INACTIVE
@@ -191,15 +199,12 @@ class MainActivity : AppCompatActivity() {
     data class VideoSizeInfo(val width: Int, val height: Int, val maxFps: Int, val isHighSpeed: Boolean = false) {
         val ratio: Float get() = width.toFloat() / height
         val ratioStr: String get() {
-            val r = width.toFloat() / height
-            return when {
-                abs(r - 1.0f) < 0.01f -> "1:1"
-                abs(r - 1.333f) < 0.01f || abs(r - 0.75f) < 0.01f -> "4:3"
-                abs(r - 1.777f) < 0.01f || abs(r - 0.5625f) < 0.01f -> "16:9"
-                abs(r - 2.0f) < 0.01f || abs(r - 0.5f) < 0.01f -> "2:1"
-                abs(r - 2.333f) < 0.01f -> "21:9"
-                else -> "${width}:${height}"
-            }
+            val common = gcd(width, height)
+            return "${width / common}:${height / common}"
+        }
+        
+        private fun gcd(a: Int, b: Int): Int {
+            return if (b == 0) a else gcd(b, a % b)
         }
     }
 
@@ -285,6 +290,7 @@ class MainActivity : AppCompatActivity() {
         selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "16:9")
         selectedVideoSizeStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RESOLUTION, "1920x1080")
         selectedVideoFps = preferenceManager.getInt(PreferenceManager.KEY_VIDEO_FPS, 30)
+        selectedVideoBitrate = preferenceManager.getFloat(PreferenceManager.KEY_VIDEO_BITRATE, 20.0f)
 
         if (isPhotoMode) {
             btnResolution.text = "4:3"
@@ -298,9 +304,13 @@ class MainActivity : AppCompatActivity() {
         if (isPhotoMode) {
             btnModeSwitch.text = "录像"
             btnResolution.text = "4:3"
+            btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
+            viewCropOverlay.visibility = View.VISIBLE
         } else {
             btnModeSwitch.text = "照片"
             btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+            btnShutter.setBackgroundResource(R.drawable.bg_shutter_video) // Assuming this drawable exists or I'll use color
+            viewCropOverlay.visibility = View.GONE
         }
         if (isFormatPanelOpen) {
             updateFormatPanelUI()
@@ -326,7 +336,13 @@ class MainActivity : AppCompatActivity() {
 
         scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                cropScale = (cropScale * detector.scaleFactor).coerceIn(0.1f, 1.0f)
+                val characteristics = activeCameraCharacteristics ?: return false
+                val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return false
+                
+                // Minimum long side 64px
+                val minScale = 64f / Math.max(sensorSize.width(), sensorSize.height())
+                
+                cropScale = (cropScale * detector.scaleFactor).coerceIn(minScale, 1.0f)
                 updateCropOverlayUI()
                 return true
             }
@@ -445,7 +461,12 @@ class MainActivity : AppCompatActivity() {
 
         // Display resolution
         val mp = (currentW * currentH) / 1_000_000.0
-        val resText = "${currentW.toInt()}x${currentH.toInt()}@${String.format("%.1f", mp)}MP"
+        val resText = if (isPhotoMode) {
+            "${currentW.toInt()}x${currentH.toInt()}@${String.format("%.1f", mp)}MP"
+        } else {
+            "$selectedVideoSizeStr@$selectedVideoFps"
+        }
+
         runOnUiThread {
             tvPhysicalRes.text = resText
             tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
@@ -505,11 +526,23 @@ class MainActivity : AppCompatActivity() {
         spinnerDemosaicAlgo = findViewById(R.id.spinner_demosaic_algo)
         tvJpgQualityTitle = findViewById(R.id.tv_jpg_quality_title)
         seekbarJpgQuality = findViewById(R.id.seekbar_jpg_quality)
+
+        layoutVideoAdvancedOptions = findViewById(R.id.layout_video_advanced_options)
+        spinnerVideoFps = findViewById(R.id.spinner_video_fps)
+        spinnerVideoRes = findViewById(R.id.spinner_video_res)
+        seekbarVideoBitrate = findViewById(R.id.seekbar_video_bitrate)
+        tvVideoBitrateTitle = findViewById(R.id.tv_video_bitrate_title)
+
         formatPanelController = FormatPanelController(
             context = this,
             spinnerMainFormat = spinnerMainFormat,
             layoutJpgAdvancedOptions = layoutJpgAdvancedOptions,
             spinnerDemosaicAlgo = spinnerDemosaicAlgo,
+            layoutVideoAdvancedOptions = layoutVideoAdvancedOptions,
+            spinnerVideoFps = spinnerVideoFps,
+            spinnerVideoRes = spinnerVideoRes,
+            seekbarVideoBitrate = seekbarVideoBitrate,
+            tvVideoBitrateTitle = tvVideoBitrateTitle
         )
         rawMediaStore = RawMediaStore(this)
         preferenceManager = PreferenceManager(this)
@@ -790,6 +823,58 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateFormatPanelUI() {
         formatPanelController.update(isPhotoMode)
+        if (!isPhotoMode) {
+            val currentId = activeMetadataCameraId()
+            val caps = allVideoCapabilities[currentId] ?: emptyList()
+            
+            // Available FPS for current ratio
+            val availableFps = caps.filter { it.ratioStr == selectedVideoRatioStr }
+                .map { it.maxFps }.distinct().sortedDescending()
+            
+            // Available resolutions for current ratio and selected FPS
+            val availableRes = caps.filter { it.ratioStr == selectedVideoRatioStr && it.maxFps == selectedVideoFps }
+                .map { "${it.width}x${it.height}" }.distinct()
+
+            formatPanelController.setVideoSettingsListener(object : FormatPanelController.VideoSettingsListener {
+                override fun onVideoParamsChanged(fps: Int, res: String, bitrateMbps: Double) {
+                    var changed = false
+                    if (selectedVideoFps != fps) {
+                        selectedVideoFps = fps
+                        preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, fps)
+                        changed = true
+                    }
+                    if (selectedVideoSizeStr != res) {
+                        selectedVideoSizeStr = res
+                        preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, res)
+                        changed = true
+                    }
+                    if (selectedVideoBitrate != bitrateMbps.toFloat()) {
+                        selectedVideoBitrate = bitrateMbps.toFloat()
+                        preferenceManager.saveFloat(PreferenceManager.KEY_VIDEO_BITRATE, selectedVideoBitrate)
+                    }
+                    
+                    if (changed) {
+                        runOnUiThread {
+                            btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+                            updateFormatPanelUI() // Refresh lists if FPS changed
+                        }
+                        closeCamera()
+                        openCamera()
+                    }
+                }
+
+                override fun getVideoCapabilities(): List<Any> = caps
+                override fun getCurrentRatio(): String = selectedVideoRatioStr
+            })
+
+            formatPanelController.setupVideoSpinners(
+                fpsList = availableFps,
+                resList = availableRes,
+                currentFps = selectedVideoFps,
+                currentRes = selectedVideoSizeStr,
+                currentBitrate = selectedVideoBitrate.toDouble()
+            )
+        }
     }
 
     override fun onResume() {

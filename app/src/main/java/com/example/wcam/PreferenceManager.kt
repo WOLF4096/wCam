@@ -17,6 +17,7 @@ class PreferenceManager(context: Context) {
         const val KEY_VIDEO_RATIO = "video_ratio"
         const val KEY_VIDEO_RESOLUTION = "video_resolution"
         const val KEY_VIDEO_FPS = "video_fps"
+        const val KEY_VIDEO_BITRATE = "video_bitrate"
     }
 
     fun clear() {
@@ -45,5 +46,13 @@ class PreferenceManager(context: Context) {
 
     fun getInt(key: String, defaultValue: Int): Int {
         return prefs.getInt(key, defaultValue)
+    }
+
+    fun saveFloat(key: String, value: Float) {
+        prefs.edit().putFloat(key, value).apply()
+    }
+
+    fun getFloat(key: String, defaultValue: Float): Float {
+        return prefs.getFloat(key, defaultValue)
     }
 }
