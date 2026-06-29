@@ -1,17 +1,15 @@
-package com.example.wcam
+﻿package com.example.wcam
 
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-import org.junit.Assert.*
-
-/**
- * Example local unit test, which will execute on the development machine (host).
- *
- * See [testing documentation](http://d.android.com/tools/testing).
- */
 class ExampleUnitTest {
     @Test
-    fun addition_isCorrect() {
-        assertEquals(4, 2 + 2)
+    fun createRawDisplayName_usesTimestampPatternAndDngExtension() {
+        val fileName = createRawDisplayName(1_719_676_800_000)
+
+        assertTrue(fileName.startsWith("wcam_"))
+        assertTrue(fileName.endsWith(".dng"))
+        assertTrue(fileName.matches(Regex("wcam_\\d{8}_\\d{6}\\.dng")))
     }
 }

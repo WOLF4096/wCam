@@ -1,22 +1,33 @@
-package com.example.wcam
+﻿package com.example.wcam
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.DngCreator
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.media.Image
+import android.media.ImageReader
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.provider.MediaStore
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
@@ -38,20 +49,34 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import java.io.File
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executor
 import kotlin.math.abs
+
+private const val RAW_MIME_TYPE = "image/x-adobe-dng"
+private const val RAW_FOLDER_NAME = "wCam"
+
+internal fun createRawDisplayName(timestampMillis: Long = System.currentTimeMillis()): String {
+    val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+    return "wcam_${formatter.format(Date(timestampMillis))}.dng"
+}
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var textureView: TextureView
+    private lateinit var btnShutter: View
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var previewRequestBuilder: CaptureRequest.Builder? = null
+    private var previewSurface: Surface? = null
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
 
-    // 基础业务控件
     private lateinit var btnFlash: TextView
     private lateinit var btnHistogram: TextView
     private lateinit var btnGridLines: TextView
@@ -62,13 +87,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewGridLines: GridLineView
     private lateinit var viewHistogram: View
 
-    // 镜头选择控件
     private lateinit var btnLensFront: TextView
     private lateinit var btnLensWide: TextView
     private lateinit var btnLensMain: TextView
     private lateinit var btnLensTele: TextView
 
-    // 格式设置面板控件组
     private lateinit var panelFormatSettings: LinearLayout
     private lateinit var spinnerMainFormat: Spinner
     private lateinit var layoutJpgAdvancedOptions: LinearLayout
@@ -76,9 +99,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvJpgQualityTitle: TextView
     private lateinit var seekbarJpgQuality: SeekBar
 
-    // 核心相机状态记录
     private var currentLogicalCameraId = "0"
     private var currentPhysicalCameraId: String? = "2"
+    private var activeCameraCharacteristics: CameraCharacteristics? = null
+    private var rawImageReader: ImageReader? = null
+    private var pendingRawImage: Image? = null
+    private var pendingCaptureResult: TotalCaptureResult? = null
+    private var isCaptureInProgress = false
 
     private var isGridVisible = false
     private var isHistogramVisible = false
@@ -100,16 +127,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
-        windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        windowInsetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
 
         initViews()
         setupListeners()
-        setupParamGestures() // ★ 初始化专业参数的滑动控制
+        setupParamGestures()
     }
 
     private fun initViews() {
         textureView = findViewById(R.id.camera_preview)
+        btnShutter = findViewById(R.id.btn_shutter)
         btnFlash = findViewById(R.id.btn_flash)
         btnHistogram = findViewById(R.id.btn_histogram)
         btnGridLines = findViewById(R.id.btn_grid_lines)
@@ -135,6 +164,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         setupLensSelector()
+
+        btnShutter.setOnClickListener {
+            captureRawPhoto()
+        }
 
         btnFlash.setOnClickListener { view ->
             val popup = PopupMenu(this, view)
@@ -190,33 +223,34 @@ class MainActivity : AppCompatActivity() {
             isPhotoMode = !isPhotoMode
             if (isPhotoMode) {
                 btnModeSwitch.text = "录像"
-                Toast.makeText(this, "已切换至拍照模式", Toast.LENGTH_SHORT).show()
+                showToast("已切换至拍照模式")
             } else {
                 btnModeSwitch.text = "照片"
-                Toast.makeText(this, "已切换至录像模式", Toast.LENGTH_SHORT).show()
+                showToast("已切换至录像模式")
             }
-            if (isFormatPanelOpen) updateFormatPanelUI()
+            if (isFormatPanelOpen) {
+                updateFormatPanelUI()
+            }
         }
 
         seekbarJpgQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvJpgQualityTitle.text = "JPG 质量: $progress%"
             }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
     }
 
-    // ★ 新增：装载底部曝光参数的滑动监听器
     private fun setupParamGestures() {
-        // 定义各个参数支持的档位数组
         val evValues = listOf("-2.0", "-1.5", "-1.0", "-0.5", "0.0", "+0.5", "+1.0", "+1.5", "+2.0")
         val wbValues = listOf("3200K", "4000K", "5200K", "6000K", "7000K")
         val isoValues = listOf("50", "100", "200", "400", "800", "1600", "3200", "6400")
         val sValues = listOf("1/1000", "1/500", "1/250", "1/125", "1/60", "1/30", "1/15", "1/8")
         val afValues = listOf("0.1", "0.3", "0.5", "0.7", "0.9", "1.0")
 
-        // 实例化控制器 (传入: 父布局ID, 文本ID, 可选数值数组, 默认索引, 自动模式下的基准代表值)
         ParamController(R.id.layout_param_ev, R.id.tv_val_ev, evValues, 4, "0.0").setup()
         ParamController(R.id.layout_param_wb, R.id.tv_val_wb, wbValues, 2, "5200K").setup()
         ParamController(R.id.layout_param_iso, R.id.tv_val_iso, isoValues, 1, "100").setup()
@@ -224,7 +258,6 @@ class MainActivity : AppCompatActivity() {
         ParamController(R.id.layout_param_af, R.id.tv_val_af, afValues, 2, "0.5").setup()
     }
 
-    // ★ 新增：通用参数滑动控制类
     inner class ParamController(
         private val layoutId: Int,
         private val textId: Int,
@@ -232,7 +265,7 @@ class MainActivity : AppCompatActivity() {
         private var currentIndex: Int,
         private val autoValue: String
     ) {
-        private var isAuto = true // 默认状态为自动
+        private var isAuto = true
         private lateinit var tvValue: TextView
 
         @SuppressLint("ClickableViewAccessibility")
@@ -241,7 +274,6 @@ class MainActivity : AppCompatActivity() {
             tvValue = findViewById(textId)
 
             var startY = 0f
-            // 滑动灵敏度，数字越小越灵敏
             val scrollSensitivity = 40f
 
             layout.setOnTouchListener { _, event ->
@@ -253,21 +285,18 @@ class MainActivity : AppCompatActivity() {
                     MotionEvent.ACTION_MOVE -> {
                         val deltaY = event.y - startY
                         if (abs(deltaY) > scrollSensitivity) {
-                            if (deltaY < 0) {
-                                // 向上滑动 -> 增大数值
-                                currentIndex = (currentIndex + 1).coerceAtMost(values.size - 1)
+                            currentIndex = if (deltaY < 0) {
+                                (currentIndex + 1).coerceAtMost(values.size - 1)
                             } else {
-                                // 向下滑动 -> 减小数值
-                                currentIndex = (currentIndex - 1).coerceAtLeast(0)
+                                (currentIndex - 1).coerceAtLeast(0)
                             }
-                            isAuto = false // 触发手动修改后退出自动模式
+                            isAuto = false
                             updateUI()
-                            startY = event.y // 刷新起点，支持不松手连续调节
+                            startY = event.y
                         }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        // 若手指抬起时几乎没有发生位移，判定为“点击”事件，用于恢复自动模式
                         if (abs(event.y - startY) < 10f) {
                             isAuto = true
                             updateUI()
@@ -277,17 +306,14 @@ class MainActivity : AppCompatActivity() {
                     else -> false
                 }
             }
-            updateUI() // 初始化显示
+            updateUI()
         }
 
         private fun updateUI() {
             if (isAuto) {
-                // 自动模式：显示底层当前估算数值，颜色为白色
-                // （真实业务中应在 CaptureResult 回调中动态替换 autoValue）
                 tvValue.text = autoValue
                 tvValue.setTextColor(Color.WHITE)
             } else {
-                // 手动模式：显示用户选择的具体档位，颜色为警告黄
                 tvValue.text = values[currentIndex]
                 tvValue.setTextColor(Color.parseColor("#FFCC00"))
             }
@@ -311,10 +337,18 @@ class MainActivity : AppCompatActivity() {
                 currentLogicalCameraId = logicalId
                 currentPhysicalCameraId = physicalId
                 closeCamera()
-                if (textureView.isAvailable) openCamera()
+                if (textureView.isAvailable) {
+                    openCamera()
+                }
             } else if (currentPhysicalCameraId != physicalId) {
                 currentPhysicalCameraId = physicalId
-                createCameraPreviewSession()
+                refreshActiveCameraCharacteristics()
+                configureRawImageReader()
+                if (cameraDevice == null) {
+                    openCamera()
+                } else {
+                    createCameraPreviewSession()
+                }
             }
         }
 
@@ -338,7 +372,8 @@ class MainActivity : AppCompatActivity() {
                         layoutJpgAdvancedOptions.visibility = View.GONE
                     }
                 }
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             }
         } else {
             val videoFormats = listOf("H264", "H265", "ProRes", "MPEG4")
@@ -349,7 +384,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupDemosaicSpinner() {
-        val algos = listOf("AMaZE", "RCD", "DCB", "LMMSE", "IGV", "AHD", "EAHD", "HPHD", "VNG4", "Fast", "黑白", "像素偏移", "无")
+        val algos = listOf("AMaZE", "RCD", "DCB", "LMMSE", "IGV", "AHD", "EAHD", "HPHD", "VNG4", "Fast")
         spinnerDemosaicAlgo.adapter = createWhiteTextAdapter(algos)
         spinnerDemosaicAlgo.setSelection(0)
     }
@@ -357,15 +392,16 @@ class MainActivity : AppCompatActivity() {
     private fun createWhiteTextAdapter(data: List<String>): ArrayAdapter<String> {
         return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, data) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val v = super.getView(position, convertView, parent)
-                (v as? TextView)?.setTextColor(Color.WHITE)
-                (v as? TextView)?.textSize = 14f
-                return v
+                val view = super.getView(position, convertView, parent)
+                (view as? TextView)?.setTextColor(Color.WHITE)
+                (view as? TextView)?.textSize = 14f
+                return view
             }
+
             override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val v = super.getDropDownView(position, convertView, parent)
-                (v as? TextView)?.setTextColor(Color.BLACK)
-                return v
+                val view = super.getDropDownView(position, convertView, parent)
+                (view as? TextView)?.setTextColor(Color.BLACK)
+                return view
             }
         }.apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -388,26 +424,50 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_CAMERA_PERMISSION) {
+            return
+        }
+
+        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            openCamera()
+        } else {
+            showToast("缺少相机或存储权限")
+        }
+    }
+
     private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
             openCamera()
         }
-        override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {}
+
+        override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+
         override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean = true
-        override fun onSurfaceTextureUpdated(texture: SurfaceTexture) {}
+
+        override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
     }
 
     private fun openCamera() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
+        if (!hasAllRequiredPermissions()) {
+            ActivityCompat.requestPermissions(this, requiredPermissions(), REQUEST_CAMERA_PERMISSION)
             return
         }
 
-        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
-            manager.openCamera(currentLogicalCameraId, stateCallback, backgroundHandler)
+            refreshActiveCameraCharacteristics()
+            if (!configureRawImageReader()) {
+                showToast("当前镜头不支持 RAW")
+                return
+            }
+            cameraManager().openCamera(currentLogicalCameraId, stateCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
-            e.printStackTrace()
+            showToast("打开相机失败")
         }
     }
 
@@ -416,82 +476,271 @@ class MainActivity : AppCompatActivity() {
             cameraDevice = camera
             createCameraPreviewSession()
         }
+
         override fun onDisconnected(camera: CameraDevice) {
             camera.close()
             cameraDevice = null
         }
+
         override fun onError(camera: CameraDevice, error: Int) {
             camera.close()
             cameraDevice = null
+            showToast("相机连接失败")
             finish()
         }
     }
 
     private fun createCameraPreviewSession() {
-        if (cameraDevice == null) return
+        val camera = cameraDevice ?: return
+        val imageReader = rawImageReader ?: return
 
         try {
             captureSession?.close()
 
-            val texture = textureView.surfaceTexture!!
+            val texture = textureView.surfaceTexture ?: return
             texture.setDefaultBufferSize(textureView.width, textureView.height)
-            val surface = Surface(texture)
+            previewSurface?.release()
+            previewSurface = Surface(texture)
+            val surface = previewSurface ?: return
 
-            previewRequestBuilder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-            previewRequestBuilder!!.addTarget(surface)
+            previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val outputConfig = OutputConfiguration(surface)
-
-                if (currentPhysicalCameraId != null) {
-                    outputConfig.setPhysicalCameraId(currentPhysicalCameraId)
+            val previewStateCallback = object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    if (cameraDevice == null) {
+                        return
+                    }
+                    captureSession = session
+                    resumePreview()
                 }
 
-                val executor = Executor { command -> backgroundHandler?.post(command) }
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    showToast("预览会话配置失败")
+                }
+            }
 
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val previewOutput = OutputConfiguration(surface).apply {
+                    currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
+                }
+                val rawOutput = OutputConfiguration(imageReader.surface).apply {
+                    currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
+                }
                 val sessionConfig = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
-                    listOf(outputConfig),
-                    executor,
-                    object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(session: CameraCaptureSession) {
-                            if (cameraDevice == null) return
-                            captureSession = session
-                            try {
-                                previewRequestBuilder!!.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                                captureSession!!.setRepeatingRequest(previewRequestBuilder!!.build(), null, backgroundHandler)
-                            } catch (e: CameraAccessException) {
-                                e.printStackTrace()
-                            }
-                        }
-                        override fun onConfigureFailed(session: CameraCaptureSession) {
-                            Toast.makeText(this@MainActivity, "配置物理镜头预览失败", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    listOf(previewOutput, rawOutput),
+                    Executor { command -> backgroundHandler?.post(command) },
+                    previewStateCallback
                 )
-                cameraDevice!!.createCaptureSession(sessionConfig)
+                camera.createCaptureSession(sessionConfig)
             } else {
-                cameraDevice!!.createCaptureSession(
-                    listOf(surface),
-                    object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(session: CameraCaptureSession) {
-                            if (cameraDevice == null) return
-                            captureSession = session
-                            try {
-                                previewRequestBuilder!!.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                                captureSession!!.setRepeatingRequest(previewRequestBuilder!!.build(), null, backgroundHandler)
-                            } catch (e: CameraAccessException) {
-                                e.printStackTrace()
-                            }
-                        }
-                        override fun onConfigureFailed(session: CameraCaptureSession) {}
-                    },
+                camera.createCaptureSession(
+                    listOf(surface, imageReader.surface),
+                    previewStateCallback,
                     backgroundHandler
                 )
             }
         } catch (e: CameraAccessException) {
-            e.printStackTrace()
+            showToast("创建预览失败")
         }
+    }
+
+    private fun captureRawPhoto() {
+        if (!isPhotoMode) {
+            showToast("请先切换到拍照模式")
+            return
+        }
+        if (isCaptureInProgress) {
+            return
+        }
+
+        val camera = cameraDevice
+        val session = captureSession
+        val imageReader = rawImageReader
+        val surface = previewSurface
+        if (camera == null || session == null || imageReader == null) {
+            showToast("RAW 拍照尚未就绪")
+            return
+        }
+
+        isCaptureInProgress = true
+        btnShutter.isEnabled = false
+        pendingCaptureResult = null
+        pendingRawImage?.close()
+        pendingRawImage = null
+
+        try {
+            val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(imageReader.surface)
+                surface?.let { addTarget(it) }
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            }
+
+            session.stopRepeating()
+            session.capture(captureBuilder.build(), stillCaptureCallback, backgroundHandler)
+        } catch (e: CameraAccessException) {
+            finishCaptureWithError("RAW 拍照失败")
+        }
+    }
+
+    private val stillCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult
+        ) {
+            pendingCaptureResult = result
+            maybePersistPendingRaw()
+        }
+
+        override fun onCaptureFailed(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            failure: CaptureFailure
+        ) {
+            finishCaptureWithError("RAW 拍照失败")
+        }
+    }
+
+    private fun maybePersistPendingRaw() {
+        val image = pendingRawImage ?: return
+        val captureResult = pendingCaptureResult ?: return
+        val characteristics = activeCameraCharacteristics
+        if (characteristics == null) {
+            image.close()
+            pendingRawImage = null
+            pendingCaptureResult = null
+            finishCaptureWithError("缺少 RAW 元数据")
+            return
+        }
+
+        pendingRawImage = null
+        pendingCaptureResult = null
+
+        try {
+            saveRawImageToGallery(image, characteristics, captureResult)
+            image.close()
+            finishCaptureSuccessfully()
+        } catch (e: IOException) {
+            image.close()
+            finishCaptureWithError("RAW 保存失败")
+        }
+    }
+
+    private fun saveRawImageToGallery(
+        image: Image,
+        characteristics: CameraCharacteristics,
+        captureResult: TotalCaptureResult
+    ) {
+        val resolver = contentResolver
+        val fileName = createRawDisplayName()
+        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        var outputPathForScan: String? = null
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, RAW_MIME_TYPE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$RAW_FOLDER_NAME")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            } else {
+                val folder = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    RAW_FOLDER_NAME
+                )
+                if (!folder.exists() && !folder.mkdirs()) {
+                    throw IOException("Unable to create RAW output directory")
+                }
+                val outputFile = File(folder, fileName)
+                outputPathForScan = outputFile.absolutePath
+                put(MediaStore.Images.Media.DATA, outputFile.absolutePath)
+            }
+        }
+
+        val uri = resolver.insert(collection, contentValues)
+            ?: throw IOException("Unable to create MediaStore record")
+
+        val dngCreator = DngCreator(characteristics, captureResult)
+        try {
+            resolver.openOutputStream(uri)?.use { outputStream ->
+                dngCreator.writeImage(outputStream, image)
+            } ?: throw IOException("Unable to open RAW output stream")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val publishValues = ContentValues().apply {
+                    put(MediaStore.Images.Media.IS_PENDING, 0)
+                }
+                resolver.update(uri, publishValues, null, null)
+            } else if (outputPathForScan != null) {
+                MediaScannerConnection.scanFile(this, arrayOf(outputPathForScan), arrayOf(RAW_MIME_TYPE), null)
+            }
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw IOException("Unable to save RAW image", e)
+        } finally {
+            dngCreator.close()
+        }
+    }
+
+    private fun finishCaptureSuccessfully() {
+        showToast("RAW 已保存到相册")
+        endCaptureAndResumePreview()
+    }
+
+    private fun finishCaptureWithError(message: String) {
+        showToast(message)
+        endCaptureAndResumePreview()
+    }
+
+    private fun endCaptureAndResumePreview() {
+        isCaptureInProgress = false
+        runOnUiThread {
+            btnShutter.isEnabled = true
+        }
+        resumePreview()
+    }
+
+    private fun resumePreview() {
+        val session = captureSession ?: return
+        val previewRequest = previewRequestBuilder?.build() ?: return
+        try {
+            session.setRepeatingRequest(previewRequest, null, backgroundHandler)
+        } catch (e: CameraAccessException) {
+            showToast("恢复预览失败")
+        }
+    }
+
+    private fun configureRawImageReader(): Boolean {
+        val characteristics = activeCameraCharacteristics ?: return false
+        val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?: return false
+        val largestRawSize = streamMap.getOutputSizes(ImageFormat.RAW_SENSOR)
+            ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
+            ?: return false
+
+        val currentReader = rawImageReader
+        if (currentReader != null && currentReader.width == largestRawSize.width && currentReader.height == largestRawSize.height) {
+            return true
+        }
+
+        releaseRawResources()
+        rawImageReader = ImageReader.newInstance(
+            largestRawSize.width,
+            largestRawSize.height,
+            ImageFormat.RAW_SENSOR,
+            2
+        ).apply {
+            setOnImageAvailableListener({ reader ->
+                val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                pendingRawImage?.close()
+                pendingRawImage = image
+                maybePersistPendingRaw()
+            }, backgroundHandler)
+        }
+        return true
     }
 
     private fun closeCamera() {
@@ -499,6 +748,18 @@ class MainActivity : AppCompatActivity() {
         captureSession = null
         cameraDevice?.close()
         cameraDevice = null
+        previewSurface?.release()
+        previewSurface = null
+        isCaptureInProgress = false
+        releaseRawResources()
+    }
+
+    private fun releaseRawResources() {
+        pendingRawImage?.close()
+        pendingRawImage = null
+        pendingCaptureResult = null
+        rawImageReader?.close()
+        rawImageReader = null
     }
 
     private fun startBackgroundThread() {
@@ -513,7 +774,47 @@ class MainActivity : AppCompatActivity() {
             backgroundThread = null
             backgroundHandler = null
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            showToast("后台线程停止失败")
+        }
+    }
+
+    private fun requiredPermissions(): Array<String> {
+        return if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            arrayOf(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun hasAllRequiredPermissions(): Boolean {
+        return requiredPermissions().all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun activeMetadataCameraId(): String {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            currentPhysicalCameraId ?: currentLogicalCameraId
+        } else {
+            currentLogicalCameraId
+        }
+    }
+
+    private fun cameraManager(): CameraManager {
+        return getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    }
+
+    private fun refreshActiveCameraCharacteristics() {
+        activeCameraCharacteristics = try {
+            cameraManager().getCameraCharacteristics(activeMetadataCameraId())
+        } catch (e: CameraAccessException) {
+            null
+        }
+    }
+
+    private fun showToast(message: String) {
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         }
     }
 }
