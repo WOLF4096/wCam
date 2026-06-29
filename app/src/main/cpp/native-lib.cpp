@@ -93,3 +93,42 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
 
     env->ReleaseIntArrayElements(outputPixels, pixels, 0);
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_wcam_MainActivity_nativeCalculateHistogram(
+        JNIEnv* env,
+        jobject /* this */,
+        jintArray pixelsArray,
+        jint width,
+        jint height,
+        jintArray rHistArray,
+        jintArray gHistArray,
+        jintArray bHistArray) {
+
+    jint* pixels = env->GetIntArrayElements(pixelsArray, NULL);
+    jint* rHist = env->GetIntArrayElements(rHistArray, NULL);
+    jint* gHist = env->GetIntArrayElements(gHistArray, NULL);
+    jint* bHist = env->GetIntArrayElements(bHistArray, NULL);
+
+    for (int i = 0; i < 256; ++i) {
+        rHist[i] = 0;
+        gHist[i] = 0;
+        bHist[i] = 0;
+    }
+
+    for (int i = 0; i < width * height; ++i) {
+        int color = pixels[i];
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+
+        rHist[r]++;
+        gHist[g]++;
+        bHist[b]++;
+    }
+
+    env->ReleaseIntArrayElements(pixelsArray, pixels, JNI_ABORT);
+    env->ReleaseIntArrayElements(rHistArray, rHist, 0);
+    env->ReleaseIntArrayElements(gHistArray, gHist, 0);
+    env->ReleaseIntArrayElements(bHistArray, bHist, 0);
+}

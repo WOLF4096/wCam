@@ -149,17 +149,13 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <TextView
+        <com.example.wcam.ui.HistogramView
             android:id="@+id/view_histogram"
             android:layout_width="160dp"
-            android:layout_height="64dp"
+            android:layout_height="80dp"
             android:layout_marginStart="12dp"
             android:layout_marginTop="12dp"
             android:background="@drawable/bg_glass_panel"
-            android:text="@string/histogram_placeholder"
-            android:textColor="#B3FFFFFF"
-            android:textSize="14sp"
-            android:gravity="center"
             android:visibility="gone"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />

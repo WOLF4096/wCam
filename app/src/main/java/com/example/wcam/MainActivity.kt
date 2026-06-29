@@ -76,6 +76,8 @@ import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
 import com.example.wcam.camera.RawMediaStore
 import com.example.wcam.ui.FormatPanelController
+import com.example.wcam.ui.HistogramView
+import java.nio.ByteBuffer
 
 class MainActivity : AppCompatActivity() {
 
@@ -98,7 +100,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnGallery: TextView
 
     private lateinit var viewGridLines: GridLineView
-    private lateinit var viewHistogram: View
+    private lateinit var viewHistogram: HistogramView
     private lateinit var viewPip: View
     private lateinit var viewPipInner: View
     private lateinit var viewFocusRing: View
@@ -129,6 +131,7 @@ class MainActivity : AppCompatActivity() {
     private var activeCameraCharacteristics: CameraCharacteristics? = null
     private var rawImageReader: ImageReader? = null
     private var jpegImageReader: ImageReader? = null
+    private var histogramImageReader: ImageReader? = null
     private var pendingRawImage: Image? = null
     private var pendingJpegImage: Image? = null
     private var pendingCaptureResult: TotalCaptureResult? = null
@@ -153,6 +156,7 @@ class MainActivity : AppCompatActivity() {
     private var currentLensFacing: Int? = null
 
     private var isGridVisible = false
+    @Volatile
     private var isHistogramVisible = false
     private var isPhotoMode = true
     private var isFormatPanelOpen = false
@@ -165,8 +169,50 @@ class MainActivity : AppCompatActivity() {
     private var maxZoomRatio = 10.0f
     private lateinit var scaleGestureDetector: ScaleGestureDetector
 
+    private external fun nativeCalculateHistogram(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        rHistogram: IntArray,
+        gHistogram: IntArray,
+        bHistogram: IntArray
+    )
+
+    private val histogramTask = object : Runnable {
+        override fun run() {
+            if (isHistogramVisible && textureView.isAvailable) {
+                try {
+                    // Sample a small version of the preview for performance
+                    val bitmap = textureView.getBitmap(160, 120)
+                    if (bitmap != null) {
+                        val pixels = IntArray(160 * 120)
+                        bitmap.getPixels(pixels, 0, 160, 0, 0, 160, 120)
+                        
+                        val rHist = IntArray(256)
+                        val gHist = IntArray(256)
+                        val bHist = IntArray(256)
+                        
+                        nativeCalculateHistogram(pixels, 160, 120, rHist, gHist, bHist)
+                        
+                        runOnUiThread { 
+                            viewHistogram.updateData(rHist, gHist, bHist) 
+                        }
+                        bitmap.recycle()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("HistogramDebug", "Failed to sample preview", e)
+                }
+            }
+            backgroundHandler?.postDelayed(this, 100)
+        }
+    }
+
     companion object {
         private const val REQUEST_CAMERA_PERMISSION = 1
+        
+        init {
+            System.loadLibrary("wcam")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -198,7 +244,12 @@ class MainActivity : AppCompatActivity() {
         currentPhysicalCameraId = lastPhysical
         
         isGridVisible = preferenceManager.getBoolean(PreferenceManager.KEY_GRID_VISIBLE, false)
+        viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
+        btnGridLines.setTextColor(if (isGridVisible) Color.parseColor("#FFCC00") else Color.WHITE)
+
         isHistogramVisible = preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false)
+        viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
+        btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         
         val quality = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
         seekbarJpgQuality.progress = quality
@@ -413,6 +464,7 @@ class MainActivity : AppCompatActivity() {
 
         btnHistogram.setOnClickListener {
             isHistogramVisible = !isHistogramVisible
+            android.util.Log.i("HistogramDebug", "Button clicked, isVisible: $isHistogramVisible")
             viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
             btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
             preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isHistogramVisible)
@@ -646,6 +698,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
+        backgroundHandler?.post(histogramTask)
         deviceOrientationTracker.enable()
         rawMediaStore.findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
         if (textureView.isAvailable) {
@@ -1058,15 +1111,14 @@ class MainActivity : AppCompatActivity() {
         if (largestRawSize != null) {
             if (rawImageReader == null || rawImageReader!!.width != largestRawSize.width || rawImageReader!!.height != largestRawSize.height) {
                 rawImageReader?.close()
-                rawImageReader = ImageReader.newInstance(largestRawSize.width, largestRawSize.height, ImageFormat.RAW_SENSOR, 2).apply {
-                    setOnImageAvailableListener({ reader ->
-                        val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                        pendingRawImage?.close()
-                        pendingRawImage = image
-                        maybePersistPendingRaw()
-                    }, backgroundHandler)
-                }
+                rawImageReader = ImageReader.newInstance(largestRawSize.width, largestRawSize.height, ImageFormat.RAW_SENSOR, 2)
             }
+            rawImageReader?.setOnImageAvailableListener({ reader ->
+                val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                pendingRawImage?.close()
+                pendingRawImage = image
+                maybePersistPendingRaw()
+            }, backgroundHandler)
         }
 
         // JPEG/YUV for processing
@@ -1076,13 +1128,12 @@ class MainActivity : AppCompatActivity() {
 
         if (jpegImageReader == null || jpegImageReader!!.width != largestJpgSize.width || jpegImageReader!!.height != largestJpgSize.height) {
             jpegImageReader?.close()
-            jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2).apply {
-                setOnImageAvailableListener({ reader ->
-                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                    image.close() // Hardware JPEGs are no longer used for persistence
-                }, backgroundHandler)
-            }
+            jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2)
         }
+        jpegImageReader?.setOnImageAvailableListener({ reader ->
+            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+            image.close() // Hardware JPEGs are no longer used for persistence
+        }, backgroundHandler)
 
         return true
     }
@@ -1190,6 +1241,8 @@ class MainActivity : AppCompatActivity() {
         rawImageReader = null
         jpegImageReader?.close()
         jpegImageReader = null
+        histogramImageReader?.close()
+        histogramImageReader = null
     }
 
     private fun startBackgroundThread() {
