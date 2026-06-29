@@ -166,6 +166,11 @@ class MainActivity : AppCompatActivity() {
     private var isPhotoMode = true
     private var isFormatPanelOpen = false
 
+    private var selectedVideoRatioStr: String = "16:9"
+    private var selectedVideoSizeStr: String = "1920x1080"
+    private var selectedVideoFps: Int = 30
+    private var allVideoCapabilities = mutableMapOf<String, List<VideoSizeInfo>>()
+
     private var aeState = CameraMetadata.CONTROL_AE_STATE_INACTIVE
     private var isPrecaptureCallbackActive = false
     private var isAeAfLocked = false
@@ -182,6 +187,21 @@ class MainActivity : AppCompatActivity() {
         gHistogram: IntArray,
         bHistogram: IntArray
     )
+
+    data class VideoSizeInfo(val width: Int, val height: Int, val maxFps: Int, val isHighSpeed: Boolean = false) {
+        val ratio: Float get() = width.toFloat() / height
+        val ratioStr: String get() {
+            val r = width.toFloat() / height
+            return when {
+                abs(r - 1.0f) < 0.01f -> "1:1"
+                abs(r - 1.333f) < 0.01f || abs(r - 0.75f) < 0.01f -> "4:3"
+                abs(r - 1.777f) < 0.01f || abs(r - 0.5625f) < 0.01f -> "16:9"
+                abs(r - 2.0f) < 0.01f || abs(r - 0.5f) < 0.01f -> "2:1"
+                abs(r - 2.333f) < 0.01f -> "21:9"
+                else -> "${width}:${height}"
+            }
+        }
+    }
 
     private val histogramTask = object : Runnable {
         override fun run() {
@@ -259,8 +279,32 @@ class MainActivity : AppCompatActivity() {
         tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
         btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         
-        btnResolution.text = "4:3"
+        isPhotoMode = preferenceManager.getBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, true)
+        updateModeUI()
+
+        selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "16:9")
+        selectedVideoSizeStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RESOLUTION, "1920x1080")
+        selectedVideoFps = preferenceManager.getInt(PreferenceManager.KEY_VIDEO_FPS, 30)
+
+        if (isPhotoMode) {
+            btnResolution.text = "4:3"
+        } else {
+            btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+        }
         updateCropOverlayUI()
+    }
+
+    private fun updateModeUI() {
+        if (isPhotoMode) {
+            btnModeSwitch.text = "录像"
+            btnResolution.text = "4:3"
+        } else {
+            btnModeSwitch.text = "照片"
+            btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+        }
+        if (isFormatPanelOpen) {
+            updateFormatPanelUI()
+        }
     }
 
     private fun saveCurrentLensSettings() {
@@ -528,7 +572,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnResolution.setOnClickListener { view ->
-            showRatioPopup(view)
+            if (isPhotoMode) {
+                showRatioPopup(view)
+            } else {
+                showVideoParamsPopup(view)
+            }
         }
 
         btnFormat.setOnClickListener {
@@ -545,16 +593,19 @@ class MainActivity : AppCompatActivity() {
 
         btnModeSwitch.setOnClickListener {
             isPhotoMode = !isPhotoMode
-            if (isPhotoMode) {
-                btnModeSwitch.text = "录像"
-                showToast("已切换至拍照模式")
-            } else {
-                btnModeSwitch.text = "照片"
-                showToast("已切换至录像模式")
-            }
-            if (isFormatPanelOpen) {
-                updateFormatPanelUI()
-            }
+            updateModeUI()
+            preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, isPhotoMode)
+            closeCamera()
+            openCamera()
+        }
+
+        btnModeSwitch.setOnLongClickListener {
+            preferenceManager.clear()
+            showToast("设置已重置")
+            loadSettings()
+            closeCamera()
+            openCamera()
+            true
         }
 
         btnGallery.setOnClickListener {
@@ -877,22 +928,31 @@ class MainActivity : AppCompatActivity() {
 
             val texture = textureView.surfaceTexture ?: return
             
-            // Explicitly target 1920x1440 (4:3) for preview stream
-            val targetPreviewW = 1920
-            val targetPreviewH = 1440
-            
             val characteristics = activeCameraCharacteristics
             val map = characteristics?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val supportedSizes = map?.getOutputSizes(SurfaceTexture::class.java)
-            
-            // Check if 1920x1440 is supported, otherwise fallback to a close 4:3 size
-            val previewSize = supportedSizes?.find { it.width == targetPreviewW && it.height == targetPreviewH }
-                ?: supportedSizes?.filter { Math.abs(it.width.toFloat() / it.height - 4f/3f) < 0.01 }?.maxByOrNull { it.width }
-                ?: Size(targetPreviewW, targetPreviewH)
 
-            android.util.Log.i("CameraPreview", "Selected preview size: ${previewSize.width}x${previewSize.height}")
+            val previewSize: Size
+            if (isPhotoMode) {
+                // Explicitly target 1920x1440 (4:3) for preview stream
+                val targetPreviewW = 1920
+                val targetPreviewH = 1440
+                
+                // Check if 1920x1440 is supported, otherwise fallback to a close 4:3 size
+                previewSize = supportedSizes?.find { it.width == targetPreviewW && it.height == targetPreviewH }
+                    ?: supportedSizes?.filter { Math.abs(it.width.toFloat() / it.height - 4f/3f) < 0.01 }?.maxByOrNull { it.width }
+                    ?: Size(targetPreviewW, targetPreviewH)
+            } else {
+                // Video Mode: Use selected resolution
+                val dimensions = selectedVideoSizeStr.split("x")
+                val w = dimensions[0].toInt()
+                val h = dimensions[1].toInt()
+                previewSize = Size(w, h)
+            }
 
-            // Configure TextureView transformation to avoid stretching (Center Inside)
+            android.util.Log.i("CameraPreview", "Selected preview size: ${previewSize.width}x${previewSize.height} (Mode: ${if(isPhotoMode) "Photo" else "Video"})")
+
+            // Configure TextureView transformation to avoid stretching
             val viewW = textureView.width
             val viewH = textureView.height
             
@@ -901,8 +961,6 @@ class MainActivity : AppCompatActivity() {
                 val centerX = viewW / 2f
                 val centerY = viewH / 2f
                 
-                // Stream is usually landscape (W > H), e.g., 1920x1440
-                // We need to account for sensor orientation (typically 90 or 270)
                 val sensorOrientation = characteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
                 val rotatedStreamW: Int
                 val rotatedStreamH: Int
@@ -920,15 +978,22 @@ class MainActivity : AppCompatActivity() {
                 var scaleX = 1f
                 var scaleY = 1f
                 
-                // Perfect Fill: Scale the stream to match the view exactly
-                // Since the view is now forced to 3:4 and the stream is 1920x1440 (3:4 rotated),
-                // they should match. We use Center Crop logic to ensure fill.
-                if (streamRatio > viewRatio) {
-                    // Stream is wider than view -> Scale by height
-                    scaleX = (viewH * streamRatio) / viewW
+                if (isPhotoMode) {
+                    // Center Crop logic to ensure fill for 3:4 view
+                    if (streamRatio > viewRatio) {
+                        scaleX = (viewH * streamRatio) / viewW
+                    } else {
+                        scaleY = (viewW / streamRatio) / viewH
+                    }
                 } else {
-                    // Stream is taller than view -> Scale by width
-                    scaleY = (viewW / streamRatio) / viewH
+                    // Center Inside logic (Letterbox) for Video Mode
+                    if (streamRatio > viewRatio) {
+                        // Stream is wider than view -> Fit width, scale down height
+                        scaleY = (viewW / streamRatio) / viewH
+                    } else {
+                        // Stream is taller than view -> Fit height, scale down width
+                        scaleX = (viewH * streamRatio) / viewW
+                    }
                 }
                 
                 matrix.setScale(scaleX, scaleY, centerX, centerY)
@@ -942,7 +1007,14 @@ class MainActivity : AppCompatActivity() {
 
             previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surface)
-                applyPhotoParamsToRequest(this)
+                if (isPhotoMode) {
+                    applyPhotoParamsToRequest(this)
+                } else {
+                    // Video mode basic request settings
+                    set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(selectedVideoFps, selectedVideoFps))
+                }
             }
 
             val previewStateCallback = object : CameraCaptureSession.StateCallback() {
@@ -1408,6 +1480,41 @@ class MainActivity : AppCompatActivity() {
         return selected == "JPG + RAW"
     }
 
+    private fun showVideoParamsPopup(view: View) {
+        val currentId = activeMetadataCameraId()
+        val caps = allVideoCapabilities[currentId] ?: emptyList()
+        if (caps.isEmpty()) {
+            showToast("无法获取视频能力")
+            return
+        }
+
+        val ratios = caps.map { it.ratioStr }.distinct().sorted()
+        showStyledPopup(view, ratios) { ratioStr ->
+            selectedVideoRatioStr = ratioStr
+            preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
+            
+            // Second step: Select Resolution & FPS (Prioritize FPS as requested)
+            val filteredCaps = caps.filter { it.ratioStr == ratioStr }
+            val options = filteredCaps.sortedWith(compareByDescending<VideoSizeInfo> { it.maxFps }.thenByDescending { it.width * it.height })
+                .map { "${it.width}x${it.height} @ ${it.maxFps}fps" }
+            
+            showStyledPopup(view, options) { selected ->
+                val parts = selected.split(" @ ")
+                selectedVideoSizeStr = parts[0]
+                selectedVideoFps = parts[1].removeSuffix("fps").toInt()
+                
+                preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
+                preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
+                
+                btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+                btnResolution.setTextColor(Color.parseColor("#FFCC00"))
+                
+                closeCamera()
+                openCamera()
+            }
+        }
+    }
+
     private fun showRatioPopup(view: View) {
         val options = listOf("1:1", "4:3", "16:9", "2:1", "自定义")
         showStyledPopup(view, options) { selected ->
@@ -1664,7 +1771,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun logAllCameraStreams() {
         val manager = cameraManager()
-        // 根据你代码中定义的镜头 ID: 主摄"2", 广角"4", 长焦"3", 前置"1"
         val physicalIds = listOf("2", "4", "3", "1")
         
         android.util.Log.i("CameraVideoLog", "--- 开始获取四个物理摄像头视频能力 ---")
@@ -1673,40 +1779,28 @@ class MainActivity : AppCompatActivity() {
             try {
                 val chars = manager.getCameraCharacteristics(id)
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                if (map == null) {
-                    android.util.Log.e("CameraVideoLog", "Camera ID: $id -> 无流配置表")
-                    continue
-                }
+                if (map == null) continue
 
-                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
-                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
-                    else -> "EXTERNAL"
-                }
+                val capabilities = mutableListOf<VideoSizeInfo>()
 
-                android.util.Log.i("CameraVideoLog", "==== 摄像头 ID: $id ($facing) ====")
-
-                // 获取支持视频的分辨率（通常使用 SurfaceTexture 或 MediaRecorder 对应的配置）
+                // Regular video sizes
                 val videoSizes = map.getOutputSizes(android.graphics.SurfaceTexture::class.java)
-                videoSizes?.sortedByDescending { it.width * it.height }?.forEach { size ->
-                    // 获取该分辨率下的最小帧间隔，从而换算最大帧率
+                videoSizes?.forEach { size ->
                     val minDuration = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, size)
                     val maxFps = if (minDuration > 0) (1_000_000_000L / minDuration).toInt() else 0
-                    
-                    android.util.Log.i("CameraVideoLog", "  > 分辨率: ${size.width} x ${size.height} | 最大帧率: ${maxFps}fps")
+                    capabilities.add(VideoSizeInfo(size.width, size.height, maxFps))
                 }
 
-                // 输出 AE 支持的目标帧率范围
-                val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-                android.util.Log.i("CameraVideoLog", "  > 支持的 AE 帧率范围: ${fpsRanges?.contentToString()}")
-
-                // 如果支持高倍速视频 (Slow Motion)
+                // High speed video sizes
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     map.highSpeedVideoSizes?.forEach { hsSize ->
-                        val hsFps = map.getHighSpeedVideoFpsRangesFor(hsSize)
-                        android.util.Log.i("CameraVideoLog", "  > [高速] ${hsSize.width}x${hsSize.height}: ${hsFps.contentToString()}")
+                        val hsFpsRanges = map.getHighSpeedVideoFpsRangesFor(hsSize)
+                        val maxHsFps = hsFpsRanges.maxOfOrNull { it.upper } ?: 0
+                        capabilities.add(VideoSizeInfo(hsSize.width, hsSize.height, maxHsFps, isHighSpeed = true))
                     }
                 }
+                
+                allVideoCapabilities[id] = capabilities
 
             } catch (e: Exception) {
                 android.util.Log.e("CameraVideoLog", "无法读取摄像头 $id 的信息: ${e.message}")
