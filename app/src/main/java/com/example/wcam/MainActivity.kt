@@ -295,7 +295,7 @@ class MainActivity : AppCompatActivity() {
         if (isPhotoMode) {
             btnResolution.text = "4:3"
         } else {
-            btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+            btnResolution.text = selectedVideoRatioStr
         }
         updateCropOverlayUI()
     }
@@ -308,7 +308,7 @@ class MainActivity : AppCompatActivity() {
             viewCropOverlay.visibility = View.VISIBLE
         } else {
             btnModeSwitch.text = "照片"
-            btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
+            btnResolution.text = selectedVideoRatioStr
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_video) // Assuming this drawable exists or I'll use color
             viewCropOverlay.visibility = View.GONE
         }
@@ -464,7 +464,7 @@ class MainActivity : AppCompatActivity() {
         val resText = if (isPhotoMode) {
             "${currentW.toInt()}x${currentH.toInt()}@${String.format("%.1f", mp)}MP"
         } else {
-            "$selectedVideoSizeStr@$selectedVideoFps"
+            "$selectedVideoSizeStr@${selectedVideoFps}fps"
         }
 
         runOnUiThread {
@@ -853,14 +853,14 @@ class MainActivity : AppCompatActivity() {
                         preferenceManager.saveFloat(PreferenceManager.KEY_VIDEO_BITRATE, selectedVideoBitrate)
                     }
                     
-                    if (changed) {
-                        runOnUiThread {
-                            btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
-                            updateFormatPanelUI() // Refresh lists if FPS changed
-                        }
-                        closeCamera()
-                        openCamera()
+                if (changed) {
+                    runOnUiThread {
+                        btnResolution.text = selectedVideoRatioStr
+                        updateFormatPanelUI() // Refresh lists if FPS changed
                     }
+                    closeCamera()
+                    openCamera()
+                }
                 }
 
                 override fun getVideoCapabilities(): List<Any> = caps
@@ -1573,30 +1573,34 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val ratios = caps.map { it.ratioStr }.distinct().sorted()
-        showStyledPopup(view, ratios) { ratioStr ->
+        // Sort ratios by numerical value (Width / Height)
+        val sortedRatios = caps.groupBy { it.ratioStr }
+            .mapValues { it.value.first().ratio }
+            .toList()
+            .sortedBy { it.second }
+            .map { it.first }
+
+        showStyledPopup(view, sortedRatios) { ratioStr ->
             selectedVideoRatioStr = ratioStr
             preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
             
-            // Second step: Select Resolution & FPS (Prioritize FPS as requested)
-            val filteredCaps = caps.filter { it.ratioStr == ratioStr }
-            val options = filteredCaps.sortedWith(compareByDescending<VideoSizeInfo> { it.maxFps }.thenByDescending { it.width * it.height })
-                .map { "${it.width}x${it.height} @ ${it.maxFps}fps" }
+            // Auto-select best resolution/fps for the new ratio
+            val best = caps.filter { it.ratioStr == ratioStr }
+                .sortedWith(compareByDescending<VideoSizeInfo> { it.maxFps }.thenByDescending { it.width * it.height })
+                .firstOrNull()
             
-            showStyledPopup(view, options) { selected ->
-                val parts = selected.split(" @ ")
-                selectedVideoSizeStr = parts[0]
-                selectedVideoFps = parts[1].removeSuffix("fps").toInt()
-                
+            if (best != null) {
+                selectedVideoSizeStr = "${best.width}x${best.height}"
+                selectedVideoFps = best.maxFps
                 preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
                 preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
-                
-                btnResolution.text = "$selectedVideoSizeStr@$selectedVideoFps"
-                btnResolution.setTextColor(Color.parseColor("#FFCC00"))
-                
-                closeCamera()
-                openCamera()
             }
+
+            btnResolution.text = selectedVideoRatioStr
+            btnResolution.setTextColor(Color.parseColor("#FFCC00"))
+            
+            closeCamera()
+            openCamera()
         }
     }
 
