@@ -1384,37 +1384,51 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Capture all necessary state now on the background thread
+        val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
+        val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
+        val algoKey = when {
+            savedAlgoFull.startsWith("灰度") -> "Mono"
+            savedAlgoFull.startsWith("无") -> "None"
+            else -> savedAlgoFull.split('：', ':')[0].trim()
+        }
+        
+        val rotation = CaptureOrientationCalculator.captureRotation(
+            sensorOrientation = currentSensorOrientation,
+            lensFacing = currentLensFacing,
+            deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
+        )
+
+        val bayerPattern = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
+        val blackLevelPattern = characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+        val blackLevel = if (blackLevelPattern != null) {
+            (blackLevelPattern.getOffsetForIndex(0, 0) + 
+             blackLevelPattern.getOffsetForIndex(1, 0) + 
+             blackLevelPattern.getOffsetForIndex(0, 1) + 
+             blackLevelPattern.getOffsetForIndex(1, 1)) / 4
+        } else 64
+        val whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
+        
+        val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
+        val wbArray = if (wbGains != null) {
+            floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
+        } else {
+            floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
+        }
+
         pendingRawImage = null
         processingHandler?.post {
             try {
-                val rotation = CaptureOrientationCalculator.captureRotation(
-                    sensorOrientation = currentSensorOrientation,
-                    lensFacing = currentLensFacing,
-                    deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
-                )
-
-                if (isRawOnly() || isJpgAndRaw()) {
+                if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
                     rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
                 }
                 
-                if (!isRawOnly()) {
+                if (savedFormat != "RAW") {
                     // Demosaic RAW to JPG
-                    val fullAlgo = spinnerDemosaicAlgo.selectedItem?.toString() ?: "Fast"
-                    val algo = fullAlgo.split("：")[0]
-                    
-                    val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
-                    val wbArray = if (wbGains != null) {
-                        floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
-                    } else {
-                        floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
-                    }
-                    
-                    val bayerPattern = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
-                    val blackLevel = 64 // Simplified black level
-                    val whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
-                    
+                    android.util.Log.i("DemosaicDebug", "Processing JPG with algo: $algoKey, BL: $blackLevel, WL: $whiteLevel")
+
                     var bitmap = com.example.wcam.camera.DemosaicEngine.process(
-                        image, algo, wbArray, bayerPattern, blackLevel, whiteLevel
+                        image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel
                     )
 
                     // Crop according to the green rectangle
@@ -1691,12 +1705,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isRawOnly(): Boolean {
-        val selected = spinnerMainFormat.selectedItem?.toString() ?: ""
+        val selected = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         return selected == "RAW"
     }
 
     private fun isJpgAndRaw(): Boolean {
-        val selected = spinnerMainFormat.selectedItem?.toString() ?: ""
+        val selected = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         return selected == "JPG + RAW"
     }
 
