@@ -39,13 +39,22 @@ class FormatPanelController(
         fun getCurrentRatio(): String
     }
 
+    interface PhotoSettingsListener {
+        fun onPhotoParamsChanged(format: String, demosaic: String)
+    }
+
     private var videoListener: VideoSettingsListener? = null
+    private var photoListener: PhotoSettingsListener? = null
 
     fun setVideoSettingsListener(listener: VideoSettingsListener) {
         this.videoListener = listener
     }
 
-    fun update(isPhotoMode: Boolean) {
+    fun setPhotoSettingsListener(listener: PhotoSettingsListener) {
+        this.photoListener = listener
+    }
+
+    fun update(isPhotoMode: Boolean, currentFormat: String = "", currentDemosaic: String = "") {
         val popupBg = ColorDrawable(Color.parseColor("#CC1A1A1A"))
         spinnerMainFormat.setPopupBackgroundDrawable(popupBg)
         spinnerDemosaicAlgo.setPopupBackgroundDrawable(popupBg)
@@ -54,15 +63,22 @@ class FormatPanelController(
 
         if (isPhotoMode) {
             layoutVideoAdvancedOptions.visibility = View.GONE
-            spinnerMainFormat.adapter = createWhiteTextAdapter(FormatOptions.PHOTO_FORMATS)
+            val formats = FormatOptions.PHOTO_FORMATS
+            spinnerMainFormat.adapter = createWhiteTextAdapter(formats)
+            if (currentFormat.isNotEmpty()) {
+                val idx = formats.indexOf(currentFormat)
+                if (idx != -1) spinnerMainFormat.setSelection(idx)
+            }
+
             spinnerMainFormat.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    val selected = FormatOptions.PHOTO_FORMATS[position]
+                    val selected = formats[position]
                     if (FormatOptions.showsJpgAdvancedOptions(selected)) {
                         layoutJpgAdvancedOptions.visibility = View.VISIBLE
-                        setupDemosaicSpinner()
+                        setupDemosaicSpinner(currentDemosaic)
                     } else {
                         layoutJpgAdvancedOptions.visibility = View.GONE
+                        photoListener?.onPhotoParamsChanged(selected, "")
                     }
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -72,28 +88,31 @@ class FormatPanelController(
             layoutVideoAdvancedOptions.visibility = View.VISIBLE
             spinnerMainFormat.adapter = createWhiteTextAdapter(FormatOptions.VIDEO_FORMATS)
             spinnerMainFormat.onItemSelectedListener = null
-            setupVideoAdvancedOptions()
+            // Selection for video format should also be handled if needed, but for now we focus on the requested ones
         }
     }
 
-    private fun setupDemosaicSpinner() {
-        spinnerDemosaicAlgo.adapter = createWhiteTextAdapter(FormatOptions.DEMOSAIC_ALGORITHMS)
-        spinnerDemosaicAlgo.setSelection(FormatOptions.DEMOSAIC_ALGORITHMS.indexOf("Fast").coerceAtLeast(0))
+    private fun setupDemosaicSpinner(currentDemosaic: String) {
+        val algos = FormatOptions.DEMOSAIC_ALGORITHMS
+        spinnerDemosaicAlgo.adapter = createWhiteTextAdapter(algos)
+        
+        val initialIdx = if (currentDemosaic.isNotEmpty()) {
+            algos.indexOf(currentDemosaic).coerceAtLeast(0)
+        } else {
+            algos.indexOf("Fast").coerceAtLeast(0)
+        }
+        spinnerDemosaicAlgo.setSelection(initialIdx)
+
+        spinnerDemosaicAlgo.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val format = spinnerMainFormat.selectedItem.toString()
+                val demosaic = algos[position]
+                photoListener?.onPhotoParamsChanged(format, demosaic)
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
     }
 
-    private fun setupVideoAdvancedOptions() {
-        val listener = videoListener ?: return
-        val caps = listener.getVideoCapabilities() // This is a list of VideoSizeInfo
-        val currentRatio = listener.getCurrentRatio()
-
-        // Filter by ratio
-        // We need to access VideoSizeInfo properties, but it's in MainActivity. 
-        // For simplicity, let's assume the listener returns the right data or we use reflection/common interface.
-        // Actually, let's just make the listener return already filtered/mapped strings.
-    }
-
-    // Since VideoSizeInfo is an inner class of MainActivity, I'll use a more generic approach or move VideoSizeInfo.
-    
     fun setupVideoSpinners(fpsList: List<Int>, resList: List<String>, currentFps: Int, currentRes: String, currentBitrate: Double) {
         spinnerVideoFps.adapter = createWhiteTextAdapter(fpsList.map { it.toString() })
         val fpsIdx = fpsList.indexOf(currentFps).coerceAtLeast(0)
@@ -104,8 +123,6 @@ class FormatPanelController(
         spinnerVideoRes.setSelection(resIdx)
 
         tvVideoBitrateTitle.text = "码率: ${String.format("%.1f", currentBitrate)} Mbps"
-        // Logarithmic bitrate mapping: 0.1 to 100
-        // progress 0 to 1000
         val logMin = Math.log(0.1)
         val logMax = Math.log(100.0)
         val progress = ((Math.log(currentBitrate) - logMin) / (logMax - logMin) * 1000).toInt()
@@ -117,8 +134,8 @@ class FormatPanelController(
                 tvVideoBitrateTitle.text = "码率: ${String.format("%.1f", bitrate)} Mbps"
                 if (fromUser) {
                     videoListener?.onVideoParamsChanged(
-                        spinnerVideoFps.selectedItem.toString().toInt(),
-                        spinnerVideoRes.selectedItem.toString(),
+                        spinnerVideoFps.selectedItem?.toString()?.toIntOrNull() ?: 30,
+                        spinnerVideoRes.selectedItem?.toString() ?: "",
                         bitrate
                     )
                 }
@@ -129,8 +146,8 @@ class FormatPanelController(
 
         val itemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val fps = spinnerVideoFps.selectedItem.toString().toInt()
-                val res = spinnerVideoRes.selectedItem.toString()
+                val fps = spinnerVideoFps.selectedItem?.toString()?.toIntOrNull() ?: 30
+                val res = spinnerVideoRes.selectedItem?.toString() ?: ""
                 val bitrate = Math.exp(logMin + (logMax - logMin) * seekbarVideoBitrate.progress / 1000.0)
                 videoListener?.onVideoParamsChanged(fps, res, bitrate)
             }

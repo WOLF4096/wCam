@@ -13,6 +13,7 @@ class PreferenceManager(context: Context) {
         const val KEY_GRID_VISIBLE = "grid_visible"
         const val KEY_HISTOGRAM_VISIBLE = "histogram_visible"
         const val KEY_JPG_QUALITY = "jpg_quality"
+        const val KEY_DEMOSAIC_ALGO = "demosaic_algo"
         const val KEY_IS_PHOTO_MODE = "is_photo_mode"
         const val KEY_VIDEO_RATIO = "video_ratio"
         const val KEY_VIDEO_RESOLUTION = "video_resolution"

@@ -292,6 +292,10 @@ class MainActivity : AppCompatActivity() {
         selectedVideoFps = preferenceManager.getInt(PreferenceManager.KEY_VIDEO_FPS, 30)
         selectedVideoBitrate = preferenceManager.getFloat(PreferenceManager.KEY_VIDEO_BITRATE, 20.0f)
 
+        val jpgQual = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
+        seekbarJpgQuality.progress = jpgQual
+        tvJpgQualityTitle.text = "JPG 质量: $jpgQual%"
+
         if (isPhotoMode) {
             btnResolution.text = "4:3"
         } else {
@@ -793,24 +797,33 @@ class MainActivity : AppCompatActivity() {
             selectedBtn.textSize = 18f
             selectedBtn.setTypeface(null, android.graphics.Typeface.BOLD)
 
-            if (currentLogicalCameraId != logicalId) {
+            if (currentLogicalCameraId != logicalId || currentPhysicalCameraId != physicalId) {
                 currentLogicalCameraId = logicalId
                 currentPhysicalCameraId = physicalId
                 saveCurrentLensSettings()
+
+                // Refresh video params for the new lens
+                if (!isPhotoMode) {
+                    val newId = physicalId ?: logicalId
+                    val caps = allVideoCapabilities[newId] ?: emptyList()
+                    val ratioCaps = caps.filter { it.ratioStr == selectedVideoRatioStr }
+                    val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }
+                        .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) })
+                        .firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
+                    
+                    if (bestFor30 != null) {
+                        selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"
+                        selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps
+                        preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
+                        preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
+                        btnResolution.text = selectedVideoRatioStr
+                    }
+                }
+
                 closeCamera()
+                if (isFormatPanelOpen) updateFormatPanelUI()
                 if (textureView.isAvailable) {
                     openCamera()
-                }
-            } else if (currentPhysicalCameraId != physicalId) {
-                currentPhysicalCameraId = physicalId
-                saveCurrentLensSettings()
-                refreshActiveCameraCharacteristics()
-                refreshCameraCapabilities()
-                configureImageReaders()
-                if (cameraDevice == null) {
-                    openCamera()
-                } else {
-                    createCameraPreviewSession()
                 }
             }
         }
@@ -822,8 +835,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateFormatPanelUI() {
-        formatPanelController.update(isPhotoMode)
-        if (!isPhotoMode) {
+        val currentPhotoFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
+        val currentDemosaic = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
+        
+        formatPanelController.update(isPhotoMode, currentPhotoFormat, currentDemosaic)
+        
+        if (isPhotoMode) {
+            formatPanelController.setPhotoSettingsListener(object : FormatPanelController.PhotoSettingsListener {
+                override fun onPhotoParamsChanged(format: String, demosaic: String) {
+                    preferenceManager.saveString(PreferenceManager.KEY_OUTPUT_FORMAT, format)
+                    if (demosaic.isNotEmpty()) {
+                        preferenceManager.saveString(PreferenceManager.KEY_DEMOSAIC_ALGO, demosaic)
+                    }
+                }
+            })
+        } else {
             val currentId = activeMetadataCameraId()
             val caps = allVideoCapabilities[currentId] ?: emptyList()
             
@@ -840,27 +866,35 @@ class MainActivity : AppCompatActivity() {
                     var changed = false
                     if (selectedVideoFps != fps) {
                         selectedVideoFps = fps
+                        // When FPS changes, default to the highest resolution for this FPS
+                        val bestForFps = caps.filter { it.ratioStr == selectedVideoRatioStr && it.maxFps == fps }
+                            .maxByOrNull { it.width * it.height }
+                        if (bestForFps != null) {
+                            selectedVideoSizeStr = "${bestForFps.width}x${bestForFps.height}"
+                        }
+                        
                         preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, fps)
+                        preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
                         changed = true
-                    }
-                    if (selectedVideoSizeStr != res) {
+                    } else if (selectedVideoSizeStr != res) {
                         selectedVideoSizeStr = res
                         preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, res)
                         changed = true
                     }
+                    
                     if (selectedVideoBitrate != bitrateMbps.toFloat()) {
                         selectedVideoBitrate = bitrateMbps.toFloat()
                         preferenceManager.saveFloat(PreferenceManager.KEY_VIDEO_BITRATE, selectedVideoBitrate)
                     }
                     
-                if (changed) {
-                    runOnUiThread {
-                        btnResolution.text = selectedVideoRatioStr
-                        updateFormatPanelUI() // Refresh lists if FPS changed
+                    if (changed) {
+                        runOnUiThread {
+                            btnResolution.text = selectedVideoRatioStr
+                            updateFormatPanelUI()
+                        }
+                        closeCamera()
+                        openCamera()
                     }
-                    closeCamera()
-                    openCamera()
-                }
                 }
 
                 override fun getVideoCapabilities(): List<Any> = caps
@@ -1573,25 +1607,36 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Sort ratios by numerical value (Width / Height)
-        val sortedRatios = caps.groupBy { it.ratioStr }
-            .mapValues { it.value.first().ratio }
-            .toList()
-            .sortedBy { it.second }
-            .map { it.first }
+        // Sort ratios: 4:3, 16:9 first, then others by numerical value
+        val common = listOf("4:3", "16:9")
+        val ratioMap = caps.groupBy { it.ratioStr }.mapValues { it.value.first().ratio }
+        val sortedRatios = ratioMap.keys.toList().sortedWith { a, b ->
+            val aIn = common.indexOf(a)
+            val bIn = common.indexOf(b)
+            if (aIn != -1 || bIn != -1) {
+                if (aIn != -1 && bIn != -1) aIn.compareTo(bIn)
+                else if (aIn != -1) -1 else 1
+            } else {
+                ratioMap[a]!!.compareTo(ratioMap[b]!!)
+            }
+        }
 
         showStyledPopup(view, sortedRatios) { ratioStr ->
             selectedVideoRatioStr = ratioStr
             preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
             
-            // Auto-select best resolution/fps for the new ratio
-            val best = caps.filter { it.ratioStr == ratioStr }
-                .sortedWith(compareByDescending<VideoSizeInfo> { it.maxFps }.thenByDescending { it.width * it.height })
-                .firstOrNull()
+            // Auto-select: default to 30fps and highest resolution for 30fps
+            val ratioCaps = caps.filter { it.ratioStr == ratioStr }
+            val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }
+                .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) })
+                .firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
             
-            if (best != null) {
-                selectedVideoSizeStr = "${best.width}x${best.height}"
-                selectedVideoFps = best.maxFps
+            if (bestFor30 != null) {
+                selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"
+                selectedVideoFps = bestFor30.maxFps.coerceAtMost(30).coerceAtLeast(if(bestFor30.maxFps >= 30) 30 else bestFor30.maxFps)
+                // Actually if maxFps >= 30, we want 30.
+                selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps
+
                 preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
                 preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
             }
@@ -1599,6 +1644,7 @@ class MainActivity : AppCompatActivity() {
             btnResolution.text = selectedVideoRatioStr
             btnResolution.setTextColor(Color.parseColor("#FFCC00"))
             
+            updateFormatPanelUI() // Refresh lists and selection
             closeCamera()
             openCamera()
         }
