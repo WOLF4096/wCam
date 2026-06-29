@@ -3,11 +3,16 @@
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ContentValues
+import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
+import android.graphics.drawable.BitmapDrawable
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -24,12 +29,14 @@ import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
 import android.media.ImageReader
 import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.provider.MediaStore
+import android.util.Size
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
@@ -93,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnResolution: TextView
     private lateinit var btnFormat: TextView
     private lateinit var btnModeSwitch: TextView
+    private lateinit var btnGallery: TextView
 
     private lateinit var viewGridLines: GridLineView
     private lateinit var viewHistogram: View
@@ -128,6 +136,7 @@ class MainActivity : AppCompatActivity() {
     private var previewAutoKelvinLabel: String? = null
     private var previewAutoFocusDistance: Float? = null
     private var cameraCapabilities: CameraCapabilities = CameraCapabilities.EMPTY
+    private var recentPhotoUri: Uri? = null
 
     private var isGridVisible = false
     private var isHistogramVisible = false
@@ -167,6 +176,7 @@ class MainActivity : AppCompatActivity() {
         btnResolution = findViewById(R.id.btn_resolution)
         btnFormat = findViewById(R.id.btn_format)
         btnModeSwitch = findViewById(R.id.btn_mode_switch)
+        btnGallery = findViewById(R.id.btn_gallery)
 
         viewGridLines = findViewById(R.id.view_grid_lines)
         viewHistogram = findViewById(R.id.view_histogram)
@@ -260,6 +270,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnGallery.setOnClickListener {
+            openRecentPhotoInGallery()
+        }
+
         seekbarJpgQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvJpgQualityTitle.text = "JPG 质量: $progress%"
@@ -294,13 +308,13 @@ class MainActivity : AppCompatActivity() {
             currentState = photoParamState,
         )
         refreshParamViews()
-        resumePreview()
+        applyPhotoParamsToPreview()
     }
 
     private fun onParamAutoReset(key: ParamKey) {
         photoParamState = PhotoParamMapper.restoreAutoState(key, photoParamState)
         refreshParamViews()
-        resumePreview()
+        applyPhotoParamsToPreview()
     }
 
     private fun refreshParamViews() {
@@ -484,6 +498,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
+        findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
         if (textureView.isAvailable) {
             openCamera()
         } else {
@@ -593,6 +608,13 @@ class MainActivity : AppCompatActivity() {
         result.get(CaptureResult.COLOR_CORRECTION_GAINS)?.let { gains ->
             previewAutoKelvinLabel = PhotoParamMapper.gainsToKelvinLabel(gains, supportedKelvinValues())
         }
+    }
+
+    private fun applyPhotoParamsToPreview() {
+        previewRequestBuilder?.let { builder ->
+            applyPhotoParamsToRequest(builder)
+        }
+        resumePreview()
     }
 
     private fun createCameraPreviewSession() {
@@ -726,7 +748,8 @@ class MainActivity : AppCompatActivity() {
         pendingCaptureResult = null
 
         try {
-            saveRawImageToGallery(image, characteristics, captureResult)
+            val savedUri = saveRawImageToGallery(image, characteristics, captureResult)
+            updateRecentPhotoPreview(savedUri)
             image.close()
             finishCaptureSuccessfully()
         } catch (e: IOException) {
@@ -739,7 +762,7 @@ class MainActivity : AppCompatActivity() {
         image: Image,
         characteristics: CameraCharacteristics,
         captureResult: TotalCaptureResult
-    ) {
+    ): Uri {
         val resolver = contentResolver
         val fileName = createRawDisplayName()
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
@@ -782,6 +805,7 @@ class MainActivity : AppCompatActivity() {
             } else if (outputPathForScan != null) {
                 MediaScannerConnection.scanFile(this, arrayOf(outputPathForScan), arrayOf(RAW_MIME_TYPE), null)
             }
+            return uri
         } catch (e: Exception) {
             resolver.delete(uri, null, null)
             throw IOException("Unable to save RAW image", e)
@@ -806,6 +830,85 @@ class MainActivity : AppCompatActivity() {
             btnShutter.isEnabled = true
         }
         resumePreview()
+    }
+
+    private fun openRecentPhotoInGallery() {
+        val targetUri = recentPhotoUri ?: findLatestRecentPhotoUri()
+        if (targetUri == null) {
+            showToast("还没有可查看的照片")
+            return
+        }
+
+        recentPhotoUri = targetUri
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(targetUri, "image/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            showToast("无法打开相册")
+        }
+    }
+
+    private fun updateRecentPhotoPreview(uri: Uri) {
+        recentPhotoUri = uri
+        val thumbnail = loadThumbnailBitmap(uri)
+        runOnUiThread {
+            if (thumbnail != null) {
+                btnGallery.background = BitmapDrawable(resources, thumbnail)
+                btnGallery.text = ""
+            } else {
+                btnGallery.setBackgroundResource(R.drawable.bg_gallery_modern)
+                btnGallery.text = "相册"
+            }
+        }
+    }
+
+    private fun loadThumbnailBitmap(uri: Uri): Bitmap? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                contentResolver.loadThumbnail(uri, Size(160, 160), null)
+            } else {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    BitmapFactory.decodeStream(input)
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun findLatestRecentPhotoUri(): Uri? {
+        val projection = arrayOf(MediaStore.Images.Media._ID)
+        val selection: String
+        val selectionArgs: Array<String>
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
+            selectionArgs = arrayOf("${Environment.DIRECTORY_PICTURES}/$RAW_FOLDER_NAME/")
+        } else {
+            selection = "${MediaStore.Images.Media.DATA} LIKE ?"
+            selectionArgs = arrayOf("%/Pictures/$RAW_FOLDER_NAME/%")
+        }
+
+        return try {
+            contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                "${MediaStore.Images.Media.DATE_ADDED} DESC, ${MediaStore.Images.Media._ID} DESC"
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(0)
+                    ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                } else {
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun resumePreview() {
