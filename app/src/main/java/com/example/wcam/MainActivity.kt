@@ -101,8 +101,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var viewGridLines: GridLineView
     private lateinit var viewHistogram: HistogramView
-    private lateinit var viewPip: View
-    private lateinit var viewPipInner: View
+    private lateinit var viewCropOverlay: CropOverlayView
+    private lateinit var tvPhysicalRes: TextView
     private lateinit var viewFocusRing: View
 
     private lateinit var btnLensFront: TextView
@@ -140,7 +140,12 @@ class MainActivity : AppCompatActivity() {
     private var isJpegCaptureComplete = false
 
     private var selectedResolution: Size? = null
-    private var isFollowZoom = true
+    private var isFollowZoom = true // Now repurposed for maximized crop
+
+    private var cropScale = 1.0f
+    private var cropRatio = 4f / 3f
+    private var customRatioW = 4
+    private var customRatioH = 3
 
     private var photoParamState: PhotoParamState = PhotoParamState.default()
     private var previewAutoIso: Int? = null
@@ -249,10 +254,11 @@ class MainActivity : AppCompatActivity() {
 
         isHistogramVisible = preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false)
         viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
+        tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
         btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         
-        val quality = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
-        seekbarJpgQuality.progress = quality
+        btnResolution.text = "4:3"
+        updateCropOverlayUI()
     }
 
     private fun saveCurrentLensSettings() {
@@ -274,19 +280,9 @@ class MainActivity : AppCompatActivity() {
 
         scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                currentZoomRatio = (currentZoomRatio * detector.scaleFactor).coerceIn(1.0f, maxZoomRatio)
-                applyPhotoParamsToPreview()
-                updatePipUI()
-                viewPip.visibility = View.VISIBLE
+                cropScale = (cropScale * detector.scaleFactor).coerceIn(0.1f, 1.0f)
+                updateCropOverlayUI()
                 return true
-            }
-
-            override fun onScaleEnd(detector: ScaleGestureDetector) {
-                viewPip.postDelayed({
-                    if (!scaleGestureDetector.isInProgress) {
-                        viewPip.visibility = View.GONE
-                    }
-                }, 2000)
             }
         })
 
@@ -377,12 +373,58 @@ class MainActivity : AppCompatActivity() {
         applyPhotoParamsToPreview()
     }
 
-    private fun updatePipUI() {
-        val params = viewPipInner.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
-        val fraction = 1.0f / currentZoomRatio
-        params.width = (viewPip.width * fraction).toInt()
-        params.height = (viewPip.height * fraction).toInt()
-        viewPipInner.layoutParams = params
+    private var currentCropRectInSensor: android.graphics.Rect? = null
+
+    private fun updateCropOverlayUI() {
+        val characteristics = activeCameraCharacteristics ?: return
+        val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+        
+        val sensorW = sensorSize.width()
+        val sensorH = sensorSize.height()
+        val sensorRatio = sensorW.toFloat() / sensorH
+
+        // Calculate max possible size within sensor for the given cropRatio
+        val maxW: Float
+        val maxH: Float
+        if (cropRatio > sensorRatio) {
+            maxW = sensorW.toFloat()
+            maxH = sensorW / cropRatio
+        } else {
+            maxH = sensorH.toFloat()
+            maxW = sensorH * cropRatio
+        }
+
+        val currentW = maxW * cropScale
+        val currentH = maxH * cropScale
+
+        // Display resolution
+        val mp = (currentW * currentH) / 1_000_000.0
+        val resText = "${currentW.toInt()}x${currentH.toInt()}@${String.format("%.1f", mp)}MP"
+        runOnUiThread {
+            tvPhysicalRes.text = resText
+            tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
+        }
+
+        // Map to preview coordinates
+        // Store for capture
+        val sensorLeft = (sensorW - currentW) / 2
+        val sensorTop = (sensorH - currentH) / 2
+        currentCropRectInSensor = android.graphics.Rect(
+            sensorLeft.toInt(),
+            sensorTop.toInt(),
+            (sensorLeft + currentW).toInt(),
+            (sensorTop + currentH).toInt()
+        )
+        
+        // Relative coordinates for the overlay view
+        val relLeft = sensorLeft / sensorW
+        val relTop = sensorTop / sensorH
+        val relRight = (sensorLeft + currentW) / sensorW
+        val relBottom = (sensorTop + currentH) / sensorH
+
+        runOnUiThread {
+            viewCropOverlay.setCropRect(relLeft, relTop, relRight, relBottom)
+        }
     }
 
     private fun initViews() {
@@ -398,8 +440,8 @@ class MainActivity : AppCompatActivity() {
 
         viewGridLines = findViewById(R.id.view_grid_lines)
         viewHistogram = findViewById(R.id.view_histogram)
-        viewPip = findViewById(R.id.view_pip)
-        viewPipInner = findViewById(R.id.view_pip_inner)
+        viewCropOverlay = findViewById(R.id.view_crop_overlay)
+        tvPhysicalRes = findViewById(R.id.tv_physical_res)
         viewFocusRing = findViewById(R.id.view_focus_ring)
 
         btnLensFront = findViewById(R.id.btn_lens_front)
@@ -466,8 +508,10 @@ class MainActivity : AppCompatActivity() {
             isHistogramVisible = !isHistogramVisible
             android.util.Log.i("HistogramDebug", "Button clicked, isVisible: $isHistogramVisible")
             viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
+            tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
             btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
             preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isHistogramVisible)
+            updateCropOverlayUI()
         }
 
         btnGridLines.setOnClickListener {
@@ -478,11 +522,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnResolution.setOnClickListener { view ->
-            if (isRawOnly()) {
-                showToast("RAW 模式下无法选择分辨率")
-                return@setOnClickListener
-            }
-            showResolutionPopup(view)
+            showRatioPopup(view)
         }
 
         btnFormat.setOnClickListener {
@@ -1010,16 +1050,34 @@ class MainActivity : AppCompatActivity() {
                 if (!isRawOnly()) {
                     // Demosaic RAW to JPG
                     val algo = spinnerDemosaicAlgo.selectedItem?.toString() ?: "Fast"
-                    var bitmap = com.example.wcam.camera.DemosaicEngine.process(image, algo)
+                    
+                    val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
+                    val wbArray = if (wbGains != null) {
+                        floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
+                    } else {
+                        floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
+                    }
+                    
+                    val bayerPattern = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
+                    val blackLevel = 64 // Simplified black level
+                    val whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
+                    
+                    var bitmap = com.example.wcam.camera.DemosaicEngine.process(
+                        image, algo, wbArray, bayerPattern, blackLevel, whiteLevel
+                    )
 
-                    if (isFollowZoom) {
-                        val cropW = (bitmap.width / currentZoomRatio).toInt()
-                        val cropH = (bitmap.height / currentZoomRatio).toInt()
-                        val left = (bitmap.width - cropW) / 2
-                        val top = (bitmap.height - cropH) / 2
-                        bitmap = Bitmap.createBitmap(bitmap, left, top, cropW, cropH)
-                    } else if (selectedResolution != null) {
-                        bitmap = Bitmap.createScaledBitmap(bitmap, selectedResolution!!.width, selectedResolution!!.height, true)
+                    // Crop according to the green rectangle
+                    currentCropRectInSensor?.let { rect ->
+                        val left = rect.left.coerceIn(0, bitmap.width - 1)
+                        val top = rect.top.coerceIn(0, bitmap.height - 1)
+                        val width = rect.width().coerceAtMost(bitmap.width - left)
+                        val height = rect.height().coerceAtMost(bitmap.height - top)
+                        
+                        if (width > 0 && height > 0) {
+                            val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
+                            bitmap.recycle()
+                            bitmap = cropped
+                        }
                     }
 
                     val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
@@ -1285,39 +1343,74 @@ class MainActivity : AppCompatActivity() {
         return selected == "JPG + RAW"
     }
 
-    private fun showResolutionPopup(view: View) {
-        val characteristics = activeCameraCharacteristics ?: return
-        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return
-        val sizes = map.getOutputSizes(ImageFormat.JPEG) ?: return
-
-        // Filter for 4:3
-        val fourThreeSizes = sizes.filter {
-            val ratio = it.width.toFloat() / it.height
-            abs(ratio - 4f/3f) < 0.05 || abs(ratio - 3f/4f) < 0.05
-        }.sortedByDescending { it.width * it.height }
-
-        val options = mutableListOf("跟随缩放 (Follow Zoom)")
-        fourThreeSizes.forEach { size ->
-            val mp = (size.width * size.height / 1000000.0)
-            options.add("4:3 | ${size.width} x ${size.height} px | ${String.format("%.1f", mp)}MP")
-        }
-
+    private fun showRatioPopup(view: View) {
+        val options = listOf("1:1", "4:3", "16:9", "2:1", "自定义")
         showStyledPopup(view, options) { selected ->
-            if (selected == "跟随缩放 (Follow Zoom)") {
-                isFollowZoom = true
-                selectedResolution = null
-                btnResolution.text = "跟随缩放"
-            } else {
-                isFollowZoom = false
-                // Find matching size by parsing the string or index
-                val index = options.indexOf(selected) - 1
-                if (index >= 0) {
-                    selectedResolution = fourThreeSizes[index]
-                    btnResolution.text = "${selectedResolution!!.width}x${selectedResolution!!.height}"
+            when (selected) {
+                "1:1" -> {
+                    cropRatio = 1.0f
+                    btnResolution.text = "1:1"
+                    updateCropOverlayUI()
+                }
+                "4:3" -> {
+                    cropRatio = 4f / 3f
+                    btnResolution.text = "4:3"
+                    updateCropOverlayUI()
+                }
+                "16:9" -> {
+                    cropRatio = 16f / 9f
+                    btnResolution.text = "16:9"
+                    updateCropOverlayUI()
+                }
+                "2:1" -> {
+                    cropRatio = 2.0f
+                    btnResolution.text = "2:1"
+                    updateCropOverlayUI()
+                }
+                "自定义" -> {
+                    showCustomRatioDialog()
                 }
             }
             btnResolution.setTextColor(Color.parseColor("#FFCC00"))
         }
+    }
+
+    private fun showCustomRatioDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(50, 40, 50, 10)
+        }
+        val etW = android.widget.EditText(this).apply {
+            hint = "宽"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setText(customRatioW.toString())
+        }
+        val etH = android.widget.EditText(this).apply {
+            hint = "高"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setText(customRatioH.toString())
+        }
+        layout.addView(etW)
+        layout.addView(etH)
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("自定义比例")
+            .setView(layout)
+            .setPositiveButton("确定") { _, _ ->
+                val w = etW.text.toString().toIntOrNull() ?: 4
+                val h = etH.text.toString().toIntOrNull() ?: 3
+                if (w > 0 && h > 0) {
+                    customRatioW = w
+                    customRatioH = h
+                    cropRatio = w.toFloat() / h
+                    btnResolution.text = "$w:$h"
+                    updateCropOverlayUI()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) {
@@ -1440,6 +1533,7 @@ class MainActivity : AppCompatActivity() {
         
         runOnUiThread {
             setupDynamicParamGestures()
+            updateCropOverlayUI()
         }
     }
 
