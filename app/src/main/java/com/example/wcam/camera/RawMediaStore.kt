@@ -17,26 +17,19 @@ import android.provider.MediaStore
 import android.util.Size
 import java.io.File
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 private const val RAW_MIME_TYPE = "image/x-adobe-dng"
 private const val RAW_FOLDER_NAME = "wCam"
-
-internal fun createRawDisplayName(timestampMillis: Long = System.currentTimeMillis()): String {
-    val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-    return "wcam_${formatter.format(Date(timestampMillis))}.dng"
-}
 
 class RawMediaStore(private val context: Context) {
     fun saveRawImage(
         image: Image,
         characteristics: CameraCharacteristics,
-        captureResult: TotalCaptureResult
+        captureResult: TotalCaptureResult,
+        exifOrientation: Int,
     ): Uri {
         val resolver = context.contentResolver
-        val fileName = createRawDisplayName()
+        val fileName = createPhotoDisplayName(extension = "dng")
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         var outputPathForScan: String? = null
 
@@ -63,7 +56,9 @@ class RawMediaStore(private val context: Context) {
         val uri = resolver.insert(collection, contentValues)
             ?: throw IOException("Unable to create MediaStore record")
 
-        val dngCreator = DngCreator(characteristics, captureResult)
+        val dngCreator = DngCreator(characteristics, captureResult).apply {
+            setOrientation(exifOrientation)
+        }
         try {
             resolver.openOutputStream(uri)?.use { outputStream ->
                 dngCreator.writeImage(outputStream, image)

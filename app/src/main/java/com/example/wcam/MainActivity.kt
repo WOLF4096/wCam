@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
@@ -18,6 +19,7 @@ import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
@@ -27,6 +29,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.provider.MediaStore
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
@@ -50,9 +53,14 @@ import java.util.concurrent.Executor
 import kotlin.math.abs
 
 import com.example.wcam.camera.CameraCapabilities
+import com.example.wcam.camera.CaptureFileNames
+import com.example.wcam.camera.CaptureOrientationCalculator
+import com.example.wcam.camera.DeviceOrientationTracker
+import com.example.wcam.camera.EXIF_ORIENTATION_NORMAL
 import com.example.wcam.camera.PARAM_TEXT_AUTO_COLOR
 import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
 import com.example.wcam.camera.ParamKey
+import com.example.wcam.camera.FlashMode
 import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
 import com.example.wcam.camera.RawMediaStore
@@ -94,6 +102,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var seekbarJpgQuality: SeekBar
     private lateinit var formatPanelController: FormatPanelController
     private lateinit var rawMediaStore: RawMediaStore
+    private lateinit var deviceOrientationTracker: DeviceOrientationTracker
     private lateinit var tvValEv: TextView
     private lateinit var tvValWb: TextView
     private lateinit var tvValIso: TextView
@@ -115,6 +124,10 @@ class MainActivity : AppCompatActivity() {
     private var previewAutoFocusDistance: Float? = null
     private var cameraCapabilities: CameraCapabilities = CameraCapabilities.EMPTY
     private var recentPhotoUri: Uri? = null
+    private var currentFlashMode: FlashMode = FlashMode.OFF
+    private var currentFlashSupported: Boolean = false
+    private var currentSensorOrientation: Int = 0
+    private var currentLensFacing: Int? = null
 
     private var isGridVisible = false
     private var isHistogramVisible = false
@@ -177,6 +190,9 @@ class MainActivity : AppCompatActivity() {
             spinnerDemosaicAlgo = spinnerDemosaicAlgo,
         )
         rawMediaStore = RawMediaStore(this)
+        deviceOrientationTracker = DeviceOrientationTracker(this)
+        btnFlash.text = currentFlashMode.label
+        btnFlash.setTextColor(currentFlashMode.textColor)
         tvValEv = findViewById(R.id.tv_val_ev)
         tvValWb = findViewById(R.id.tv_val_wb)
         tvValIso = findViewById(R.id.tv_val_iso)
@@ -197,8 +213,20 @@ class MainActivity : AppCompatActivity() {
             popup.menu.add("打开")
             popup.menu.add("常亮")
             popup.setOnMenuItemClickListener { item ->
-                btnFlash.text = item.title
-                btnFlash.setTextColor(Color.parseColor("#FFCC00"))
+                val requestedMode = when (item.title.toString()) {
+                    "打开" -> FlashMode.SINGLE
+                    "常亮" -> FlashMode.TORCH
+                    else -> FlashMode.OFF
+                }
+                currentFlashMode = if (requestedMode != FlashMode.OFF && !currentFlashSupported) {
+                    showToast("当前设备不支持闪光灯")
+                    FlashMode.OFF
+                } else {
+                    requestedMode
+                }
+                btnFlash.text = currentFlashMode.label
+                btnFlash.setTextColor(currentFlashMode.textColor)
+                applyPhotoParamsToPreview()
                 true
             }
             popup.show()
@@ -437,6 +465,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
+        deviceOrientationTracker.enable()
         rawMediaStore.findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
         if (textureView.isAvailable) {
             openCamera()
@@ -446,6 +475,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        deviceOrientationTracker.disable()
         closeCamera()
         stopBackgroundThread()
         super.onPause()
@@ -643,6 +673,15 @@ class MainActivity : AppCompatActivity() {
                 addTarget(imageReader.surface)
                 surface?.let { addTarget(it) }
                 applyPhotoParamsToRequest(this)
+                currentFlashMode.applyToRequest(this, isStillCapture = true)
+                set(
+                    CaptureRequest.JPEG_ORIENTATION,
+                    CaptureOrientationCalculator.captureRotation(
+                        sensorOrientation = currentSensorOrientation,
+                        lensFacing = currentLensFacing,
+                        deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
+                    ).degrees
+                )
             }
 
             session.stopRepeating()
@@ -687,7 +726,12 @@ class MainActivity : AppCompatActivity() {
         pendingCaptureResult = null
 
         try {
-            val savedUri = rawMediaStore.saveRawImage(image, characteristics, captureResult)
+            val rotation = CaptureOrientationCalculator.captureRotation(
+                sensorOrientation = currentSensorOrientation,
+                lensFacing = currentLensFacing,
+                deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
+            )
+            val savedUri = rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
             updateRecentPhotoPreview(savedUri)
             image.close()
             finishCaptureSuccessfully()
@@ -851,7 +895,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshActiveCameraCharacteristics() {
         activeCameraCharacteristics = try {
-            cameraManager().getCameraCharacteristics(activeMetadataCameraId())
+            cameraManager().getCameraCharacteristics(activeMetadataCameraId()).also { characteristics ->
+                currentSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+                currentLensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            }
         } catch (e: CameraAccessException) {
             null
         }
@@ -888,6 +935,7 @@ class MainActivity : AppCompatActivity() {
             fallbackAutoIso = previewAutoIso,
             fallbackAutoShutterNanos = previewAutoShutterNanos,
         )
+        currentFlashMode.applyToRequest(builder, isStillCapture = false)
     }
 
     private fun showToast(message: String) {

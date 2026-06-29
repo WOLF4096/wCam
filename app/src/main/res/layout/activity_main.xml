@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout 
+<androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/main"
-    android:layout_width="match_parent"  
+    android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
     tools:context=".MainActivity">
@@ -28,11 +28,11 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <TextView android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="闪光灯" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="直方图" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="网格线" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="分辨率" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_format" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="格式"   android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_flash" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_histogram" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_grid_lines" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_resolution" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_format" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_format" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
     </LinearLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -49,7 +49,7 @@
             android:layout_height="60dp"
             android:layout_marginStart="32dp"
             android:background="@drawable/bg_gallery_modern"
-            android:text="相册"
+            android:text="@string/action_gallery"
             android:textColor="#E0E0E0"
             android:textSize="14sp"
             android:gravity="center"
@@ -73,7 +73,7 @@
             android:layout_height="60dp"
             android:layout_marginEnd="32dp"
             android:background="@drawable/bg_switch_modern"
-            android:text="录像"
+            android:text="@string/action_video"
             android:textColor="#E0E0E0"
             android:textSize="14sp"
             android:gravity="center"
@@ -132,10 +132,10 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <TextView android:id="@+id/btn_lens_front" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="前置" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_lens_wide"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="广角" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_lens_main"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="主摄" android:textColor="#FFCC00" android:textSize="18sp" android:textStyle="bold" android:gravity="center" />
-        <TextView android:id="@+id/btn_lens_tele"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="长焦" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_lens_front" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_front" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_lens_wide"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_wide" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
+        <TextView android:id="@+id/btn_lens_main"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_main" android:textColor="#FFCC00" android:textSize="18sp" android:textStyle="bold" android:gravity="center" />
+        <TextView android:id="@+id/btn_lens_tele"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_tele" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
     </LinearLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -173,7 +173,7 @@
             android:layout_marginStart="12dp"
             android:layout_marginTop="12dp"
             android:background="@drawable/bg_glass_panel"
-            android:text="直方图区域"
+            android:text="@string/histogram_placeholder"
             android:textColor="#B3FFFFFF"
             android:textSize="14sp"
             android:gravity="center"
@@ -190,7 +190,7 @@
             android:background="@drawable/bg_glass_panel"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
-            
+
         <View
             android:layout_width="40dp"
             android:layout_height="52dp"
@@ -224,7 +224,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="输出格式:"
+                android:text="@string/output_format_label"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp" />
             <Spinner
@@ -255,7 +255,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="去马赛克:"
+                    android:text="@string/demosaic_label"
                     android:textColor="#E0E0E0"
                     android:textSize="13sp" />
                 <Spinner
@@ -274,7 +274,7 @@
                     android:id="@+id/tv_jpg_quality_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="JPG 质量: 95%"
+                    android:text="@string/jpg_quality_label"
                     android:textColor="#E0E0E0"
                     android:textSize="13sp" />
                 <SeekBar

@@ -1,3 +1,18 @@
 <resources>
     <string name="app_name">wCam</string>
+    <string name="toolbar_flash">闪光灯</string>
+    <string name="toolbar_histogram">直方图</string>
+    <string name="toolbar_grid_lines">网格线</string>
+    <string name="toolbar_resolution">分辨率</string>
+    <string name="toolbar_format">格式</string>
+    <string name="action_gallery">相册</string>
+    <string name="action_video">录像</string>
+    <string name="lens_front">前置</string>
+    <string name="lens_wide">广角</string>
+    <string name="lens_main">主摄</string>
+    <string name="lens_tele">长焦</string>
+    <string name="histogram_placeholder">直方图区域</string>
+    <string name="output_format_label">输出格式:</string>
+    <string name="demosaic_label">去马赛克:</string>
+    <string name="jpg_quality_label">JPG 质量: 95%</string>
 </resources>
