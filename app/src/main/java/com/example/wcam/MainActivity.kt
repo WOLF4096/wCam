@@ -56,6 +56,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.exifinterface.media.ExifInterface
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.Executor
 import kotlin.math.abs
@@ -98,6 +101,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewHistogram: View
     private lateinit var viewPip: View
     private lateinit var viewPipInner: View
+    private lateinit var viewFocusRing: View
 
     private lateinit var btnLensFront: TextView
     private lateinit var btnLensWide: TextView
@@ -112,6 +116,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var seekbarJpgQuality: SeekBar
     private lateinit var formatPanelController: FormatPanelController
     private lateinit var rawMediaStore: RawMediaStore
+    private lateinit var preferenceManager: PreferenceManager
     private lateinit var deviceOrientationTracker: DeviceOrientationTracker
     private lateinit var tvValEv: TextView
     private lateinit var tvValWb: TextView
@@ -154,6 +159,7 @@ class MainActivity : AppCompatActivity() {
 
     private var aeState = CameraMetadata.CONTROL_AE_STATE_INACTIVE
     private var isPrecaptureCallbackActive = false
+    private var isAeAfLocked = false
 
     private var currentZoomRatio = 1.0f
     private var maxZoomRatio = 10.0f
@@ -182,9 +188,39 @@ class MainActivity : AppCompatActivity() {
         setupListeners()
         setupParamGestures()
         setupZoomGesture()
+        loadSettings()
+    }
+
+    private fun loadSettings() {
+        val lastLens = preferenceManager.getString(PreferenceManager.KEY_LENS_ID, "0")
+        val lastPhysical = preferenceManager.getString(PreferenceManager.KEY_PHYSICAL_LENS_ID, "2")
+        currentLogicalCameraId = lastLens
+        currentPhysicalCameraId = lastPhysical
+        
+        isGridVisible = preferenceManager.getBoolean(PreferenceManager.KEY_GRID_VISIBLE, false)
+        isHistogramVisible = preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false)
+        
+        val quality = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
+        seekbarJpgQuality.progress = quality
+    }
+
+    private fun saveCurrentLensSettings() {
+        preferenceManager.saveString(PreferenceManager.KEY_LENS_ID, currentLogicalCameraId)
+        currentPhysicalCameraId?.let { preferenceManager.saveString(PreferenceManager.KEY_PHYSICAL_LENS_ID, it) }
     }
 
     private fun setupZoomGesture() {
+        val gestureDetector = android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                triggerFocusAndMetering(e.x, e.y)
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                toggleAeAfLock()
+            }
+        })
+
         scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 currentZoomRatio = (currentZoomRatio * detector.scaleFactor).coerceIn(1.0f, maxZoomRatio)
@@ -219,8 +255,75 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             scaleGestureDetector.onTouchEvent(event)
+            gestureDetector.onTouchEvent(event)
             true
         }
+    }
+
+    private fun triggerFocusAndMetering(x: Float, y: Float) {
+        val sensorArraySize = activeCameraCharacteristics?.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+        
+        // Visual indicator
+        viewFocusRing.x = x - viewFocusRing.width / 2
+        viewFocusRing.y = y - viewFocusRing.height / 2 + textureView.top
+        viewFocusRing.visibility = View.VISIBLE
+        viewFocusRing.alpha = 1.0f
+        viewFocusRing.scaleX = 1.2f
+        viewFocusRing.scaleY = 1.2f
+        viewFocusRing.animate().scaleX(1.0f).scaleY(1.0f).alpha(0.5f).setDuration(300).withEndAction {
+            viewFocusRing.postDelayed({ viewFocusRing.visibility = View.GONE }, 1000)
+        }.start()
+
+        // Map touch coordinates to sensor coordinates
+        val viewW = textureView.width.toFloat()
+        val viewH = textureView.height.toFloat()
+        
+        val sensorX = (y / viewH * sensorArraySize.width()).toInt()
+        val sensorY = ((1.0f - x / viewW) * sensorArraySize.height()).toInt()
+        
+        val halfRectSize = 100
+        val focusRect = android.graphics.Rect(
+            (sensorX - halfRectSize).coerceIn(0, sensorArraySize.width()),
+            (sensorY - halfRectSize).coerceIn(0, sensorArraySize.height()),
+            (sensorX + halfRectSize).coerceIn(0, sensorArraySize.width()),
+            (sensorY + halfRectSize).coerceIn(0, sensorArraySize.height())
+        )
+        
+        val meteringRect = android.hardware.camera2.params.MeteringRectangle(focusRect, 1000)
+        
+        previewRequestBuilder?.apply {
+            set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(meteringRect))
+            set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(meteringRect))
+            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
+            set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START)
+        }
+        
+        try {
+            captureSession?.capture(previewRequestBuilder!!.build(), previewCaptureCallback, backgroundHandler)
+            previewRequestBuilder?.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+            previewRequestBuilder?.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
+            resumePreview()
+            showToast("对焦中...")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun toggleAeAfLock() {
+        isAeAfLocked = !isAeAfLocked
+        previewRequestBuilder?.apply {
+            if (isAeAfLocked) {
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_EDOF) // Locks focus
+                set(CaptureRequest.CONTROL_AE_LOCK, true)
+                showToast("AE/AF 已锁定")
+            } else {
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_LOCK, false)
+                showToast("AE/AF 已解锁")
+            }
+        }
+        applyPhotoParamsToPreview()
     }
 
     private fun updatePipUI() {
@@ -246,6 +349,7 @@ class MainActivity : AppCompatActivity() {
         viewHistogram = findViewById(R.id.view_histogram)
         viewPip = findViewById(R.id.view_pip)
         viewPipInner = findViewById(R.id.view_pip_inner)
+        viewFocusRing = findViewById(R.id.view_focus_ring)
 
         btnLensFront = findViewById(R.id.btn_lens_front)
         btnLensWide = findViewById(R.id.btn_lens_wide)
@@ -265,6 +369,7 @@ class MainActivity : AppCompatActivity() {
             spinnerDemosaicAlgo = spinnerDemosaicAlgo,
         )
         rawMediaStore = RawMediaStore(this)
+        preferenceManager = PreferenceManager(this)
         deviceOrientationTracker = DeviceOrientationTracker(this)
         btnFlash.text = currentFlashMode.label
         btnFlash.setTextColor(currentFlashMode.textColor)
@@ -310,12 +415,14 @@ class MainActivity : AppCompatActivity() {
             isHistogramVisible = !isHistogramVisible
             viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
             btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
+            preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isHistogramVisible)
         }
 
         btnGridLines.setOnClickListener {
             isGridVisible = !isGridVisible
             viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
             btnGridLines.setTextColor(if (isGridVisible) Color.parseColor("#FFCC00") else Color.WHITE)
+            preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, isGridVisible)
         }
 
         btnResolution.setOnClickListener { view ->
@@ -359,6 +466,9 @@ class MainActivity : AppCompatActivity() {
         seekbarJpgQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvJpgQualityTitle.text = "JPG 质量: $progress%"
+                if (fromUser) {
+                    preferenceManager.saveInt(PreferenceManager.KEY_JPG_QUALITY, progress)
+                }
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
@@ -504,12 +614,14 @@ class MainActivity : AppCompatActivity() {
             if (currentLogicalCameraId != logicalId) {
                 currentLogicalCameraId = logicalId
                 currentPhysicalCameraId = physicalId
+                saveCurrentLensSettings()
                 closeCamera()
                 if (textureView.isAvailable) {
                     openCamera()
                 }
             } else if (currentPhysicalCameraId != physicalId) {
                 currentPhysicalCameraId = physicalId
+                saveCurrentLensSettings()
                 refreshActiveCameraCharacteristics()
                 refreshCameraCapabilities()
                 configureImageReaders()
@@ -998,12 +1110,58 @@ class MainActivity : AppCompatActivity() {
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore entry")
 
+        val quality = seekbarJpgQuality.progress
         contentResolver.openOutputStream(uri)?.use { os ->
-            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, os)
+            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
         } ?: throw IOException("Failed to open output stream")
+        
+        // Write EXIF
+        try {
+            contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                val exif = ExifInterface(pfd.fileDescriptor)
+                writeExifMetadata(exif, rotationDegrees)
+                exif.saveAttributes()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         return uri
+    }
+
+    private fun writeExifMetadata(exif: ExifInterface, rotation: Int) {
+        val result = pendingCaptureResult ?: return
+        val characteristics = activeCameraCharacteristics ?: return
+
+        // Basic settings
+        exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER)
+        exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL)
+        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "wCam 1.0")
+        
+        // Exposure settings
+        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+        val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+        val aperture = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
+        val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH)
+
+        iso?.let { exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString()) }
+        exposureTime?.let {
+            val exposureInSeconds = it / 1_000_000_000.0
+            exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureInSeconds.toString())
+        }
+        aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
+        focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
+        
+        // Date Time
+        val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: System.currentTimeMillis()
+        val sdf = java.text.SimpleDateFormat("yyyy:MM:dd HH:mm:ss", java.util.Locale.US)
+        exif.setAttribute(ExifInterface.TAG_DATETIME, sdf.format(java.util.Date()))
+        
+        // Flash
+        val flashState = result.get(CaptureResult.FLASH_STATE)
+        val flashFired = flashState == CaptureResult.FLASH_STATE_FIRED || flashState == CaptureResult.FLASH_STATE_PARTIAL
+        exif.setAttribute(ExifInterface.TAG_FLASH, if (flashFired) "1" else "0")
     }
 
     private fun createPhotoDisplayName(extension: String): String {
