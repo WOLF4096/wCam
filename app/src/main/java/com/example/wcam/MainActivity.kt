@@ -1,6 +1,7 @@
 package com.example.wcam
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -16,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
@@ -37,6 +39,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.util.concurrent.Executor
+import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
 
@@ -73,9 +76,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvJpgQualityTitle: TextView
     private lateinit var seekbarJpgQuality: SeekBar
 
-    // ★ 核心相机状态记录
-    private var currentLogicalCameraId = "0"     // 逻辑ID：0为后置组，1为前置
-    private var currentPhysicalCameraId: String? = "2" // 物理ID：2主摄，3长焦，4广角 (前置为空)
+    // 核心相机状态记录
+    private var currentLogicalCameraId = "0"
+    private var currentPhysicalCameraId: String? = "2"
 
     private var isGridVisible = false
     private var isHistogramVisible = false
@@ -102,6 +105,7 @@ class MainActivity : AppCompatActivity() {
 
         initViews()
         setupListeners()
+        setupParamGestures() // ★ 初始化专业参数的滑动控制
     }
 
     private fun initViews() {
@@ -203,12 +207,97 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // ★ 物理镜头切换逻辑
+    // ★ 新增：装载底部曝光参数的滑动监听器
+    private fun setupParamGestures() {
+        // 定义各个参数支持的档位数组
+        val evValues = listOf("-2.0", "-1.5", "-1.0", "-0.5", "0.0", "+0.5", "+1.0", "+1.5", "+2.0")
+        val wbValues = listOf("3200K", "4000K", "5200K", "6000K", "7000K")
+        val isoValues = listOf("50", "100", "200", "400", "800", "1600", "3200", "6400")
+        val sValues = listOf("1/1000", "1/500", "1/250", "1/125", "1/60", "1/30", "1/15", "1/8")
+        val afValues = listOf("0.1", "0.3", "0.5", "0.7", "0.9", "1.0")
+
+        // 实例化控制器 (传入: 父布局ID, 文本ID, 可选数值数组, 默认索引, 自动模式下的基准代表值)
+        ParamController(R.id.layout_param_ev, R.id.tv_val_ev, evValues, 4, "0.0").setup()
+        ParamController(R.id.layout_param_wb, R.id.tv_val_wb, wbValues, 2, "5200K").setup()
+        ParamController(R.id.layout_param_iso, R.id.tv_val_iso, isoValues, 1, "100").setup()
+        ParamController(R.id.layout_param_s, R.id.tv_val_s, sValues, 4, "1/60").setup()
+        ParamController(R.id.layout_param_af, R.id.tv_val_af, afValues, 2, "0.5").setup()
+    }
+
+    // ★ 新增：通用参数滑动控制类
+    inner class ParamController(
+        private val layoutId: Int,
+        private val textId: Int,
+        private val values: List<String>,
+        private var currentIndex: Int,
+        private val autoValue: String
+    ) {
+        private var isAuto = true // 默认状态为自动
+        private lateinit var tvValue: TextView
+
+        @SuppressLint("ClickableViewAccessibility")
+        fun setup() {
+            val layout = findViewById<LinearLayout>(layoutId)
+            tvValue = findViewById(textId)
+
+            var startY = 0f
+            // 滑动灵敏度，数字越小越灵敏
+            val scrollSensitivity = 40f
+
+            layout.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startY = event.y
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val deltaY = event.y - startY
+                        if (abs(deltaY) > scrollSensitivity) {
+                            if (deltaY < 0) {
+                                // 向上滑动 -> 增大数值
+                                currentIndex = (currentIndex + 1).coerceAtMost(values.size - 1)
+                            } else {
+                                // 向下滑动 -> 减小数值
+                                currentIndex = (currentIndex - 1).coerceAtLeast(0)
+                            }
+                            isAuto = false // 触发手动修改后退出自动模式
+                            updateUI()
+                            startY = event.y // 刷新起点，支持不松手连续调节
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        // 若手指抬起时几乎没有发生位移，判定为“点击”事件，用于恢复自动模式
+                        if (abs(event.y - startY) < 10f) {
+                            isAuto = true
+                            updateUI()
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+            updateUI() // 初始化显示
+        }
+
+        private fun updateUI() {
+            if (isAuto) {
+                // 自动模式：显示底层当前估算数值，颜色为白色
+                // （真实业务中应在 CaptureResult 回调中动态替换 autoValue）
+                tvValue.text = autoValue
+                tvValue.setTextColor(Color.WHITE)
+            } else {
+                // 手动模式：显示用户选择的具体档位，颜色为警告黄
+                tvValue.text = values[currentIndex]
+                tvValue.setTextColor(Color.parseColor("#FFCC00"))
+            }
+        }
+    }
+
     private fun setupLensSelector() {
         val buttons = listOf(btnLensFront, btnLensWide, btnLensMain, btnLensTele)
 
         val switchLens = { selectedBtn: TextView, logicalId: String, physicalId: String? ->
-            // UI 更新
             buttons.forEach {
                 it.setTextColor(Color.parseColor("#B3FFFFFF"))
                 it.textSize = 14f
@@ -218,15 +307,12 @@ class MainActivity : AppCompatActivity() {
             selectedBtn.textSize = 18f
             selectedBtn.setTypeface(null, android.graphics.Typeface.BOLD)
 
-            // 相机逻辑流转
             if (currentLogicalCameraId != logicalId) {
-                // 如果是跨逻辑相机切换（比如前后置切换），必须整体重启 CameraDevice
                 currentLogicalCameraId = logicalId
                 currentPhysicalCameraId = physicalId
                 closeCamera()
                 if (textureView.isAvailable) openCamera()
             } else if (currentPhysicalCameraId != physicalId) {
-                // 如果只是同逻辑下的物理镜头切换（如广角切主摄），只需重建 Session 即可实现平滑切换
                 currentPhysicalCameraId = physicalId
                 createCameraPreviewSession()
             }
@@ -319,7 +405,6 @@ class MainActivity : AppCompatActivity() {
 
         val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
-            // ★ 修改：使用当前指定的逻辑 Camera ID 打开相机
             manager.openCamera(currentLogicalCameraId, stateCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
@@ -342,12 +427,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ★ 修改：全面应用 SessionConfiguration 指定特定的物理镜头
     private fun createCameraPreviewSession() {
         if (cameraDevice == null) return
 
         try {
-            // 清理旧的 Session 防止阻塞
             captureSession?.close()
 
             val texture = textureView.surfaceTexture!!
@@ -357,16 +440,13 @@ class MainActivity : AppCompatActivity() {
             previewRequestBuilder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             previewRequestBuilder!!.addTarget(surface)
 
-            // API 28+ 物理摄像头路由支持
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val outputConfig = OutputConfiguration(surface)
 
-                // 如果指定了物理摄像头ID（例如 2, 3, 4），则绑定之
                 if (currentPhysicalCameraId != null) {
                     outputConfig.setPhysicalCameraId(currentPhysicalCameraId)
                 }
 
-                // 转换 backgroundHandler 为 Executor 提供给 Session
                 val executor = Executor { command -> backgroundHandler?.post(command) }
 
                 val sessionConfig = SessionConfiguration(
@@ -391,7 +471,6 @@ class MainActivity : AppCompatActivity() {
                 )
                 cameraDevice!!.createCaptureSession(sessionConfig)
             } else {
-                // 降级方案 (不支持物理镜头级别的手动分流)
                 cameraDevice!!.createCaptureSession(
                     listOf(surface),
                     object : CameraCaptureSession.StateCallback() {
