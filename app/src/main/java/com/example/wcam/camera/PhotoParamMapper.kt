@@ -26,6 +26,14 @@ object PhotoParamMapper {
         }
     }
 
+    fun parseIsoLabel(label: String): Int {
+        return if (label.endsWith("k")) {
+            (label.removeSuffix("k").toFloat() * 1000).toInt()
+        } else {
+            label.toInt()
+        }
+    }
+
     fun clampIso(value: Int, range: IntRange): Int = value.coerceIn(range)
 
     fun clampExposureTime(value: Long, range: LongRange): Long = value.coerceIn(range)
@@ -90,9 +98,13 @@ object PhotoParamMapper {
     }
 
     fun formatFocusDistanceDisplay(focusDistance: Float): String {
-        if (focusDistance <= 0f) return "∞"
+        if (focusDistance <= 0.01f) return "∞"
         val meters = 1f / focusDistance
-        return String.format(Locale.US, "%.1fm", meters)
+        return if (meters < 1.0f) {
+            String.format(Locale.US, "%dcm", (meters * 100).toInt())
+        } else {
+            String.format(Locale.US, "%.1fm", meters)
+        }
     }
 
     fun gainsToKelvinLabel(gains: RggbChannelVector, supportedValues: List<Int>): String {
@@ -155,7 +167,7 @@ object PhotoParamMapper {
                         iso = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = clampIso(label.toInt(), range),
+                            manualValue = clampIso(parseIsoLabel(label), range),
                         ),
                     )
                 }
@@ -181,11 +193,19 @@ object PhotoParamMapper {
                 if (minDistance <= 0f) {
                     currentState
                 } else {
+                    val focusDistance = if (label == "∞") 0f else {
+                        val meters = if (label.endsWith("cm")) {
+                            label.removeSuffix("cm").toFloat() / 100f
+                        } else {
+                            label.removeSuffix("m").toFloat()
+                        }
+                        1f / meters
+                    }
                     currentState.copy(
                         af = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = mapAfProgressToDistance(label.toFloat(), minDistance),
+                            manualValue = focusDistance.coerceIn(0f, minDistance),
                         ),
                     )
                 }

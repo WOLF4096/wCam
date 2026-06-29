@@ -239,6 +239,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var lastPreviewFrameTime = 0L
+    private val freezeWatchdog = object : Runnable {
+        override fun run() {
+            if (cameraDevice != null && lastPreviewFrameTime > 0) {
+                val diff = System.currentTimeMillis() - lastPreviewFrameTime
+                if (diff > 2000) { // 2 seconds of no frames
+                    android.util.Log.w("CameraWatchdog", "Stream frozen for $diff ms, reconnecting...")
+                    runOnUiThread {
+                        showToast("画面已卡住，正在尝试重启...")
+                        closeCamera()
+                        backgroundHandler?.postDelayed({
+                            openCamera()
+                        }, 500)
+                    }
+                    lastPreviewFrameTime = System.currentTimeMillis() // Reset to avoid loop
+                }
+            }
+            backgroundHandler?.postDelayed(this, 1000)
+        }
+    }
+
     companion object {
         private const val REQUEST_CAMERA_PERMISSION = 1
         
@@ -272,10 +293,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadSettings() {
-        val lastLens = preferenceManager.getString(PreferenceManager.KEY_LENS_ID, "0")
-        val lastPhysical = preferenceManager.getString(PreferenceManager.KEY_PHYSICAL_LENS_ID, "2")
-        currentLogicalCameraId = lastLens
-        currentPhysicalCameraId = lastPhysical
+        // Force default Photo mode and Main lens on startup
+        currentLogicalCameraId = "0"
+        currentPhysicalCameraId = "2"
+        isPhotoMode = true
         
         isGridVisible = preferenceManager.getBoolean(PreferenceManager.KEY_GRID_VISIBLE, false)
         viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
@@ -286,7 +307,6 @@ class MainActivity : AppCompatActivity() {
         tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
         btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         
-        isPhotoMode = preferenceManager.getBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, true)
         updateModeUI()
 
         selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "16:9")
@@ -298,26 +318,23 @@ class MainActivity : AppCompatActivity() {
         seekbarJpgQuality.progress = jpgQual
         tvJpgQualityTitle.text = "JPG 质量: $jpgQual%"
 
-        if (isPhotoMode) {
-            btnResolution.text = "4:3"
-        } else {
-            btnResolution.text = selectedVideoRatioStr
-        }
+        btnResolution.text = if (isPhotoMode) "4:3" else selectedVideoRatioStr
         updateCropOverlayUI()
     }
 
     private fun updateModeUI() {
         if (isPhotoMode) {
-            btnModeSwitch.text = "录像"
             btnResolution.text = "4:3"
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
             viewCropOverlay.visibility = View.VISIBLE
         } else {
-            btnModeSwitch.text = "照片"
             btnResolution.text = selectedVideoRatioStr
-            btnShutter.setBackgroundResource(R.drawable.bg_shutter_video) // Assuming this drawable exists or I'll use color
+            btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
             viewCropOverlay.visibility = View.GONE
         }
+        btnModeSwitch.text = ""
+        btnModeSwitch.setCompoundDrawablesWithIntrinsicBounds(0, R.drawable.ic_mode_switch, 0, 0)
+        btnModeSwitch.setBackgroundResource(0) // Remove previous background if any
         if (isFormatPanelOpen) {
             updateFormatPanelUI()
         }
@@ -785,9 +802,17 @@ class MainActivity : AppCompatActivity() {
         fun setup() {
             val layout = findViewById<LinearLayout>(layoutId)
             var startY = 0f
-            val scrollSensitivity = 40f
+            val scrollSensitivity = 30f
+
+            val gestureDetector = android.view.GestureDetector(layout.context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onDoubleTap(e: MotionEvent): Boolean {
+                    onParamAutoReset(key)
+                    return true
+                }
+            })
 
             layout.setOnTouchListener { _, event ->
+                gestureDetector.onTouchEvent(event)
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         startY = event.y
@@ -805,7 +830,10 @@ class MainActivity : AppCompatActivity() {
                                     PhotoParamMapper.formatEvDisplay(compensation, step)
                                 }
                                 ParamKey.WB -> previewAutoKelvinLabel
-                                ParamKey.ISO -> previewAutoIso?.toString()
+                                ParamKey.ISO -> previewAutoIso?.let { iso ->
+                                    if (iso >= 1000) String.format(java.util.Locale.US, "%.1fk", iso / 1000.0)
+                                    else iso.toString()
+                                }
                                 ParamKey.SHUTTER -> previewAutoShutterNanos?.let(PhotoParamMapper::formatShutterDisplay)
                                 ParamKey.AF -> previewAutoFocusDistance?.let(PhotoParamMapper::formatFocusDistanceDisplay)
                             } ?: paramVal.displayValue
@@ -827,13 +855,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         true
                     }
-                    MotionEvent.ACTION_UP -> {
-                        if (abs(event.y - startY) < 10f) {
-                            onParamAutoReset(key)
-                        }
-                        true
-                    }
-                    else -> false
+                    else -> true
                 }
             }
         }
@@ -988,6 +1010,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         startBackgroundThread()
         backgroundHandler?.post(histogramTask)
+        backgroundHandler?.post(freezeWatchdog)
         deviceOrientationTracker.enable()
         rawMediaStore.findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
         if (textureView.isAvailable) {
@@ -1077,6 +1100,7 @@ class MainActivity : AppCompatActivity() {
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
+            lastPreviewFrameTime = System.currentTimeMillis()
             aeState = result.get(CaptureResult.CONTROL_AE_STATE) ?: CameraMetadata.CONTROL_AE_STATE_INACTIVE
             updateAutoValuesFromResult(result)
             runOnUiThread {
@@ -1837,6 +1861,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) {
         val listPopupWindow = ListPopupWindow(this)
+        listPopupWindow.animationStyle = 0 // Disable animation
         listPopupWindow.anchorView = anchor
         val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -1962,27 +1987,36 @@ class MainActivity : AppCompatActivity() {
     private fun setupDynamicParamGestures() {
         val caps = cameraCapabilities
         
-        val evRange = caps.aeCompensationRange?.let { it.lower..it.upper } ?: 0..0
-        val evStep = caps.aeCompensationStep ?: 1f
-        val evValues = if (evRange.first != evRange.last) {
-             (evRange.first..evRange.last step 1).map { PhotoParamMapper.formatEvDisplay(it, evStep) }
-        } else listOf("0.0")
+        // EV: -4.0 to +4.0, 0.2 step (Linear)
+        val evValues = (-20..20).map { String.format(java.util.Locale.US, "%+.1f", it * 0.2f) }
 
-        val wbValues = (2000..8000 step 100).map { "${it}K" }
+        // WB: 2000K to 8000K, 200 step (Linear)
+        val wbValues = (2000..8000 step 200).map { "${it}K" }
         
-        val isoRange = caps.isoRange?.let { it.lower..it.upper } ?: 100..6400
-        val isoValues = generateLogValues(isoRange.first.toDouble(), isoRange.last.toDouble(), 40).map { it.toInt().toString() }
+        // ISO: 50 to 19.2k (Logarithmic)
+        val isoValues = generateLogValues(50.0, 19200.0, 40).map { 
+            if (it >= 1000) String.format(java.util.Locale.US, "%.1fk", it / 1000.0)
+            else it.toInt().toString()
+        }
         
-        val sRange = caps.exposureTimeRange?.let { it.lower..it.upper } ?: 1000000L..1000000000L
-        val sValues = generateLogValues(sRange.first.toDouble(), sRange.last.toDouble(), 40).map { PhotoParamMapper.formatShutterDisplay(it.toLong()) }
+        // S: 1/12000s to 32s (Logarithmic)
+        val sRangeMin = 1_000_000_000L / 12000
+        val sRangeMax = 32_000_000_000L
+        val sValues = generateLogValues(sRangeMin.toDouble(), sRangeMax.toDouble(), 50).map { 
+            PhotoParamMapper.formatShutterDisplay(it.toLong()) 
+        }
         
-        val afValues = (0..100).map { (it / 100.0).toString() }
+        // AF: 15cm to Infinity (Logarithmic)
+        // Camera2 focus distance is in diopters (1/m). 15cm = 6.66 diopters. Infinity = 0 diopters.
+        val afValues = generateLogValues(0.01, 6.67, 40).reversed().map {
+            PhotoParamMapper.formatFocusDistanceDisplay(it.toFloat())
+        } + "∞"
 
-        ParamController(R.id.layout_param_ev, tvValEv, evValues, evValues.indexOf("0.0").coerceAtLeast(0), ParamKey.EV).setup()
+        ParamController(R.id.layout_param_ev, tvValEv, evValues, evValues.indexOf("+0.0").coerceAtLeast(0), ParamKey.EV).setup()
         ParamController(R.id.layout_param_wb, tvValWb, wbValues, wbValues.indexOf("5200K").coerceAtLeast(0), ParamKey.WB).setup()
-        ParamController(R.id.layout_param_iso, tvValIso, isoValues, isoValues.indexOf("100").coerceAtLeast(0), ParamKey.ISO).setup()
-        ParamController(R.id.layout_param_s, tvValS, sValues, sValues.indexOf("1/125s").coerceAtLeast(0), ParamKey.SHUTTER).setup()
-        ParamController(R.id.layout_param_af, tvValAf, afValues, 50, ParamKey.AF).setup()
+        ParamController(R.id.layout_param_iso, tvValIso, isoValues, findClosestIndex("100", isoValues), ParamKey.ISO).setup()
+        ParamController(R.id.layout_param_s, tvValS, sValues, findClosestIndex("1/125s", sValues), ParamKey.SHUTTER).setup()
+        ParamController(R.id.layout_param_af, tvValAf, afValues, afValues.size - 1, ParamKey.AF).setup()
     }
 
     private fun generateLogValues(min: Double, max: Double, steps: Int): List<Double> {
