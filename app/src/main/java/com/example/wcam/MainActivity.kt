@@ -740,6 +740,38 @@ class MainActivity : AppCompatActivity() {
         view.setTextColor(Color.parseColor(if (isAuto) PARAM_TEXT_AUTO_COLOR else PARAM_TEXT_MANUAL_COLOR))
     }
 
+    private fun findClosestIndex(target: String, values: List<String>): Int {
+        val targetNum = extractNumber(target) ?: return 0
+        var minDiff = Float.MAX_VALUE
+        var bestIdx = 0
+        for (i in values.indices) {
+            val valNum = extractNumber(values[i]) ?: continue
+            val diff = abs(targetNum - valNum)
+            if (diff < minDiff) {
+                minDiff = diff
+                bestIdx = i
+            }
+        }
+        return bestIdx
+    }
+
+    private fun extractNumber(s: String): Float? {
+        return try {
+            if (s.contains("/")) {
+                val parts = s.replace(Regex("[^0-9./]"), "").split("/")
+                if (parts.size == 2) parts[0].toFloat() / parts[1].toFloat() else parts[0].toFloat()
+            } else {
+                s.replace(Regex("[^0-9.-]"), "").toFloat()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun gcd(a: Int, b: Int): Int {
+        return if (b == 0) a else gcd(b, a % b)
+    }
+
     inner class ParamController(
         private val layoutId: Int,
         private val tvValue: TextView,
@@ -757,6 +789,27 @@ class MainActivity : AppCompatActivity() {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         startY = event.y
+                        val paramVal = when(key) {
+                            ParamKey.EV -> photoParamState.ev
+                            ParamKey.WB -> photoParamState.wb
+                            ParamKey.ISO -> photoParamState.iso
+                            ParamKey.SHUTTER -> photoParamState.shutter
+                            ParamKey.AF -> photoParamState.af
+                        }
+                        if (paramVal.isAuto) {
+                            val currentDisplay = when(key) {
+                                ParamKey.EV -> previewAutoCompensation?.let { compensation ->
+                                    val step = cameraCapabilities.aeCompensationStep ?: 0f
+                                    PhotoParamMapper.formatEvDisplay(compensation, step)
+                                }
+                                ParamKey.WB -> previewAutoKelvinLabel
+                                ParamKey.ISO -> previewAutoIso?.toString()
+                                ParamKey.SHUTTER -> previewAutoShutterNanos?.let(PhotoParamMapper::formatShutterDisplay)
+                                ParamKey.AF -> previewAutoFocusDistance?.let(PhotoParamMapper::formatFocusDistanceDisplay)
+                            } ?: paramVal.displayValue
+                            
+                            currentIndex = findClosestIndex(currentDisplay, values)
+                        }
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -806,18 +859,36 @@ class MainActivity : AppCompatActivity() {
                 if (!isPhotoMode) {
                     val newId = physicalId ?: logicalId
                     val caps = allVideoCapabilities[newId] ?: emptyList()
-                    val ratioCaps = caps.filter { it.ratioStr == selectedVideoRatioStr }
-                    val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }
-                        .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) })
-                        .firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
                     
-                    if (bestFor30 != null) {
-                        selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"
-                        selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps
+                    val supported = caps.find { 
+                        "${it.width}x${it.height}" == selectedVideoSizeStr && it.maxFps >= selectedVideoFps 
+                    }
+                    
+                    if (supported == null) {
+                        // Try fallback to 1080p@60
+                        val fallback = caps.find { it.width == 1920 && it.height == 1080 && it.maxFps >= 60 }
+                        if (fallback != null) {
+                            selectedVideoSizeStr = "1920x1080"
+                            selectedVideoFps = 60
+                            selectedVideoRatioStr = fallback.ratioStr
+                        } else {
+                            // Last resort: 30fps max res for current ratio or any ratio
+                            val ratioCaps = caps.filter { it.ratioStr == selectedVideoRatioStr }
+                            val best = ratioCaps.filter { it.maxFps >= 30 }
+                                .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) })
+                                .firstOrNull() ?: caps.maxByOrNull { it.width * it.height }
+                            
+                            if (best != null) {
+                                selectedVideoSizeStr = "${best.width}x${best.height}"
+                                selectedVideoFps = if (best.maxFps >= 30) 30 else best.maxFps
+                                selectedVideoRatioStr = best.ratioStr
+                            }
+                        }
                         preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
                         preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
-                        btnResolution.text = selectedVideoRatioStr
+                        preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, selectedVideoRatioStr)
                     }
+                    btnResolution.text = selectedVideoRatioStr
                 }
 
                 closeCamera()
@@ -1066,7 +1137,28 @@ class MainActivity : AppCompatActivity() {
                 val dimensions = selectedVideoSizeStr.split("x")
                 val w = dimensions[0].toInt()
                 val h = dimensions[1].toInt()
-                previewSize = Size(w, h)
+                
+                val supported = supportedSizes?.any { it.width == w && it.height == h } == true
+                if (supported) {
+                    previewSize = Size(w, h)
+                } else {
+                    // Fallback to 1080p@60 as requested when acquisition fails or unsupported
+                    val fallback = supportedSizes?.find { it.width == 1920 && it.height == 1080 }
+                        ?: supportedSizes?.maxByOrNull { it.width * it.height }
+                        ?: Size(1920, 1080)
+                    
+                    previewSize = fallback
+                    selectedVideoSizeStr = "${previewSize.width}x${previewSize.height}"
+                    selectedVideoFps = 60
+                    
+                    val common = gcd(previewSize.width, previewSize.height)
+                    selectedVideoRatioStr = "${previewSize.width / common}:${previewSize.height / common}"
+                    
+                    runOnUiThread {
+                        btnResolution.text = selectedVideoRatioStr
+                        showToast("已自动降级至 ${selectedVideoSizeStr}@${selectedVideoFps}fps")
+                    }
+                }
             }
 
             android.util.Log.i("CameraPreview", "Selected preview size: ${previewSize.width}x${previewSize.height} (Mode: ${if(isPhotoMode) "Photo" else "Video"})")
