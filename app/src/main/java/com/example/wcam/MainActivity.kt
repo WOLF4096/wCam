@@ -2,13 +2,9 @@
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ContentValues
-import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
@@ -21,30 +17,21 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.DngCreator
-import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
 import android.media.ImageReader
-import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
-import android.provider.MediaStore
-import android.util.Size
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
@@ -58,11 +45,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import java.io.File
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.Executor
 import kotlin.math.abs
 
@@ -70,17 +53,10 @@ import com.example.wcam.camera.CameraCapabilities
 import com.example.wcam.camera.PARAM_TEXT_AUTO_COLOR
 import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
 import com.example.wcam.camera.ParamKey
-import com.example.wcam.camera.ParamValue
 import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
-
-private const val RAW_MIME_TYPE = "image/x-adobe-dng"
-private const val RAW_FOLDER_NAME = "wCam"
-
-internal fun createRawDisplayName(timestampMillis: Long = System.currentTimeMillis()): String {
-    val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-    return "wcam_${formatter.format(Date(timestampMillis))}.dng"
-}
+import com.example.wcam.camera.RawMediaStore
+import com.example.wcam.ui.FormatPanelController
 
 class MainActivity : AppCompatActivity() {
 
@@ -116,6 +92,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var spinnerDemosaicAlgo: Spinner
     private lateinit var tvJpgQualityTitle: TextView
     private lateinit var seekbarJpgQuality: SeekBar
+    private lateinit var formatPanelController: FormatPanelController
+    private lateinit var rawMediaStore: RawMediaStore
     private lateinit var tvValEv: TextView
     private lateinit var tvValWb: TextView
     private lateinit var tvValIso: TextView
@@ -192,6 +170,13 @@ class MainActivity : AppCompatActivity() {
         spinnerDemosaicAlgo = findViewById(R.id.spinner_demosaic_algo)
         tvJpgQualityTitle = findViewById(R.id.tv_jpg_quality_title)
         seekbarJpgQuality = findViewById(R.id.seekbar_jpg_quality)
+        formatPanelController = FormatPanelController(
+            context = this,
+            spinnerMainFormat = spinnerMainFormat,
+            layoutJpgAdvancedOptions = layoutJpgAdvancedOptions,
+            spinnerDemosaicAlgo = spinnerDemosaicAlgo,
+        )
+        rawMediaStore = RawMediaStore(this)
         tvValEv = findViewById(R.id.tv_val_ev)
         tvValWb = findViewById(R.id.tv_val_wb)
         tvValIso = findViewById(R.id.tv_val_iso)
@@ -446,59 +431,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateFormatPanelUI() {
-        if (isPhotoMode) {
-            val photoFormats = listOf("JPG", "JPG + RAW", "RAW")
-            spinnerMainFormat.adapter = createWhiteTextAdapter(photoFormats)
-            spinnerMainFormat.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    val selected = photoFormats[position]
-                    if (selected == "JPG" || selected == "JPG + RAW") {
-                        layoutJpgAdvancedOptions.visibility = View.VISIBLE
-                        setupDemosaicSpinner()
-                    } else {
-                        layoutJpgAdvancedOptions.visibility = View.GONE
-                    }
-                }
-
-                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-            }
-        } else {
-            val videoFormats = listOf("H264", "H265", "ProRes", "MPEG4")
-            spinnerMainFormat.adapter = createWhiteTextAdapter(videoFormats)
-            layoutJpgAdvancedOptions.visibility = View.GONE
-            spinnerMainFormat.onItemSelectedListener = null
-        }
-    }
-
-    private fun setupDemosaicSpinner() {
-        val algos = listOf("AMaZE", "RCD", "DCB", "LMMSE", "IGV", "AHD", "EAHD", "HPHD", "VNG4", "Fast")
-        spinnerDemosaicAlgo.adapter = createWhiteTextAdapter(algos)
-        spinnerDemosaicAlgo.setSelection(0)
-    }
-
-    private fun createWhiteTextAdapter(data: List<String>): ArrayAdapter<String> {
-        return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, data) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getView(position, convertView, parent)
-                (view as? TextView)?.setTextColor(Color.WHITE)
-                (view as? TextView)?.textSize = 14f
-                return view
-            }
-
-            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getDropDownView(position, convertView, parent)
-                (view as? TextView)?.setTextColor(Color.BLACK)
-                return view
-            }
-        }.apply {
-            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
+        formatPanelController.update(isPhotoMode)
     }
 
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
-        findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
+        rawMediaStore.findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
         if (textureView.isAvailable) {
             openCamera()
         } else {
@@ -748,69 +687,13 @@ class MainActivity : AppCompatActivity() {
         pendingCaptureResult = null
 
         try {
-            val savedUri = saveRawImageToGallery(image, characteristics, captureResult)
+            val savedUri = rawMediaStore.saveRawImage(image, characteristics, captureResult)
             updateRecentPhotoPreview(savedUri)
             image.close()
             finishCaptureSuccessfully()
         } catch (e: IOException) {
             image.close()
             finishCaptureWithError("RAW 保存失败")
-        }
-    }
-
-    private fun saveRawImageToGallery(
-        image: Image,
-        characteristics: CameraCharacteristics,
-        captureResult: TotalCaptureResult
-    ): Uri {
-        val resolver = contentResolver
-        val fileName = createRawDisplayName()
-        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        var outputPathForScan: String? = null
-
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, RAW_MIME_TYPE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$RAW_FOLDER_NAME")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            } else {
-                val folder = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                    RAW_FOLDER_NAME
-                )
-                if (!folder.exists() && !folder.mkdirs()) {
-                    throw IOException("Unable to create RAW output directory")
-                }
-                val outputFile = File(folder, fileName)
-                outputPathForScan = outputFile.absolutePath
-                put(MediaStore.Images.Media.DATA, outputFile.absolutePath)
-            }
-        }
-
-        val uri = resolver.insert(collection, contentValues)
-            ?: throw IOException("Unable to create MediaStore record")
-
-        val dngCreator = DngCreator(characteristics, captureResult)
-        try {
-            resolver.openOutputStream(uri)?.use { outputStream ->
-                dngCreator.writeImage(outputStream, image)
-            } ?: throw IOException("Unable to open RAW output stream")
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val publishValues = ContentValues().apply {
-                    put(MediaStore.Images.Media.IS_PENDING, 0)
-                }
-                resolver.update(uri, publishValues, null, null)
-            } else if (outputPathForScan != null) {
-                MediaScannerConnection.scanFile(this, arrayOf(outputPathForScan), arrayOf(RAW_MIME_TYPE), null)
-            }
-            return uri
-        } catch (e: Exception) {
-            resolver.delete(uri, null, null)
-            throw IOException("Unable to save RAW image", e)
-        } finally {
-            dngCreator.close()
         }
     }
 
@@ -833,7 +716,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openRecentPhotoInGallery() {
-        val targetUri = recentPhotoUri ?: findLatestRecentPhotoUri()
+        val targetUri = recentPhotoUri ?: rawMediaStore.findLatestRecentPhotoUri()
         if (targetUri == null) {
             showToast("还没有可查看的照片")
             return
@@ -853,7 +736,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateRecentPhotoPreview(uri: Uri) {
         recentPhotoUri = uri
-        val thumbnail = loadThumbnailBitmap(uri)
+        val thumbnail = rawMediaStore.loadThumbnailBitmap(uri)
         runOnUiThread {
             if (thumbnail != null) {
                 btnGallery.background = BitmapDrawable(resources, thumbnail)
@@ -862,52 +745,6 @@ class MainActivity : AppCompatActivity() {
                 btnGallery.setBackgroundResource(R.drawable.bg_gallery_modern)
                 btnGallery.text = "相册"
             }
-        }
-    }
-
-    private fun loadThumbnailBitmap(uri: Uri): Bitmap? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                contentResolver.loadThumbnail(uri, Size(160, 160), null)
-            } else {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    BitmapFactory.decodeStream(input)
-                }
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun findLatestRecentPhotoUri(): Uri? {
-        val projection = arrayOf(MediaStore.Images.Media._ID)
-        val selection: String
-        val selectionArgs: Array<String>
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
-            selectionArgs = arrayOf("${Environment.DIRECTORY_PICTURES}/$RAW_FOLDER_NAME/")
-        } else {
-            selection = "${MediaStore.Images.Media.DATA} LIKE ?"
-            selectionArgs = arrayOf("%/Pictures/$RAW_FOLDER_NAME/%")
-        }
-
-        return try {
-            contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                selection,
-                selectionArgs,
-                "${MediaStore.Images.Media.DATE_ADDED} DESC, ${MediaStore.Images.Media._ID} DESC"
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val id = cursor.getLong(0)
-                    ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                } else {
-                    null
-                }
-            }
-        } catch (_: Exception) {
-            null
         }
     }
 
