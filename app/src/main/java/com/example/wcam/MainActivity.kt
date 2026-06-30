@@ -2102,7 +2102,11 @@ class MainActivity : AppCompatActivity() {
 
         val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toSet().orEmpty()
         val supportsManualSensor = capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
-        val supportsManualWhiteBalance = capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)
+        
+        // Use a more relaxed check: if AWB_MODE_OFF is supported, we can usually do manual WB
+        val awbModes = characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)?.toSet().orEmpty()
+        val supportsManualWhiteBalance = awbModes.contains(CameraMetadata.CONTROL_AWB_MODE_OFF)
+
         val hasFlash = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
 
         cameraCapabilities = CameraCapabilities(

@@ -85,25 +85,17 @@ object PhotoParamMapper {
     }
 
     fun kelvinToRggb(kelvin: Int): RggbChannelVector {
-        val normalized = kelvin.coerceIn(2000, 8000)
-        val temperature = normalized / 100f
-
-        val red = if (temperature <= 66f) {
-            2.0f
-        } else {
-            (1.2929362f * (temperature - 60f).toDouble().pow(-0.13320476).toFloat()).coerceIn(0.5f, 2.5f)
-        }
-
-        val blue = if (temperature >= 66f) {
-            2.0f
-        } else if (temperature <= 19f) {
-            0.5f
-        } else {
-            (0.5432068f * (temperature - 10f).toDouble().pow(0.07551485).toFloat()).coerceIn(0.5f, 2.5f)
-        }
+        val k = kelvin.coerceIn(2000, 8000).toFloat()
+        
+        // 改进的连续色温增益算法，避免出现平台期
+        // R gain: 在 2000K 时较高 (~3.0)，随色温升高而降低
+        val red = (1.0f + 2.0f * (1.0f - (k - 2000f) / 6000f).pow(1.5f))
+        
+        // B gain: 在 2000K 时较低 (~0.6)，随色温升高而升高
+        val blue = (0.6f + 2.4f * ((k - 2000f) / 6000f).pow(1.5f))
 
         val green = 1.0f
-        return RggbChannelVector(red, green, green, blue)
+        return RggbChannelVector(red.coerceIn(0.5f, 4.0f), green, green, blue.coerceIn(0.5f, 4.0f))
     }
 
     fun formatEvDisplay(compensationIndex: Int, step: Float): String {
