@@ -136,26 +136,40 @@ inline float tonemap(float x) {
 }
 
 inline uint32_t rgb_to_pixel(float r, float g, float b) {
-    // 1. 曝光补偿 - 增加曝光以拟合原始亮度，补偿 ACES 曲线的压缩
-    float exposure = 1.5f;
+    // 1. 曝光补偿
+    float exposure = 1.45f;
     r *= exposure; g *= exposure; b *= exposure;
 
-    // 2. 色彩校正矩阵 (CCM) - 整合了 -2% 的色调 (Hue) 旋转以微调色彩倾向
+    // 2. 色彩校正矩阵 (CCM) - 整合了 -2% 的色调 (Hue) 旋转
     float rr =  1.58f * r - 0.35f * g - 0.23f * b;
     float gg = -0.32f * r + 1.49f * g - 0.17f * b;
     float bb =  0.04f * r - 0.64f * g + 1.60f * b;
 
-    // 3. 应用 Tonemap
+    // 3. 应用 Tonemap (ACES Filmic)
     rr = tonemap(rr);
     gg = tonemap(gg);
     bb = tonemap(bb);
 
-    // 4. 饱和度 - 适度增加饱和度以抵消 Tonemap 的淡化效果
+    // 4. 高光去色 (Highlight Desaturation) - 解决过曝区域偏粉/偏紫问题 (#FDE0FE)
+    // 当亮度接近饱和时，强行将颜色向白色（峰值）靠拢
+    float peak = std::max({rr, gg, bb});
+    if (peak > 0.85f) {
+        float blend = std::min(1.0f, (peak - 0.85f) / 0.12f); // 0.85 -> 0.97 快速完成去色
+        rr = rr + (peak - rr) * blend;
+        gg = gg + (peak - gg) * blend;
+        bb = bb + (peak - bb) * blend;
+    }
+
+    // 5. 饱和度 - 适度增加饱和度，并对高光区域应用遮罩以保持纯白
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
     float sat = 1.15f;
-    rr = luma + sat * (rr - luma);
-    gg = luma + sat * (gg - luma);
-    bb = luma + sat * (bb - luma);
+    // 高光处线性降低饱和度增益，至峰值时增益归 1.0
+    float sat_mask = 1.0f - std::min(1.0f, std::max(0.0f, (peak - 0.80f) / 0.20f));
+    float effective_sat = 1.0f + (sat - 1.0f) * sat_mask;
+
+    rr = luma + effective_sat * (rr - luma);
+    gg = luma + effective_sat * (gg - luma);
+    bb = luma + effective_sat * (bb - luma);
 
     return 0xFF000000 | (to_srgb(rr) << 16) | (to_srgb(gg) << 8) | to_srgb(bb);
 }
