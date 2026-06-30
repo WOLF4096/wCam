@@ -136,52 +136,14 @@ inline float tonemap(float x) {
 }
 
 inline uint32_t rgb_to_pixel(float r, float g, float b) {
-    // --- 新增：高光保护逻辑 ---
-    // 寻找当前像素中经过白平衡后的最大值
-    float max_val = std::max({r, g, b});
-    // 定义一个“白点阈值”，通常白平衡后的绿色增益为 1.0，
-    // 所以 0.95 附近是高光开始丢失信息的临界点。
-    float white_threshold = 0.95f;
-
-    if (max_val > white_threshold) {
-        // 如果像素接近过曝，我们根据过曝程度强行降低饱和度
-        // 也就是让 R, G, B 互相靠拢，最终在高光处完全相等（即纯白）
-        float desat_factor = std::clamp((max_val - white_threshold) / 0.1f, 0.0f, 1.0f);
-        float gray = (r + g + b) / 3.0f;
-        r = r * (1.0f - desat_factor) + gray * desat_factor;
-        g = g * (1.0f - desat_factor) + gray * desat_factor;
-        b = b * (1.0f - desat_factor) + gray * desat_factor;
-    }
-    // -----------------------
-
     // 1. 曝光补偿
-    float exposure = 1.9f; // 你微调后的值
+    float exposure = 1.0f;
     r *= exposure; g *= exposure; b *= exposure;
 
-    // 2. 色彩校正矩阵 (CCM)
-    float rr =  2.10f * r - 0.80f * g - 0.30f * b;
-    float gg = -0.40f * r + 1.80f * g - 0.40f * b;
-    float bb = -0.20f * r - 0.70f * g + 1.90f * b;
-
-    // --- 新增：色调旋转 (Hue Rotation -2%) ---
-    float angle = -0.02f * 3.14159265f;
-    float cosA = cos(angle);
-    float sinA = sin(angle);
-
-    // 基于亮度权重的旋转矩阵系数
-    float r_new = (0.213f + cosA * 0.787f - sinA * 0.213f) * rr +
-                  (0.715f - cosA * 0.715f - sinA * 0.715f) * gg +
-                  (0.072f - cosA * 0.072f + sinA * 0.928f) * bb;
-
-    float g_new = (0.213f - cosA * 0.213f + sinA * 0.143f) * rr +
-                  (0.715f + cosA * 0.285f + sinA * 0.140f) * gg +
-                  (0.072f - cosA * 0.072f - sinA * 0.283f) * bb;
-
-    float b_new = (0.213f - cosA * 0.213f - sinA * 0.787f) * rr +
-                  (0.715f - cosA * 0.715f + sinA * 0.715f) * gg +
-                  (0.072f + cosA * 0.928f + sinA * 0.072f) * bb;
-    rr = r_new; gg = g_new; bb = b_new;
-    // ---------------------------------------
+    // 2. 色彩校正矩阵 (CCM) - 重置为单位矩阵
+    float rr = r;
+    float gg = g;
+    float bb = b;
 
     // 3. 应用 Tonemap
     rr = tonemap(rr);
@@ -190,7 +152,7 @@ inline uint32_t rgb_to_pixel(float r, float g, float b) {
 
     // 4. 饱和度
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.10f; // 你微调后的值
+    float sat = 1.0f;
     rr = luma + sat * (rr - luma);
     gg = luma + sat * (gg - luma);
     bb = luma + sat * (bb - luma);
