@@ -1487,6 +1487,8 @@ class MainActivity : AppCompatActivity() {
                     // Demosaic RAW to JPG
                     android.util.Log.i("DemosaicDebug", "Processing JPG with algo: $algoKey, BL: $blackLevel, WL: $whiteLevel")
 
+                    // IMPORTANT: We must process the image BEFORE closing it.
+                    // The demosaic process is synchronous within this background thread block.
                     var bitmap = com.example.wcam.camera.DemosaicEngine.process(
                         image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel
                     )
@@ -1771,17 +1773,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun releaseImageResources() {
-        pendingRawImage?.close()
-        pendingRawImage = null
-        pendingJpegImage?.close()
-        pendingJpegImage = null
-        pendingCaptureResult = null
-        rawImageReader?.close()
+        // To prevent crash when taking photo and switching modes/closing,
+        // we should ensure processing is finished before closing readers.
+        val rReader = rawImageReader
+        val jReader = jpegImageReader
+        val hReader = histogramImageReader
+        
         rawImageReader = null
-        jpegImageReader?.close()
         jpegImageReader = null
-        histogramImageReader?.close()
         histogramImageReader = null
+
+        processingHandler?.post {
+            pendingRawImage?.close()
+            pendingRawImage = null
+            pendingJpegImage?.close()
+            pendingJpegImage = null
+            pendingCaptureResult = null
+            
+            rReader?.close()
+            jReader?.close()
+            hReader?.close()
+        }
     }
 
     private fun startBackgroundThread() {

@@ -37,15 +37,25 @@ object DemosaicEngine {
         val width = image.width
         val height = image.height
         val plane = image.planes[0]
+        
+        // Use a direct buffer and ensure it remains valid during the call
         val buffer = plane.buffer
+        if (!buffer.isDirect) {
+            throw IllegalArgumentException("Image buffer must be direct")
+        }
         
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(width * height)
         
-        nativeProcess(
-            buffer, width, height, plane.rowStride, plane.pixelStride, 
-            pixels, algorithm, wbGains, bayerPattern, blackLevel, whiteLevel
-        )
+        try {
+            nativeProcess(
+                buffer, width, height, plane.rowStride, plane.pixelStride, 
+                pixels, algorithm, wbGains, bayerPattern, blackLevel, whiteLevel
+            )
+        } catch (e: Exception) {
+            Log.e("DemosaicEngine", "Native process failed", e)
+            throw e
+        }
         
         bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
         return bitmap
