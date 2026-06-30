@@ -123,11 +123,60 @@ inline float get_pixel_wb(const DemosaicParams& p, int x, int y) {
     return val * p.wbGains[targetChannel];
 }
 
+// Filmic Tone Mapping to match system camera "Look" (ACES Filmic approximation)
+inline float tonemap(float x) {
+    if (x <= 0.0f) return 0.0f;
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    float res = (x * (a * x + b)) / (x * (c * x + d) + e);
+    return std::clamp(res, 0.0f, 1.0f);
+}
+
 inline uint32_t rgb_to_pixel(float r, float g, float b) {
-    // Simple color matrix for better look
-    float rr = 1.4f * r - 0.3f * g - 0.1f * b;
-    float gg = -0.1f * r + 1.2f * g - 0.1f * b;
-    float bb = -0.1f * r - 0.3f * g + 1.4f * b;
+    // 1. 曝光补偿
+    float exposure = 1.9f; // 你微调后的值
+    r *= exposure; g *= exposure; b *= exposure;
+
+    // 2. 色彩校正矩阵 (CCM)
+    float rr =  2.10f * r - 0.80f * g - 0.30f * b;
+    float gg = -0.40f * r + 1.80f * g - 0.40f * b;
+    float bb = -0.20f * r - 0.70f * g + 1.90f * b;
+
+    // --- 新增：色调旋转 (Hue Rotation -2%) ---
+    float angle = -0.02f * 3.14159265f;
+    float cosA = cos(angle);
+    float sinA = sin(angle);
+
+    // 基于亮度权重的旋转矩阵系数
+    float r_new = (0.213f + cosA * 0.787f - sinA * 0.213f) * rr +
+                  (0.715f - cosA * 0.715f - sinA * 0.715f) * gg +
+                  (0.072f - cosA * 0.072f + sinA * 0.928f) * bb;
+
+    float g_new = (0.213f - cosA * 0.213f + sinA * 0.143f) * rr +
+                  (0.715f + cosA * 0.285f + sinA * 0.140f) * gg +
+                  (0.072f - cosA * 0.072f - sinA * 0.283f) * bb;
+
+    float b_new = (0.213f - cosA * 0.213f - sinA * 0.787f) * rr +
+                  (0.715f - cosA * 0.715f + sinA * 0.715f) * gg +
+                  (0.072f + cosA * 0.928f + sinA * 0.072f) * bb;
+    rr = r_new; gg = g_new; bb = b_new;
+    // ---------------------------------------
+
+    // 3. 应用 Tonemap
+    rr = tonemap(rr);
+    gg = tonemap(gg);
+    bb = tonemap(bb);
+
+    // 4. 饱和度
+    float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
+    float sat = 1.10f; // 你微调后的值
+    rr = luma + sat * (rr - luma);
+    gg = luma + sat * (gg - luma);
+    bb = luma + sat * (bb - luma);
+
     return 0xFF000000 | (to_srgb(rr) << 16) | (to_srgb(gg) << 8) | to_srgb(bb);
 }
 
