@@ -136,6 +136,24 @@ inline float tonemap(float x) {
 }
 
 inline uint32_t rgb_to_pixel(float r, float g, float b) {
+    // --- 新增：高光保护逻辑 ---
+    // 寻找当前像素中经过白平衡后的最大值
+    float max_val = std::max({r, g, b});
+    // 定义一个“白点阈值”，通常白平衡后的绿色增益为 1.0，
+    // 所以 0.95 附近是高光开始丢失信息的临界点。
+    float white_threshold = 0.95f;
+
+    if (max_val > white_threshold) {
+        // 如果像素接近过曝，我们根据过曝程度强行降低饱和度
+        // 也就是让 R, G, B 互相靠拢，最终在高光处完全相等（即纯白）
+        float desat_factor = std::clamp((max_val - white_threshold) / 0.1f, 0.0f, 1.0f);
+        float gray = (r + g + b) / 3.0f;
+        r = r * (1.0f - desat_factor) + gray * desat_factor;
+        g = g * (1.0f - desat_factor) + gray * desat_factor;
+        b = b * (1.0f - desat_factor) + gray * desat_factor;
+    }
+    // -----------------------
+
     // 1. 曝光补偿
     float exposure = 1.9f; // 你微调后的值
     r *= exposure; g *= exposure; b *= exposure;
