@@ -236,17 +236,28 @@ object PhotoParamMapper {
         capabilities: CameraCapabilities,
         fallbackAutoIso: Int?,
         fallbackAutoShutterNanos: Long?,
+        isStream: Boolean = false,
     ) {
         val manualExposure = !state.iso.isAuto || !state.shutter.isAuto
 
         if (manualExposure && capabilities.supportsManualSensor) {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
             val isoValue = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower
-            val shutterValue = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower
+            var shutterValue = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower
+            
+            if (isStream && shutterValue != null && shutterValue > 200_000_000L) {
+                // Cap stream/video exposure at 1/5s to avoid freezing
+                shutterValue = 200_000_000L
+            }
+            
             isoValue?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
             shutterValue?.let { builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            if (isStream) {
+                // For auto exposure in stream, we can't easily cap the shutter via API without manual control,
+                // but usually AE won't go below 1/5s unless in extreme dark.
+            }
         }
 
         state.ev.manualValue?.takeIf { !state.ev.isAuto }?.let {

@@ -57,9 +57,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.exifinterface.media.ExifInterface
+import android.location.Location
+import android.location.LocationManager
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.Calendar
 import java.util.concurrent.Executor
 import kotlin.math.abs
 
@@ -247,7 +250,6 @@ class MainActivity : AppCompatActivity() {
                 if (diff > 2000) { // 2 seconds of no frames
                     android.util.Log.w("CameraWatchdog", "Stream frozen for $diff ms, reconnecting...")
                     runOnUiThread {
-                        showToast("画面已卡住，正在尝试重启...")
                         closeCamera()
                         backgroundHandler?.postDelayed({
                             openCamera()
@@ -334,7 +336,7 @@ class MainActivity : AppCompatActivity() {
         }
         btnModeSwitch.text = ""
         btnModeSwitch.setCompoundDrawablesWithIntrinsicBounds(0, R.drawable.ic_mode_switch, 0, 0)
-        btnModeSwitch.setBackgroundResource(0) // Remove previous background if any
+        // btnModeSwitch.setBackgroundResource(0) // Removed to keep bg_switch_modern
         if (isFormatPanelOpen) {
             updateFormatPanelUI()
         }
@@ -1129,7 +1131,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyPhotoParamsToPreview() {
         previewRequestBuilder?.let { builder ->
-            applyPhotoParamsToRequest(builder)
+            PhotoParamMapper.applyPhotoParamsToRequest(
+                builder = builder,
+                state = photoParamState,
+                capabilities = cameraCapabilities,
+                fallbackAutoIso = previewAutoIso,
+                fallbackAutoShutterNanos = previewAutoShutterNanos,
+                isStream = true
+            )
+            currentFlashMode.applyToRequest(builder, isStillCapture = false)
+            applyZoomToRequest(builder)
         }
         resumePreview()
     }
@@ -1245,12 +1256,26 @@ class MainActivity : AppCompatActivity() {
             previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surface)
                 if (isPhotoMode) {
-                    applyPhotoParamsToRequest(this)
+                    PhotoParamMapper.applyPhotoParamsToRequest(
+                        builder = this,
+                        state = photoParamState,
+                        capabilities = cameraCapabilities,
+                        fallbackAutoIso = previewAutoIso,
+                        fallbackAutoShutterNanos = previewAutoShutterNanos,
+                        isStream = true
+                    )
+                    currentFlashMode.applyToRequest(this, isStillCapture = false)
+                    applyZoomToRequest(this)
                 } else {
                     // Video mode basic request settings
                     set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                     set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(selectedVideoFps, selectedVideoFps))
+                    
+                    val fps = selectedVideoFps
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(fps, fps))
+                    
+                    // Also cap video stream shutter if manual exposure is possible in video (usually limited)
+                    // For now, video template usually handles its own AE.
                 }
             }
 
@@ -1343,8 +1368,19 @@ class MainActivity : AppCompatActivity() {
                 if (isJpgAndRaw() || (!isRawOnly() && !isPhotoMode)) { // Logic for JPG from RAW
                      rawImageReader?.surface?.let { addTarget(it) }
                 }
-                applyPhotoParamsToRequest(this)
+                
+                PhotoParamMapper.applyPhotoParamsToRequest(
+                    builder = this,
+                    state = photoParamState,
+                    capabilities = cameraCapabilities,
+                    fallbackAutoIso = previewAutoIso,
+                    fallbackAutoShutterNanos = previewAutoShutterNanos,
+                    isStream = false // No capping for still capture
+                )
+                
                 currentFlashMode.applyToRequest(this, isStillCapture = true)
+                applyZoomToRequest(this)
+                
                 set(
                     CaptureRequest.JPEG_ORIENTATION,
                     CaptureOrientationCalculator.captureRotation(
@@ -1486,7 +1522,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun finishCaptureSuccessfully() {
-        showToast("RAW 已保存到相册")
         endCaptureAndResumePreview()
     }
 
@@ -1635,7 +1670,7 @@ class MainActivity : AppCompatActivity() {
         // Basic settings
         exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER)
         exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL)
-        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "wCam 1.0")
+        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "wCam 1.1")
         
         // Exposure settings
         val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
@@ -1651,20 +1686,77 @@ class MainActivity : AppCompatActivity() {
         aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
         focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
         
+        // Advanced EXIF
+        val expMode = result.get(CaptureResult.CONTROL_AE_MODE)
+        val expProg = if (expMode == CaptureResult.CONTROL_AE_MODE_OFF) "1" else "2" // 1: Manual, 2: Normal
+        exif.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, expProg)
+        
+        val bias = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)
+        val step = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+        if (bias != null && step != null) {
+            exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, (bias * step.toFloat()).toString())
+        }
+        
+        val whiteBalance = result.get(CaptureResult.CONTROL_AWB_MODE)
+        val wbAttr = if (whiteBalance == CaptureResult.CONTROL_AWB_MODE_OFF) "1" else "0" // 1: Manual, 0: Auto
+        exif.setAttribute(ExifInterface.TAG_WHITE_BALANCE, wbAttr)
+        
+        val metering = result.get(CaptureResult.CONTROL_AE_REGIONS)
+        if (metering != null && metering.isNotEmpty()) {
+            exif.setAttribute(ExifInterface.TAG_METERING_MODE, "2") // 2: CenterWeighted (approximation)
+        } else {
+            exif.setAttribute(ExifInterface.TAG_METERING_MODE, "5") // 5: Pattern
+        }
+        
+        // Zoom and 35mm equivalent
+        val zoom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            result.get(CaptureResult.CONTROL_ZOOM_RATIO) ?: 1.0f
+        } else {
+            currentZoomRatio
+        }
+        exif.setAttribute(ExifInterface.TAG_DIGITAL_ZOOM_RATIO, zoom.toString())
+        
+        // Focal Length in 35mm film
+        val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        if (sensorSize != null && focalLength != null) {
+            val diagSensor = Math.sqrt((sensorSize.width * sensorSize.width + sensorSize.height * sensorSize.height).toDouble())
+            val diag35mm = 43.27 // Diagonal of 35mm film
+            val focal35mm = (focalLength * (diag35mm / diagSensor)).toInt()
+            exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, focal35mm.toString())
+        }
+
         // Date Time
-        val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: System.currentTimeMillis()
         val sdf = java.text.SimpleDateFormat("yyyy:MM:dd HH:mm:ss", java.util.Locale.US)
-        exif.setAttribute(ExifInterface.TAG_DATETIME, sdf.format(java.util.Date()))
+        val now = java.util.Date()
+        exif.setAttribute(ExifInterface.TAG_DATETIME, sdf.format(now))
+        exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, sdf.format(now))
+        exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, sdf.format(now))
         
         // Flash
         val flashState = result.get(CaptureResult.FLASH_STATE)
         val flashFired = flashState == CaptureResult.FLASH_STATE_FIRED || flashState == CaptureResult.FLASH_STATE_PARTIAL
         exif.setAttribute(ExifInterface.TAG_FLASH, if (flashFired) "1" else "0")
+        
+        // Location (if permitted)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                val loc = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) ?: 
+                          lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) ?:
+                          lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                loc?.let {
+                    exif.setLatLong(it.latitude, it.longitude)
+                    it.altitude.takeIf { alt -> alt != 0.0 }?.let { alt -> exif.setAltitude(alt) }
+                }
+            } catch (e: SecurityException) {
+                // Ignore
+            }
+        }
     }
 
     private fun createPhotoDisplayName(extension: String): String {
         val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        return "IMG_$timestamp.$extension"
+        return "${timestamp}_IMG.$extension"
     }
 
     private fun closeCamera() {
@@ -1716,16 +1808,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun requiredPermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            arrayOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
         } else {
-            arrayOf(Manifest.permission.CAMERA)
+            arrayOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
         }
     }
 
     private fun hasAllRequiredPermissions(): Boolean {
-        return requiredPermissions().all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        val permissions = requiredPermissions()
+        for (permission in permissions) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                android.util.Log.d("PermissionDebug", "Missing permission: $permission")
+                return false
+            }
         }
+        return true
     }
 
     private fun isRawOnly(): Boolean {
@@ -1910,8 +2015,18 @@ class MainActivity : AppCompatActivity() {
                 val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                     addTarget(rawReader.surface) // Always capture RAW for demosaicing
                     surface?.let { addTarget(it) }
-                    applyPhotoParamsToRequest(this)
+                    
+                    PhotoParamMapper.applyPhotoParamsToRequest(
+                        builder = this,
+                        state = photoParamState,
+                        capabilities = cameraCapabilities,
+                        fallbackAutoIso = previewAutoIso,
+                        fallbackAutoShutterNanos = previewAutoShutterNanos,
+                        isStream = false
+                    )
+                    
                     currentFlashMode.applyToRequest(this, isStillCapture = true)
+                    applyZoomToRequest(this)
                 }
 
                 session.stopRepeating()
@@ -2037,16 +2152,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)
 
-    private fun applyPhotoParamsToRequest(builder: CaptureRequest.Builder) {
-        PhotoParamMapper.applyPhotoParamsToRequest(
-            builder = builder,
-            state = photoParamState,
-            capabilities = cameraCapabilities,
-            fallbackAutoIso = previewAutoIso,
-            fallbackAutoShutterNanos = previewAutoShutterNanos,
-        )
-        currentFlashMode.applyToRequest(builder, isStillCapture = false)
-
+    private fun applyZoomToRequest(builder: CaptureRequest.Builder) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, currentZoomRatio)
         } else {
