@@ -329,14 +329,14 @@ class MainActivity : AppCompatActivity() {
             btnResolution.text = "4:3"
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
             viewCropOverlay.visibility = View.VISIBLE
+            btnModeSwitch.text = "切换\n录像"
         } else {
             btnResolution.text = selectedVideoRatioStr
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
             viewCropOverlay.visibility = View.GONE
+            btnModeSwitch.text = "切换\n拍照"
         }
-        btnModeSwitch.text = ""
-        btnModeSwitch.setCompoundDrawablesWithIntrinsicBounds(0, R.drawable.ic_mode_switch, 0, 0)
-        // btnModeSwitch.setBackgroundResource(0) // Removed to keep bg_switch_modern
+        btnModeSwitch.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
         if (isFormatPanelOpen) {
             updateFormatPanelUI()
         }

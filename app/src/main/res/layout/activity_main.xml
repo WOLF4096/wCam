@@ -43,13 +43,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <androidx.constraintlayout.widget.Guideline
-            android:id="@+id/guideline_golden_ratio"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            app:layout_constraintGuide_percent="0.809" />
-
         <TextView
             android:id="@+id/btn_gallery"
             android:layout_width="60dp"
@@ -78,14 +71,16 @@
             android:id="@+id/btn_mode_switch"
             android:layout_width="60dp"
             android:layout_height="60dp"
-            android:background="@drawable/bg_switch_modern"
-            android:text="@string/action_video"
+            android:layout_marginEnd="32dp"
+            android:background="@drawable/bg_gallery_modern"
+            android:text="切换\n录像"
             android:textColor="#E0E0E0"
-            android:textSize="14sp"
+            android:textSize="13sp"
+            android:lineSpacingMultiplier="0.9"
+            android:includeFontPadding="false"
             android:gravity="center"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="@id/guideline_golden_ratio"
-            app:layout_constraintStart_toStartOf="@id/guideline_golden_ratio"
+            app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
