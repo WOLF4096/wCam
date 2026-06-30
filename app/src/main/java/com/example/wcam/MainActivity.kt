@@ -1321,6 +1321,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun captureRawPhoto() {
+        val startTime = System.currentTimeMillis()
+        android.util.Log.i("CapturePerformance", "--- Starting RAW Capture Flow ---")
+        
         if (!isPhotoMode) {
             showToast("请先切换到拍照模式")
             return
@@ -1422,6 +1425,9 @@ class MainActivity : AppCompatActivity() {
             result: TotalCaptureResult
         ) {
             pendingCaptureResult = result
+            runOnUiThread {
+                resumePreview()
+            }
             maybePersistPendingRaw()
         }
 
@@ -1435,6 +1441,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun maybePersistPendingRaw() {
+        val startPersist = System.currentTimeMillis()
         val image = pendingRawImage ?: return
         val captureResult = pendingCaptureResult ?: return
         val characteristics = activeCameraCharacteristics
@@ -1443,6 +1450,8 @@ class MainActivity : AppCompatActivity() {
             pendingRawImage = null
             return
         }
+        
+        android.util.Log.i("CapturePerformance", "Metadata extraction + post start: ${System.currentTimeMillis() - startPersist}ms")
 
         // Capture all necessary state now on the background thread
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
@@ -1478,22 +1487,22 @@ class MainActivity : AppCompatActivity() {
 
         pendingRawImage = null
         processingHandler?.post {
+            val startProcess = System.currentTimeMillis()
             try {
                 if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
+                    val sRaw = System.currentTimeMillis()
                     rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
+                    android.util.Log.i("CapturePerformance", "Save DNG: ${System.currentTimeMillis() - sRaw}ms")
                 }
                 
                 if (savedFormat != "RAW") {
-                    // Demosaic RAW to JPG
-                    android.util.Log.i("DemosaicDebug", "Processing JPG with algo: $algoKey, BL: $blackLevel, WL: $whiteLevel")
-
-                    // IMPORTANT: We must process the image BEFORE closing it.
-                    // The demosaic process is synchronous within this background thread block.
+                    val sDemosaic = System.currentTimeMillis()
                     var bitmap = com.example.wcam.camera.DemosaicEngine.process(
                         image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel
                     )
+                    android.util.Log.i("CapturePerformance", "Native Demosaic: ${System.currentTimeMillis() - sDemosaic}ms")
 
-                    // Crop according to the green rectangle
+                    val sCrop = System.currentTimeMillis()
                     currentCropRectInSensor?.let { rect ->
                         val left = rect.left.coerceIn(0, bitmap.width - 1)
                         val top = rect.top.coerceIn(0, bitmap.height - 1)
@@ -1506,9 +1515,15 @@ class MainActivity : AppCompatActivity() {
                             bitmap = cropped
                         }
                     }
+                    android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
 
+                    val sSaveJpg = System.currentTimeMillis()
                     val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
+                    android.util.Log.i("CapturePerformance", "Save JPG (Encode+Exif): ${System.currentTimeMillis() - sSaveJpg}ms")
+                    
+                    val sThumb = System.currentTimeMillis()
                     updateRecentPhotoPreview(savedUri)
+                    android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms")
                     bitmap.recycle()
                 }
 
@@ -1516,6 +1531,7 @@ class MainActivity : AppCompatActivity() {
                 isRawCaptureComplete = true
                 isJpegCaptureComplete = true
                 checkCaptureCompletion()
+                android.util.Log.i("CapturePerformance", "--- Total Processing Flow: ${System.currentTimeMillis() - startProcess}ms ---")
             } catch (e: Exception) {
                 image.close()
                 finishCaptureWithError("照片保存失败")

@@ -3,6 +3,9 @@
 
 #include "demosaic_common.h"
 
+// Common interface for parallel execution
+typedef void (*DemosaicFunc)(const DemosaicParams& p, int* pixels);
+
 void demosaic_bilinear(const DemosaicParams& p, int* pixels);
 void demosaic_ahd(const DemosaicParams& p, int* pixels);
 void demosaic_vng(const DemosaicParams& p, int* pixels);

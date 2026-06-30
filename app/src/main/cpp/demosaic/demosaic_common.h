@@ -35,12 +35,27 @@ extern bool lut_init_flag;
 void init_lut();
 
 inline int to_srgb(float v) {
-    if (!lut_init_flag) init_lut();
-    int idx = std::clamp((int)(v * 1023.0f), 0, 1023);
-    return std::clamp((int)(gamma_lut[idx] * 255.0f), 0, 255);
+    // Fast path: many values are out of bounds or near zero
+    if (v <= 0.0f) return 0;
+    if (v >= 1.0f) return 255;
+
+    // index = v * 1023
+    int idx = (int)(v * 1023.0f);
+    // idx is guaranteed [0, 1022] here
+    return (int)(gamma_lut[idx] * 255.0f);
 }
 
 inline float get_raw(const DemosaicParams& p, int x, int y) {
+    // Fast path for in-bounds
+    if (x >= 0 && x < p.width && y >= 0 && y < p.height) {
+        uint64_t offset = (uint64_t)y * (uint64_t)p.rowStride + (uint64_t)x * (uint64_t)p.pixelStride;
+        const uint8_t* ptr = p.rawData + offset;
+        uint16_t val;
+        std::memcpy(&val, ptr, 2);
+        return std::max(0.0f, (float)val - p.blackLevel) * p.normFactor;
+    }
+
+    // Slow path for out-of-bounds
     if (p.width <= 0 || p.height <= 0) return 0.0f;
     x = std::clamp(x, 0, p.width - 1);
     y = std::clamp(y, 0, p.height - 1);
