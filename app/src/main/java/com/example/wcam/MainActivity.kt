@@ -41,6 +41,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
@@ -86,6 +87,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var textureView: TextureView
     private lateinit var btnShutter: View
+    private lateinit var pbShutterProgress: ProgressBar
+    private lateinit var tvShutterCountdown: TextView
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var previewRequestBuilder: CaptureRequest.Builder? = null
@@ -526,6 +529,8 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         textureView = findViewById(R.id.camera_preview)
         btnShutter = findViewById(R.id.btn_shutter)
+        pbShutterProgress = findViewById(R.id.pb_shutter_progress)
+        tvShutterCountdown = findViewById(R.id.tv_shutter_countdown)
         btnFlash = findViewById(R.id.btn_flash)
         btnHistogram = findViewById(R.id.btn_histogram)
         btnGridLines = findViewById(R.id.btn_grid_lines)
@@ -687,7 +692,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupParamGestures() {
         val evValues = listOf("-2.0", "-1.5", "-1.0", "-0.5", "0.0", "+0.5", "+1.0", "+1.5", "+2.0")
         val wbValues = listOf("3200K", "4000K", "5200K", "6000K", "7000K")
-        val isoValues = listOf("50", "100", "200", "400", "800", "1600", "3200", "6400")
+        val isoValues = listOf("50", "100", "200", "400", "800", "1600", "3200", "6400", "12.8k", "25.6k", "51.2k", "64k")
         val sValues = listOf("1/1000s", "1/500s", "1/250s", "1/125s", "1/100s", "1/60s", "1/30s", "1/8s")
         val afValues = listOf("0.1", "0.3", "0.5", "0.7", "0.9", "1.0")
 
@@ -1349,6 +1354,13 @@ class MainActivity : AppCompatActivity() {
         pendingRawImage?.close()
         pendingRawImage = null
 
+        val shutterNanos = if (photoParamState.shutter.isAuto) {
+            previewAutoShutterNanos ?: 100_000_000L
+        } else {
+            photoParamState.shutter.manualValue ?: 100_000_000L
+        }
+        startShutterCountdown(shutterNanos)
+
         if (currentFlashMode == FlashMode.SINGLE) {
             runPrecaptureSequence {
                 executeStillCapture(camera, session, imageReader.surface, surface)
@@ -1540,10 +1552,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun finishCaptureSuccessfully() {
+        stopShutterCountdown()
         endCaptureAndResumePreview()
     }
 
     private fun finishCaptureWithError(message: String) {
+        stopShutterCountdown()
         showToast(message)
         endCaptureAndResumePreview()
     }
@@ -1992,23 +2006,100 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private var countdownTimer: android.os.CountDownTimer? = null
+
+    private fun startShutterCountdown(shutterNanos: Long) {
+        val durationMs = shutterNanos / 1_000_000L
+        if (durationMs < 500) return
+
+        runOnUiThread {
+            pbShutterProgress.visibility = View.VISIBLE
+            tvShutterCountdown.visibility = View.VISIBLE
+            pbShutterProgress.progress = 0
+            tvShutterCountdown.text = String.format(java.util.Locale.US, "%.1fs", durationMs / 1000.0)
+        }
+
+        countdownTimer?.cancel()
+        countdownTimer = object : android.os.CountDownTimer(durationMs, 50) {
+            override fun onTick(millisUntilFinished: Long) {
+                val elapsed = durationMs - millisUntilFinished
+                val progress = (elapsed.toFloat() / durationMs * 1000).toInt()
+                runOnUiThread {
+                    pbShutterProgress.progress = progress
+                    tvShutterCountdown.text = String.format(java.util.Locale.US, "%.1fs", millisUntilFinished / 1000.0)
+                }
+            }
+
+            override fun onFinish() {
+                runOnUiThread {
+                    pbShutterProgress.progress = 1000
+                    tvShutterCountdown.text = "0.0s"
+                }
+            }
+        }.start()
+    }
+
+    private fun stopShutterCountdown() {
+        countdownTimer?.cancel()
+        countdownTimer = null
+        runOnUiThread {
+            pbShutterProgress.visibility = View.GONE
+            tvShutterCountdown.visibility = View.GONE
+        }
+    }
+
     private fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) {
         val listPopupWindow = ListPopupWindow(this)
         listPopupWindow.animationStyle = 0 // Disable animation
         listPopupWindow.anchorView = anchor
         val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getView(position, convertView, parent)
-                (view as? TextView)?.apply {
+                val layout = convertView as? LinearLayout ?: LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(32, 24, 32, 24)
+                    setBackgroundColor(Color.parseColor("#CC1A1A1A"))
+                }
+                layout.removeAllViews()
+
+                val ratioStr = options[position]
+                if (ratioStr.contains(":")) {
+                    val ratioView = View(context).apply {
+                        val parts = ratioStr.split(":")
+                        val w = parts[0].toFloatOrNull() ?: 1f
+                        val h = parts[1].toFloatOrNull() ?: 1f
+                        
+                        val baseSize = 40f
+                        val finalW: Float
+                        val finalH: Float
+                        if (w > h) {
+                            finalW = baseSize
+                            finalH = baseSize * (h / w)
+                        } else {
+                            finalH = baseSize
+                            finalW = baseSize * (w / h)
+                        }
+                        
+                        layoutParams = LinearLayout.LayoutParams(finalW.toInt(), finalH.toInt()).apply {
+                            marginEnd = 24
+                        }
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            setStroke(2, Color.WHITE)
+                            setColor(Color.TRANSPARENT)
+                        }
+                    }
+                    layout.addView(ratioView)
+                }
+
+                val textView = TextView(context).apply {
+                    text = ratioStr
                     setTextColor(Color.WHITE)
                     textSize = 14f
-                    // Reduce vertical padding by 50%
-                    val newTopPadding = (paddingTop * 0.5f).toInt()
-                    val newBottomPadding = (paddingBottom * 0.5f).toInt()
-                    setPadding(paddingLeft, newTopPadding, paddingRight, newBottomPadding)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 }
-                view.setBackgroundColor(Color.parseColor("#CC1A1A1A"))
-                return view
+                layout.addView(textView)
+                
+                return layout
             }
         }
         listPopupWindow.setAdapter(adapter)
@@ -2037,6 +2128,13 @@ class MainActivity : AppCompatActivity() {
         pendingJpegImage = null
         pendingRawImage?.close()
         pendingRawImage = null
+
+        val shutterNanos = if (photoParamState.shutter.isAuto) {
+            previewAutoShutterNanos ?: 100_000_000L
+        } else {
+            photoParamState.shutter.manualValue ?: 100_000_000L
+        }
+        startShutterCountdown(shutterNanos)
 
         val captureAction = {
             try {
@@ -2140,10 +2238,10 @@ class MainActivity : AppCompatActivity() {
         // WB: 2000K to 8000K, 200 step (Linear)
         val wbValues = (2000..8000 step 200).map { "${it}K" }
         
-        // ISO: 50 to 19.2k (Logarithmic)
+        // ISO: 50 to 64k (Logarithmic)
         // Standard steps: 50, 64, 80, 100, 125, 160, 200, 250, 320, 400...
         // We'll generate a dense logarithmic scale and format it.
-        val isoValues = generateLogValues(50.0, 19200.0, 60).map { 
+        val isoValues = generateLogValues(50.0, 64000.0, 80).map {
             val iso = Math.round(it).toInt()
             if (iso >= 1000) {
                 val kValue = iso / 1000.0
