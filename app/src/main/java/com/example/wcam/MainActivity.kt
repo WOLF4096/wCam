@@ -208,7 +208,7 @@ class MainActivity : AppCompatActivity() {
         val ratio: Float get() = width.toFloat() / height
         val ratioStr: String get() {
             val common = gcd(width, height)
-            return "${width / common}:${height / common}"
+            return "${height / common}:${width / common}"
         }
         
         private fun gcd(a: Int, b: Int): Int {
@@ -1897,8 +1897,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Sort ratios: 4:3, 16:9 first, then others by numerical value
-        val common = listOf("4:3", "16:9")
+        // Sort ratios: 3:4, 9:16 first, then others by numerical value
+        val common = listOf("3:4", "9:16")
         val ratioMap = caps.groupBy { it.ratioStr }.mapValues { it.value.first().ratio }
         val sortedRatios = ratioMap.keys.toList().sortedWith { a, b ->
             val aIn = common.indexOf(a)
@@ -1941,7 +1941,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRatioPopup(view: View) {
-        val options = listOf("1:1", "4:3", "16:9", "2:1", "自定义")
+        val options = listOf("1:1", "3:4", "9:16", "1:2", "自定义")
         showStyledPopup(view, options) { selected ->
             when (selected) {
                 "1:1" -> {
@@ -1949,19 +1949,19 @@ class MainActivity : AppCompatActivity() {
                     btnResolution.text = "1:1"
                     updateCropOverlayUI()
                 }
-                "4:3" -> {
+                "3:4" -> {
                     cropRatio = 4f / 3f
-                    btnResolution.text = "4:3"
+                    btnResolution.text = "3:4"
                     updateCropOverlayUI()
                 }
-                "16:9" -> {
+                "9:16" -> {
                     cropRatio = 16f / 9f
-                    btnResolution.text = "16:9"
+                    btnResolution.text = "9:16"
                     updateCropOverlayUI()
                 }
-                "2:1" -> {
+                "1:2" -> {
                     cropRatio = 2.0f
-                    btnResolution.text = "2:1"
+                    btnResolution.text = "1:2"
                     updateCropOverlayUI()
                 }
                 "自定义" -> {
@@ -2002,7 +2002,7 @@ class MainActivity : AppCompatActivity() {
                     customRatioW = w
                     customRatioH = h
                     cropRatio = w.toFloat() / h
-                    btnResolution.text = "$w:$h"
+                    btnResolution.text = "$h:$w"
                     updateCropOverlayUI()
                 }
             }
