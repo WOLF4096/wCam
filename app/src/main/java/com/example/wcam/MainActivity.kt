@@ -839,8 +839,11 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 ParamKey.WB -> previewAutoKelvinLabel
                                 ParamKey.ISO -> previewAutoIso?.let { iso ->
-                                    if (iso >= 1000) String.format(java.util.Locale.US, "%.1fk", iso / 1000.0)
-                                    else iso.toString()
+                                    if (iso >= 1000) {
+                                        val kValue = iso / 1000.0
+                                        if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dk", kValue.toInt())
+                                        else String.format(java.util.Locale.US, "%.1fk", kValue)
+                                    } else iso.toString()
                                 }
                                 ParamKey.SHUTTER -> previewAutoShutterNanos?.let(PhotoParamMapper::formatShutterDisplay)
                                 ParamKey.AF -> previewAutoFocusDistance?.let(PhotoParamMapper::formatFocusDistanceDisplay)
@@ -1261,27 +1264,27 @@ class MainActivity : AppCompatActivity() {
 
             previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surface)
-                if (isPhotoMode) {
-                    PhotoParamMapper.applyPhotoParamsToRequest(
-                        builder = this,
-                        state = photoParamState,
-                        capabilities = cameraCapabilities,
-                        fallbackAutoIso = previewAutoIso,
-                        fallbackAutoShutterNanos = previewAutoShutterNanos,
-                        isStream = true
-                    )
-                    currentFlashMode.applyToRequest(this, isStillCapture = false)
-                    applyZoomToRequest(this)
-                } else {
-                    // Video mode basic request settings
-                    set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                    
+                
+                // Apply manual parameters to stream for both Photo and Video modes
+                PhotoParamMapper.applyPhotoParamsToRequest(
+                    builder = this,
+                    state = photoParamState,
+                    capabilities = cameraCapabilities,
+                    fallbackAutoIso = previewAutoIso,
+                    fallbackAutoShutterNanos = previewAutoShutterNanos,
+                    isStream = true
+                )
+                currentFlashMode.applyToRequest(this, isStillCapture = false)
+                applyZoomToRequest(this)
+
+                if (!isPhotoMode) {
+                    // Video mode specific additional settings
                     val fps = selectedVideoFps
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(fps, fps))
-                    
-                    // Also cap video stream shutter if manual exposure is possible in video (usually limited)
-                    // For now, video template usually handles its own AE.
+                    // Ensure continuous video focus if AF is auto
+                    if (photoParamState.af.isAuto) {
+                        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                    }
                 }
             }
 
