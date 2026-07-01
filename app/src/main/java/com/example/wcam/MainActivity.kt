@@ -705,6 +705,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onParamManualStep(key: ParamKey, selectedLabel: String) {
+        android.util.Log.d("MainActivity", "onParamManualStep: key=$key, label=$selectedLabel")
         photoParamState = PhotoParamMapper.createManualStateForLabel(
             key = key,
             label = selectedLabel,

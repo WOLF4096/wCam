@@ -56,10 +56,11 @@ object PhotoParamMapper {
     }
 
     fun parseIsoLabel(label: String): Int {
-        return if (label.endsWith("k")) {
-            (label.removeSuffix("k").toFloat() * 1000).toInt()
+        val clean = label.lowercase(Locale.US).trim()
+        return if (clean.endsWith("k")) {
+            (clean.removeSuffix("k").toFloat() * 1000).toInt()
         } else {
-            label.toInt()
+            clean.toIntOrNull() ?: 100
         }
     }
 
@@ -162,15 +163,24 @@ object PhotoParamMapper {
             }
 
             ParamKey.ISO -> {
-                val range = capabilities.isoRange?.let { it.lower..it.upper }
-                if (!capabilities.supportsManualSensor || range == null) {
+                val hardwareRange = capabilities.isoRange?.let { it.lower..it.upper }
+                android.util.Log.d("PhotoParamMapper", "Hardware ISO Range: $hardwareRange")
+                
+                if (!capabilities.supportsManualSensor || hardwareRange == null) {
                     currentState
                 } else {
+                    // Expand the upper bound to 64000 to bypass hardware reported limit
+                    val extendedRange = hardwareRange.first..64000
+                    val parsedValue = parseIsoLabel(label)
+                    val clampedValue = clampIso(parsedValue, extendedRange)
+                    
+                    android.util.Log.d("PhotoParamMapper", "ISO Label: $label -> Parsed: $parsedValue -> Clamped: $clampedValue")
+                    
                     currentState.copy(
                         iso = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = clampIso(parseIsoLabel(label), range),
+                            manualValue = clampedValue,
                         ),
                     )
                 }
@@ -242,7 +252,10 @@ object PhotoParamMapper {
                 shutterValue = 200_000_000L
             }
             
-            isoValue?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
+            isoValue?.let { 
+                android.util.Log.d("PhotoParamMapper", "Applying manual ISO: $it")
+                builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) 
+            }
             shutterValue?.let { builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
