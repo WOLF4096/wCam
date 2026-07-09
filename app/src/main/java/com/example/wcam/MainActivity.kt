@@ -150,8 +150,11 @@ class MainActivity : AppCompatActivity() {
     private var pendingRawImage: Image? = null
     private var pendingJpegImage: Image? = null
     private var pendingCaptureResult: TotalCaptureResult? = null
+    @Volatile
     private var isCaptureInProgress = false
+    @Volatile
     private var isRawCaptureComplete = false
+    @Volatile
     private var isJpegCaptureComplete = false
 
     private var selectedResolution: Size? = null
@@ -248,7 +251,7 @@ class MainActivity : AppCompatActivity() {
     private var lastPreviewFrameTime = 0L
     private val freezeWatchdog = object : Runnable {
         override fun run() {
-            if (cameraDevice != null && lastPreviewFrameTime > 0) {
+            if (cameraDevice != null && lastPreviewFrameTime > 0 && !isCaptureInProgress) {
                 val diff = System.currentTimeMillis() - lastPreviewFrameTime
                 if (diff > 2000) { // 2 seconds of no frames
                     android.util.Log.w("CameraWatchdog", "Stream frozen for $diff ms, reconnecting...")
@@ -1565,6 +1568,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resumePreview() {
+        lastPreviewFrameTime = System.currentTimeMillis()
         val session = captureSession ?: return
         val previewRequest = previewRequestBuilder?.build() ?: return
         try {
@@ -2179,6 +2183,7 @@ class MainActivity : AppCompatActivity() {
             minimumFocusDistance = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE),
             supportsManualSensor = supportsManualSensor,
             supportsManualWhiteBalance = supportsManualWhiteBalance,
+            aeFpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList(),
         )
         currentFlashSupported = hasFlash
         maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

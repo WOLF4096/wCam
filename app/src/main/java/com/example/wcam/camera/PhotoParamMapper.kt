@@ -256,7 +256,16 @@ object PhotoParamMapper {
                 android.util.Log.d("PhotoParamMapper", "Applying manual ISO: $it")
                 builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) 
             }
-            shutterValue?.let { builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
+            shutterValue?.let { 
+                builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
+                // 为长曝光设置帧间隔，确保硬件不会因为帧率不匹配而丢弃请求
+                builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
+
+                // 自动选择支持最低 FPS 的范围，以适配长曝光
+                capabilities.aeFpsRanges?.minByOrNull { it.lower }?.let { range ->
+                    builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
+                }
+            }
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             if (isStream) {

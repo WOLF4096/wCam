@@ -21,6 +21,7 @@ data class CameraCapabilities(
     val minimumFocusDistance: Float?,
     val supportsManualSensor: Boolean,
     val supportsManualWhiteBalance: Boolean,
+    val aeFpsRanges: List<Range<Int>>?,
 ) {
     companion object {
         val EMPTY = CameraCapabilities(
@@ -31,6 +32,7 @@ data class CameraCapabilities(
             minimumFocusDistance = null,
             supportsManualSensor = false,
             supportsManualWhiteBalance = false,
+            aeFpsRanges = null,
         )
     }
 }
