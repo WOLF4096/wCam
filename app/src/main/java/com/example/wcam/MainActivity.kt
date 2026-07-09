@@ -279,6 +279,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         logAllCameraStreams()
+        verifyHighResRawSupport()
+        dumpVendorKeys()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode =
@@ -1161,7 +1163,6 @@ class MainActivity : AppCompatActivity() {
 
         try {
             captureSession?.close()
-
             val texture = textureView.surfaceTexture ?: return
             
             val characteristics = activeCameraCharacteristics
@@ -1170,91 +1171,16 @@ class MainActivity : AppCompatActivity() {
 
             val previewSize: Size
             if (isPhotoMode) {
-                // Explicitly target 1920x1440 (4:3) for preview stream
                 val targetPreviewW = 1920
                 val targetPreviewH = 1440
-                
-                // Check if 1920x1440 is supported, otherwise fallback to a close 4:3 size
                 previewSize = supportedSizes?.find { it.width == targetPreviewW && it.height == targetPreviewH }
                     ?: supportedSizes?.filter { Math.abs(it.width.toFloat() / it.height - 4f/3f) < 0.01 }?.maxByOrNull { it.width }
                     ?: Size(targetPreviewW, targetPreviewH)
             } else {
-                // Video Mode: Use selected resolution
                 val dimensions = selectedVideoSizeStr.split("x")
                 val w = dimensions[0].toInt()
                 val h = dimensions[1].toInt()
-                
-                val supported = supportedSizes?.any { it.width == w && it.height == h } == true
-                if (supported) {
-                    previewSize = Size(w, h)
-                } else {
-                    // Fallback to 1080p@60 as requested when acquisition fails or unsupported
-                    val fallback = supportedSizes?.find { it.width == 1920 && it.height == 1080 }
-                        ?: supportedSizes?.maxByOrNull { it.width * it.height }
-                        ?: Size(1920, 1080)
-                    
-                    previewSize = fallback
-                    selectedVideoSizeStr = "${previewSize.width}x${previewSize.height}"
-                    selectedVideoFps = 60
-                    
-                    val common = gcd(previewSize.width, previewSize.height)
-                    selectedVideoRatioStr = "${previewSize.width / common}:${previewSize.height / common}"
-                    
-                    runOnUiThread {
-                        btnResolution.text = selectedVideoRatioStr
-                        showToast("已自动降级至 ${selectedVideoSizeStr}@${selectedVideoFps}fps")
-                    }
-                }
-            }
-
-            android.util.Log.i("CameraPreview", "Selected preview size: ${previewSize.width}x${previewSize.height} (Mode: ${if(isPhotoMode) "Photo" else "Video"})")
-
-            // Configure TextureView transformation to avoid stretching
-            val viewW = textureView.width
-            val viewH = textureView.height
-            
-            if (viewW > 0 && viewH > 0) {
-                val matrix = android.graphics.Matrix()
-                val centerX = viewW / 2f
-                val centerY = viewH / 2f
-                
-                val sensorOrientation = characteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
-                val rotatedStreamW: Int
-                val rotatedStreamH: Int
-                if (sensorOrientation == 90 || sensorOrientation == 270) {
-                    rotatedStreamW = previewSize.height
-                    rotatedStreamH = previewSize.width
-                } else {
-                    rotatedStreamW = previewSize.width
-                    rotatedStreamH = previewSize.height
-                }
-
-                val streamRatio = rotatedStreamW.toFloat() / rotatedStreamH
-                val viewRatio = viewW.toFloat() / viewH
-                
-                var scaleX = 1f
-                var scaleY = 1f
-                
-                if (isPhotoMode) {
-                    // Center Crop logic to ensure fill for 3:4 view
-                    if (streamRatio > viewRatio) {
-                        scaleX = (viewH * streamRatio) / viewW
-                    } else {
-                        scaleY = (viewW / streamRatio) / viewH
-                    }
-                } else {
-                    // Center Inside logic (Letterbox) for Video Mode
-                    if (streamRatio > viewRatio) {
-                        // Stream is wider than view -> Fit width, scale down height
-                        scaleY = (viewW / streamRatio) / viewH
-                    } else {
-                        // Stream is taller than view -> Fit height, scale down width
-                        scaleX = (viewH * streamRatio) / viewW
-                    }
-                }
-                
-                matrix.setScale(scaleX, scaleY, centerX, centerY)
-                textureView.setTransform(matrix)
+                previewSize = Size(w, h)
             }
 
             texture.setDefaultBufferSize(previewSize.width, previewSize.height)
@@ -1262,70 +1188,69 @@ class MainActivity : AppCompatActivity() {
             previewSurface = Surface(texture)
             val surface = previewSurface ?: return
 
-            previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            // 1. 创建带有 Session Parameters 的请求模板
+            val sessionTemplate = if (currentPhysicalCameraId == "2") CameraDevice.TEMPLATE_STILL_CAPTURE else CameraDevice.TEMPLATE_PREVIEW
+            previewRequestBuilder = camera.createCaptureRequest(sessionTemplate).apply {
                 addTarget(surface)
-                
-                // Apply manual parameters to stream for both Photo and Video modes
-                PhotoParamMapper.applyPhotoParamsToRequest(
-                    builder = this,
-                    state = photoParamState,
-                    capabilities = cameraCapabilities,
-                    fallbackAutoIso = previewAutoIso,
-                    fallbackAutoShutterNanos = previewAutoShutterNanos,
-                    isStream = true
-                )
+                PhotoParamMapper.applyPhotoParamsToRequest(this, photoParamState, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, isStream = true)
                 currentFlashMode.applyToRequest(this, isStillCapture = false)
                 applyZoomToRequest(this)
-
-                if (!isPhotoMode) {
-                    // Video mode specific additional settings
-                    val fps = selectedVideoFps
-                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(fps, fps))
-                    // Ensure continuous video focus if AF is auto
-                    if (photoParamState.af.isAuto) {
-                        set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
-                    }
-                }
+                
+                // 在预览请求中也注入高像素 Key 尝试激活 HAL 状态
+                injectHighResVendorKeys(this)
             }
 
             val previewStateCallback = object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
-                    if (cameraDevice == null) {
-                        return
-                    }
+                    if (cameraDevice == null) return
                     captureSession = session
                     resumePreview()
                 }
-
                 override fun onConfigureFailed(session: CameraCaptureSession) {
-                    showToast("预览会话配置失败")
+                    android.util.Log.e("HighResAttack", "Session 配置失败！尺寸或模式可能不受支持。")
+                    showToast("高像素模式启动失败，尝试回退...")
                 }
             }
 
             val outputSurfaces = mutableListOf(surface, rawReader.surface, jpegReader.surface)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val outputConfigs = outputSurfaces.map { s ->
-                    OutputConfiguration(s).apply {
-                        currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
+            val outputConfigs = outputSurfaces.map { s ->
+                OutputConfiguration(s).apply { 
+                    currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
+                    // 尝试注入 Stream Use Case 为 STILL_CAPTURE (2)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && s == rawReader.surface) {
+                        try {
+                            streamUseCase = CameraMetadata.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                            android.util.Log.i("HighResAttack", "成功设置 StreamUseCase = STILL_CAPTURE")
+                        } catch (e: Exception) {
+                            android.util.Log.w("HighResAttack", "设置 StreamUseCase 失败")
+                        }
                     }
                 }
+            }
+
+            // 2. 盲测 Session 模式：Vivo 高像素模式通常是 0x8004 或 0x8001
+            val sessionMode = if (currentPhysicalCameraId == "2") {
+                android.util.Log.i("HighResAttack", "使用 Vivo 私有 Session 模式: 0x8004")
+                0x8004 
+            } else {
+                SessionConfiguration.SESSION_REGULAR
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val sessionConfig = SessionConfiguration(
-                    SessionConfiguration.SESSION_REGULAR,
+                    sessionMode,
                     outputConfigs,
                     Executor { command -> backgroundHandler?.post(command) },
                     previewStateCallback
                 )
+                // 3. 将注入了 Key 的请求设为 Session Parameters (部分 MTK 设备必须这样)
+                sessionConfig.sessionParameters = previewRequestBuilder!!.build()
                 camera.createCaptureSession(sessionConfig)
             } else {
-                camera.createCaptureSession(
-                    outputSurfaces,
-                    previewStateCallback,
-                    backgroundHandler
-                )
+                camera.createCaptureSession(outputSurfaces, previewStateCallback, backgroundHandler)
             }
-        } catch (e: CameraAccessException) {
-            showToast("创建预览失败")
+        } catch (e: Exception) {
+            android.util.Log.e("HighResAttack", "创建预览异常: ${e.message}")
         }
     }
 
@@ -1388,13 +1313,16 @@ class MainActivity : AppCompatActivity() {
                      rawImageReader?.surface?.let { addTarget(it) }
                 }
                 
+                // 强行注入 Remosaic 控制键
+                injectHighResVendorKeys(this)
+                
                 PhotoParamMapper.applyPhotoParamsToRequest(
                     builder = this,
                     state = photoParamState,
                     capabilities = cameraCapabilities,
                     fallbackAutoIso = previewAutoIso,
                     fallbackAutoShutterNanos = previewAutoShutterNanos,
-                    isStream = false // No capping for still capture
+                    isStream = false 
                 )
                 
                 currentFlashMode.applyToRequest(this, isStillCapture = true)
@@ -1414,6 +1342,35 @@ class MainActivity : AppCompatActivity() {
             session.capture(captureBuilder.build(), stillCaptureCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
             finishCaptureWithError("拍照失败")
+        }
+    }
+
+    private fun injectHighResVendorKeys(builder: CaptureRequest.Builder) {
+        val currentId = activeMetadataCameraId()
+        if (currentId != "2") return
+
+        android.util.Log.i("HighResAttack", "注入盲测解封指令集...")
+        
+        val blindTestKeys = mapOf(
+            "com.vivo.cfaRemosaicType" to 4,
+            "com.vivo.sensor.worktype" to 2,
+            "vivo.control.ultra_highresolution" to 1,
+            "vivo.control.ai_highresolution" to 1,
+            "com.mediatek.control.capture.remosaicenable" to 1,
+            "com.mediatek.control.capture.highres.enable" to 1,
+            "vendor.vivo.remosaic.enable" to 1,
+            "com.vivo.chi.override.remosaic.enable" to 1
+        )
+
+        for ((name, value) in blindTestKeys) {
+            try {
+                val keyConstructor = CaptureRequest.Key::class.java.getConstructor(String::class.java, Class::class.java)
+                val manualKey = keyConstructor.newInstance(name, Int::class.javaObjectType)
+                builder.set(manualKey as CaptureRequest.Key<Int>, value)
+                android.util.Log.i("HighResAttack", "注入成功: $name = $value")
+            } catch (e: Exception) {
+                // Ignore failure for individual keys
+            }
         }
     }
 
@@ -1622,24 +1579,28 @@ class MainActivity : AppCompatActivity() {
         val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return false
         
-        // RAW
+        // RAW - 回退到物理报告的最大尺寸，确保 Session 能够建立
         val largestRawSize = streamMap.getOutputSizes(ImageFormat.RAW_SENSOR)
             ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
         
-        if (largestRawSize != null) {
-            if (rawImageReader == null || rawImageReader!!.width != largestRawSize.width || rawImageReader!!.height != largestRawSize.height) {
-                rawImageReader?.close()
-                rawImageReader = ImageReader.newInstance(largestRawSize.width, largestRawSize.height, ImageFormat.RAW_SENSOR, 2)
-            }
-            rawImageReader?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                pendingRawImage?.close()
-                pendingRawImage = image
-                maybePersistPendingRaw()
-            }, backgroundHandler)
-        }
+        val rawWidth = largestRawSize?.width ?: 4080
+        val rawHeight = largestRawSize?.height ?: 3072
 
-        // JPEG/YUV for processing
+        if (rawImageReader == null || rawImageReader!!.width != rawWidth || rawImageReader!!.height != rawHeight) {
+            rawImageReader?.close()
+            rawImageReader = ImageReader.newInstance(rawWidth, rawHeight, ImageFormat.RAW_SENSOR, 2)
+            android.util.Log.i("HighResAttack", "ImageReader 已恢复为标准尺寸: ${rawWidth}x${rawHeight}")
+        }
+        
+        rawImageReader?.setOnImageAvailableListener({ reader ->
+            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+            android.util.Log.i("HighResAttack", "收到 RAW 图像: ${image.width}x${image.height}, Format: ${image.format}")
+            pendingRawImage?.close()
+            pendingRawImage = image
+            maybePersistPendingRaw()
+        }, backgroundHandler)
+
+        // JPEG/YUV
         val largestJpgSize = streamMap.getOutputSizes(ImageFormat.JPEG)
             ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
             ?: return false
@@ -1649,8 +1610,7 @@ class MainActivity : AppCompatActivity() {
             jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2)
         }
         jpegImageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            image.close() // Hardware JPEGs are no longer used for persistence
+            reader.acquireLatestImage()?.close()
         }, backgroundHandler)
 
         return true
@@ -2340,6 +2300,112 @@ class MainActivity : AppCompatActivity() {
             }
         }
         android.util.Log.i("CameraVideoLog", "--- 摄像头能力获取完毕 ---")
+    }
+
+    private fun verifyHighResRawSupport() {
+        val manager = cameraManager()
+        android.util.Log.i("HighResCheck", "--- 开始验证 2 亿像素 RAW 支持情况 (全量探测) ---")
+        try {
+            val allIds = manager.cameraIdList.toMutableList()
+            // 尝试添加用户提到的物理 ID
+            listOf("2", "3", "4", "5").forEach { if (!allIds.contains(it)) allIds.add(it) }
+
+            for (id in allIds) {
+                val chars = try {
+                    manager.getCameraCharacteristics(id)
+                } catch (e: Exception) {
+                    android.util.Log.w("HighResCheck", "无法访问摄像头 ID: $id (${e.message})")
+                    continue
+                }
+                
+                val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                val isUltraHighResSupported = capabilities.any { it == 16 }
+                
+                android.util.Log.i("HighResCheck", "摄像头 ID: $id")
+                android.util.Log.i("HighResCheck", "  支持等级: ${chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)}")
+                android.util.Log.i("HighResCheck", "  超高分辨率能力 (16): $isUltraHighResSupported")
+                
+                val pixelArray = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                android.util.Log.i("HighResCheck", "  物理像素数组尺寸 (pixelArraySize): ${pixelArray?.width} x ${pixelArray?.height}")
+
+                // 检查 Maximum Resolution Map
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val maxResMap = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP_MAXIMUM_RESOLUTION)
+                    if (maxResMap != null) {
+                        val rawSizes = maxResMap.getOutputSizes(ImageFormat.RAW_SENSOR)
+                        if (rawSizes != null && rawSizes.isNotEmpty()) {
+                            android.util.Log.i("HighResCheck", "  [MAX_RES] RAW_SENSOR 尺寸:")
+                            for (size in rawSizes) {
+                                val mp = (size.width.toLong() * size.height) / 1_000_000.0
+                                android.util.Log.i("HighResCheck", "    - ${size.width} x ${size.height} (~${String.format(java.util.Locale.US, "%.1f", mp)} MP)")
+                            }
+                        }
+                    }
+                }
+                
+                // 检查标准 Map
+                val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                val normalRawSizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR)
+                if (normalRawSizes != null && normalRawSizes.isNotEmpty()) {
+                    android.util.Log.i("HighResCheck", "  [NORMAL_RES] RAW_SENSOR 尺寸:")
+                    for (size in normalRawSizes) {
+                        val mp = (size.width.toLong() * size.height) / 1_000_000.0
+                        android.util.Log.i("HighResCheck", "    - ${size.width} x ${size.height} (~${String.format(java.util.Locale.US, "%.1f", mp)} MP)")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("HighResCheck", "验证失败: ${e.message}")
+        }
+        android.util.Log.i("HighResCheck", "--- 验证结束 ---")
+    }
+
+    private fun dumpVendorKeys() {
+        val manager = cameraManager()
+        android.util.Log.i("VendorDeepDive", "--- 开始深度探测 Vivo/MTK 厂商私有键 (全量探测) ---")
+        try {
+            val allIds = manager.cameraIdList.toMutableList()
+            listOf("2", "3", "4", "5").forEach { if (!allIds.contains(it)) allIds.add(it) }
+
+            for (id in allIds) {
+                val chars = try { manager.getCameraCharacteristics(id) } catch (e: Exception) { continue }
+                android.util.Log.i("VendorDeepDive", "摄像头 ID: $id")
+                
+                // 打印所有包含有趣词汇的 Characteristics 键
+                chars.keys.forEach { key ->
+                    val name = key.name
+                    if (name.contains("remosaic", true) || name.contains("highres", true) || name.contains("raw", true) || name.contains("pixel", true)) {
+                        try {
+                            val value = chars.get(key)
+                            android.util.Log.i("VendorDeepDive", "  [Char Key] $name = ${formatValue(value)}")
+                        } catch (e: Exception) {}
+                    }
+                }
+
+                // 打印所有可用的 CaptureRequest 键（包含厂商键）
+                chars.availableCaptureRequestKeys.forEach { key ->
+                    val name = key.name
+                    if (name.contains("remosaic", true) || name.contains("highres", true) || name.contains("ultra", true)) {
+                        android.util.Log.i("VendorDeepDive", "  [Request Key Found] $name")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("VendorDeepDive", "探测失败: ${e.message}")
+        }
+        android.util.Log.i("VendorDeepDive", "--- 深度探测结束 ---")
+    }
+
+    private fun formatValue(value: Any?): String {
+        return when (value) {
+            is IntArray -> value.joinToString(", ")
+            is FloatArray -> value.joinToString(", ")
+            is LongArray -> value.joinToString(", ")
+            is Array<*> -> value.joinToString(", ")
+            is android.util.Size -> "${value.width}x${value.height}"
+            is android.graphics.Rect -> "${value.left},${value.top},${value.right},${value.bottom}"
+            else -> value.toString()
+        }
     }
 
     private fun showToast(message: String) {
