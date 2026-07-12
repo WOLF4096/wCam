@@ -1824,19 +1824,30 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // 3. LUT for grayscale conversion (Apply sRGB Gamma)
+        // 3. Define Gamma values for each channel (Modify these values to change contrast/brightness)
+        val gammaR = 3.0  // Red channel gamma (Standard sRGB is 2.4)
+        val gammaG = 2.4  // Green channel gamma
+        val gammaB = 2.8  // Blue channel gamma
+
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
-        val lut = IntArray(65536) { i ->
-            val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
-            // sRGB Gamma curve
-            val gamma = if (norm <= 0.0031308f) {
-                12.92f * norm
-            } else {
-                (1.055f * Math.pow(norm.toDouble(), 1.0 / 2.4) - 0.055f).toFloat()
+        
+        fun createGammaLut(gammaPower: Double): IntArray {
+            return IntArray(65536) { i ->
+                val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
+                // sRGB Gamma curve with custom power
+                val gamma = if (norm <= 0.0031308f) {
+                    12.92f * norm
+                } else {
+                    (1.055f * Math.pow(norm.toDouble(), 1.0 / gammaPower) - 0.055f).toFloat()
+                }
+                val gray = (gamma * 255).toInt().coerceIn(0, 255)
+                0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
             }
-            val gray = (gamma * 255).toInt().coerceIn(0, 255)
-            0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
         }
+
+        val lutR = createGammaLut(gammaR)
+        val lutG = createGammaLut(gammaG)
+        val lutB = createGammaLut(gammaB)
 
         val plane = image.planes[0]
         val buffer = plane.buffer
@@ -1872,15 +1883,15 @@ class MainActivity : AppCompatActivity() {
                     3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 } // BGGR
                 }
                 
-                // Average G, use original R and B (now handled by Gamma LUT)
+                // Average G, use original R and B
                 val gAvg = (grVal + gbVal) / 2
                 val rNorm = rVal.coerceIn(0, 65535)
                 val bNorm = bVal.coerceIn(0, 65535)
 
                 val idx = y * outW + x
-                pixR[idx] = lut[rNorm]
-                pixG[idx] = lut[gAvg]
-                pixB[idx] = lut[bNorm]
+                pixR[idx] = lutR[rNorm]
+                pixG[idx] = lutG[gAvg]
+                pixB[idx] = lutB[bNorm]
             }
         }
 
