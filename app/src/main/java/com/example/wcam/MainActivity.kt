@@ -1499,9 +1499,13 @@ class MainActivity : AppCompatActivity() {
                         }
                         android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
 
-                        val sSaveJpg = System.currentTimeMillis()
-                        val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
-                        android.util.Log.i("CapturePerformance", "Save JPG (Encode+Exif): ${System.currentTimeMillis() - sSaveJpg}ms")
+                        val sSave = System.currentTimeMillis()
+                        val savedUri = if (algoKey == "Mono" || algoKey == "None") {
+                            savePngBitmap(bitmap, "", rotation.degrees)
+                        } else {
+                            saveJpegBitmap(bitmap, rotation.degrees)
+                        }
+                        android.util.Log.i("CapturePerformance", "Save image ($algoKey): ${System.currentTimeMillis() - sSave}ms")
                         
                         val sThumb = System.currentTimeMillis()
                         updateRecentPhotoPreview(savedUri)
@@ -1761,12 +1765,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int): Uri {
+    private fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int, timestamp: String? = null): Uri {
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        val rotatedBitmap = if (rotationDegrees != 0) {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } else {
+            bitmap
+        }
         
-        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        val fileName = "${timestamp}_IMG_$suffix.png"
+        val ts = timestamp ?: java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val fileName = if (suffix.isEmpty()) "${ts}_IMG.png" else "${ts}_IMG_$suffix.png"
         
         val values = android.content.ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
@@ -1786,6 +1794,8 @@ class MainActivity : AppCompatActivity() {
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         return uri
     }
+
+    private val saveExecutor = java.util.concurrent.Executors.newFixedThreadPool(4)
 
     private fun save4ChannelGrayscale(
         image: Image,
@@ -1810,19 +1820,26 @@ class MainActivity : AppCompatActivity() {
         val pixB = IntArray(outW * outH)
 
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
+        val lut = IntArray(65536) { i ->
+            val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
+            val gray = (norm * 255).toInt()
+            0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
+        }
+
         buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val shortBuffer = buffer.asShortBuffer()
 
         for (y in 0 until outH) {
+            val rowOffset0 = y * 2 * (rowStride / 2)
+            val rowOffset1 = (y * 2 + 1) * (rowStride / 2)
             for (x in 0 until outW) {
-                val row0 = y * 2
-                val row1 = y * 2 + 1
                 val col0 = x * 2
                 val col1 = x * 2 + 1
 
-                val v00 = (buffer.getShort(row0 * rowStride + col0 * pixelStride).toInt() and 0xFFFF)
-                val v01 = (buffer.getShort(row0 * rowStride + col1 * pixelStride).toInt() and 0xFFFF)
-                val v10 = (buffer.getShort(row1 * rowStride + col0 * pixelStride).toInt() and 0xFFFF)
-                val v11 = (buffer.getShort(row1 * rowStride + col1 * pixelStride).toInt() and 0xFFFF)
+                val v00 = shortBuffer.get(rowOffset0 + col0).toInt() and 0xFFFF
+                val v01 = shortBuffer.get(rowOffset0 + col1).toInt() and 0xFFFF
+                val v10 = shortBuffer.get(rowOffset1 + col0).toInt() and 0xFFFF
+                val v11 = shortBuffer.get(rowOffset1 + col1).toInt() and 0xFFFF
 
                 var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
                 when (bayerPattern) {
@@ -1832,17 +1849,11 @@ class MainActivity : AppCompatActivity() {
                     3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 }
                 }
 
-                fun toPixel(v: Int): Int {
-                    val norm = ((v - blackLevel).toFloat() / range).coerceIn(0f, 1f)
-                    val gray = (norm * 255).toInt()
-                    return 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
-                }
-
                 val idx = y * outW + x
-                pixR[idx] = toPixel(rVal)
-                pixGr[idx] = toPixel(grVal)
-                pixGb[idx] = toPixel(gbVal)
-                pixB[idx] = toPixel(bVal)
+                pixR[idx] = lut[rVal]
+                pixGr[idx] = lut[grVal]
+                pixGb[idx] = lut[gbVal]
+                pixB[idx] = lut[bVal]
             }
         }
 
@@ -1851,18 +1862,25 @@ class MainActivity : AppCompatActivity() {
         val bmpGb = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixGb, 0, outW, 0, 0, outW, outH) }
         val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
 
-        savePngBitmap(bmpR, "R", rotationDegrees)
-        savePngBitmap(bmpGr, "RG", rotationDegrees)
-        savePngBitmap(bmpGb, "GB", rotationDegrees)
-        val lastUri = savePngBitmap(bmpB, "B", rotationDegrees)
+        val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val f1 = saveExecutor.submit { savePngBitmap(bmpR, "R", rotationDegrees, ts) }
+        val f2 = saveExecutor.submit { savePngBitmap(bmpGr, "RG", rotationDegrees, ts) }
+        val f3 = saveExecutor.submit { savePngBitmap(bmpGb, "GB", rotationDegrees, ts) }
+        val f4 = saveExecutor.submit { savePngBitmap(bmpB, "B", rotationDegrees, ts) }
 
-        runOnUiThread { updateRecentPhotoPreview(lastUri) }
+        val lastUri = try {
+            f1.get(); f2.get(); f3.get(); f4.get() as Uri
+        } catch (e: Exception) {
+            null
+        }
 
-        bmpR.recycle()
-        bmpGr.recycle()
-        bmpGb.recycle()
-        bmpB.recycle()
+        if (lastUri != null) {
+            runOnUiThread { updateRecentPhotoPreview(lastUri) }
+        }
+
+        bmpR.recycle(); bmpGr.recycle(); bmpGb.recycle(); bmpB.recycle()
     }
+
 
     private fun createPhotoDisplayName(extension: String): String {
         val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
