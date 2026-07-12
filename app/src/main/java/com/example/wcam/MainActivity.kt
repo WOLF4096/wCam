@@ -1566,14 +1566,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateRecentPhotoPreview(uri: Uri) {
         recentPhotoUri = uri
-        val thumbnail = rawMediaStore.loadThumbnailBitmap(uri)
-        runOnUiThread {
-            if (thumbnail != null) {
-                btnGallery.background = BitmapDrawable(resources, thumbnail)
-                btnGallery.text = ""
-            } else {
-                btnGallery.setBackgroundResource(R.drawable.bg_gallery_modern)
-                btnGallery.text = "相册"
+        // Use background thread to load thumbnail then update UI
+        processingHandler?.post {
+            val thumbnail = rawMediaStore.loadThumbnailBitmap(uri)
+            runOnUiThread {
+                if (thumbnail != null) {
+                    btnGallery.background = BitmapDrawable(resources, thumbnail)
+                    btnGallery.text = ""
+                } else {
+                    btnGallery.setBackgroundResource(R.drawable.bg_gallery_modern)
+                    btnGallery.text = "相册"
+                }
             }
         }
     }
@@ -1863,19 +1866,19 @@ class MainActivity : AppCompatActivity() {
         val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
 
         val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        val f1 = saveExecutor.submit { savePngBitmap(bmpR, "R", rotationDegrees, ts) }
-        val f2 = saveExecutor.submit { savePngBitmap(bmpGr, "RG", rotationDegrees, ts) }
-        val f3 = saveExecutor.submit { savePngBitmap(bmpGb, "GB", rotationDegrees, ts) }
-        val f4 = saveExecutor.submit { savePngBitmap(bmpB, "B", rotationDegrees, ts) }
+        val f1 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpR, "R", rotationDegrees, ts) })
+        val f2 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpGr, "RG", rotationDegrees, ts) })
+        val f3 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpGb, "GB", rotationDegrees, ts) })
+        val f4 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpB, "B", rotationDegrees, ts) })
 
-        val lastUri = try {
-            f1.get(); f2.get(); f3.get(); f4.get() as Uri
+        try {
+            f1.get()
+            f2.get()
+            f3.get()
+            val lastUri = f4.get()
+            updateRecentPhotoPreview(lastUri)
         } catch (e: Exception) {
-            null
-        }
-
-        if (lastUri != null) {
-            runOnUiThread { updateRecentPhotoPreview(lastUri) }
+            android.util.Log.e("MainActivity", "Error saving 4-channel grayscale", e)
         }
 
         bmpR.recycle(); bmpGr.recycle(); bmpGb.recycle(); bmpB.recycle()
