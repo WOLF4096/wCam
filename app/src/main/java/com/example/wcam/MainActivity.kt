@@ -1433,6 +1433,7 @@ class MainActivity : AppCompatActivity() {
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
         val algoKey = when {
+            savedAlgoFull.startsWith("4通道灰度") -> "Gray4Ch"
             savedAlgoFull.startsWith("灰度") -> "Mono"
             savedAlgoFull.startsWith("无") -> "None"
             else -> savedAlgoFull.split('：', ':')[0].trim()
@@ -1472,35 +1473,41 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 if (savedFormat != "RAW") {
-                    val sDemosaic = System.currentTimeMillis()
-                    var bitmap = com.example.wcam.camera.DemosaicEngine.process(
-                        image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel
-                    )
-                    android.util.Log.i("CapturePerformance", "Native Demosaic: ${System.currentTimeMillis() - sDemosaic}ms")
+                    if (algoKey == "Gray4Ch") {
+                        val sGray4 = System.currentTimeMillis()
+                        save4ChannelGrayscale(image, bayerPattern, blackLevel, whiteLevel, rotation.degrees)
+                        android.util.Log.i("CapturePerformance", "4-Channel Gray Save: ${System.currentTimeMillis() - sGray4}ms")
+                    } else {
+                        val sDemosaic = System.currentTimeMillis()
+                        var bitmap = com.example.wcam.camera.DemosaicEngine.process(
+                            image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel
+                        )
+                        android.util.Log.i("CapturePerformance", "Native Demosaic: ${System.currentTimeMillis() - sDemosaic}ms")
 
-                    val sCrop = System.currentTimeMillis()
-                    currentCropRectInSensor?.let { rect ->
-                        val left = rect.left.coerceIn(0, bitmap.width - 1)
-                        val top = rect.top.coerceIn(0, bitmap.height - 1)
-                        val width = rect.width().coerceAtMost(bitmap.width - left)
-                        val height = rect.height().coerceAtMost(bitmap.height - top)
-                        
-                        if (width > 0 && height > 0) {
-                            val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
-                            bitmap.recycle()
-                            bitmap = cropped
+                        val sCrop = System.currentTimeMillis()
+                        currentCropRectInSensor?.let { rect ->
+                            val left = rect.left.coerceIn(0, bitmap.width - 1)
+                            val top = rect.top.coerceIn(0, bitmap.height - 1)
+                            val width = rect.width().coerceAtMost(bitmap.width - left)
+                            val height = rect.height().coerceAtMost(bitmap.height - top)
+                            
+                            if (width > 0 && height > 0) {
+                                val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
+                                bitmap.recycle()
+                                bitmap = cropped
+                            }
                         }
-                    }
-                    android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
+                        android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
 
-                    val sSaveJpg = System.currentTimeMillis()
-                    val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
-                    android.util.Log.i("CapturePerformance", "Save JPG (Encode+Exif): ${System.currentTimeMillis() - sSaveJpg}ms")
-                    
-                    val sThumb = System.currentTimeMillis()
-                    updateRecentPhotoPreview(savedUri)
-                    android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms")
-                    bitmap.recycle()
+                        val sSaveJpg = System.currentTimeMillis()
+                        val savedUri = saveJpegBitmap(bitmap, rotation.degrees)
+                        android.util.Log.i("CapturePerformance", "Save JPG (Encode+Exif): ${System.currentTimeMillis() - sSaveJpg}ms")
+                        
+                        val sThumb = System.currentTimeMillis()
+                        updateRecentPhotoPreview(savedUri)
+                        android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms")
+                        bitmap.recycle()
+                    }
                 }
 
                 image.close()
@@ -1752,6 +1759,109 @@ class MainActivity : AppCompatActivity() {
                 // Ignore
             }
         }
+    }
+
+    private fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int): Uri {
+        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val fileName = "${timestamp}_IMG_$suffix.png"
+        
+        val values = android.content.ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
+            }
+        }
+
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("Failed to create MediaStore entry")
+
+        contentResolver.openOutputStream(uri)?.use { os ->
+            rotatedBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
+        } ?: throw IOException("Failed to open output stream")
+        
+        if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
+        return uri
+    }
+
+    private fun save4ChannelGrayscale(
+        image: Image,
+        bayerPattern: Int,
+        blackLevel: Int,
+        whiteLevel: Int,
+        rotationDegrees: Int
+    ) {
+        val width = image.width
+        val height = image.height
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
+
+        val outW = width / 2
+        val outH = height / 2
+
+        val pixR = IntArray(outW * outH)
+        val pixGr = IntArray(outW * outH)
+        val pixGb = IntArray(outW * outH)
+        val pixB = IntArray(outW * outH)
+
+        val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
+        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+
+        for (y in 0 until outH) {
+            for (x in 0 until outW) {
+                val row0 = y * 2
+                val row1 = y * 2 + 1
+                val col0 = x * 2
+                val col1 = x * 2 + 1
+
+                val v00 = (buffer.getShort(row0 * rowStride + col0 * pixelStride).toInt() and 0xFFFF)
+                val v01 = (buffer.getShort(row0 * rowStride + col1 * pixelStride).toInt() and 0xFFFF)
+                val v10 = (buffer.getShort(row1 * rowStride + col0 * pixelStride).toInt() and 0xFFFF)
+                val v11 = (buffer.getShort(row1 * rowStride + col1 * pixelStride).toInt() and 0xFFFF)
+
+                var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
+                when (bayerPattern) {
+                    0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 }
+                    1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 }
+                    2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 }
+                    3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 }
+                }
+
+                fun toPixel(v: Int): Int {
+                    val norm = ((v - blackLevel).toFloat() / range).coerceIn(0f, 1f)
+                    val gray = (norm * 255).toInt()
+                    return 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
+                }
+
+                val idx = y * outW + x
+                pixR[idx] = toPixel(rVal)
+                pixGr[idx] = toPixel(grVal)
+                pixGb[idx] = toPixel(gbVal)
+                pixB[idx] = toPixel(bVal)
+            }
+        }
+
+        val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
+        val bmpGr = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixGr, 0, outW, 0, 0, outW, outH) }
+        val bmpGb = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixGb, 0, outW, 0, 0, outW, outH) }
+        val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
+
+        savePngBitmap(bmpR, "R", rotationDegrees)
+        savePngBitmap(bmpGr, "RG", rotationDegrees)
+        savePngBitmap(bmpGb, "GB", rotationDegrees)
+        val lastUri = savePngBitmap(bmpB, "B", rotationDegrees)
+
+        runOnUiThread { updateRecentPhotoPreview(lastUri) }
+
+        bmpR.recycle()
+        bmpGr.recycle()
+        bmpGb.recycle()
+        bmpB.recycle()
     }
 
     private fun createPhotoDisplayName(extension: String): String {
