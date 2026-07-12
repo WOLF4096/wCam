@@ -1798,8 +1798,6 @@ class MainActivity : AppCompatActivity() {
         return uri
     }
 
-    private val saveExecutor = java.util.concurrent.Executors.newFixedThreadPool(4)
-
     private fun save4ChannelGrayscale(
         image: Image,
         bayerPattern: Int,
@@ -1807,21 +1805,26 @@ class MainActivity : AppCompatActivity() {
         whiteLevel: Int,
         rotationDegrees: Int
     ) {
-        val width = image.width
-        val height = image.height
-        val plane = image.planes[0]
-        val buffer = plane.buffer
-        val rowStride = plane.rowStride
-        val pixelStride = plane.pixelStride
+        val sensorW = image.width
+        val sensorH = image.height
+        
+        // 1. Determine crop bounds at full resolution, aligned to 2x2 blocks
+        val rect = currentCropRectInSensor ?: android.graphics.Rect(0, 0, sensorW, sensorH)
+        val left = (rect.left.coerceIn(0, sensorW - 2) / 2) * 2
+        val top = (rect.top.coerceIn(0, sensorH - 2) / 2) * 2
+        val cropW = (rect.width().coerceAtMost(sensorW - left) / 2) * 2
+        val cropH = (rect.height().coerceAtMost(sensorH - top) / 2) * 2
+        
+        // 2. Output dimensions for each channel
+        val outW = cropW / 2
+        val outH = cropH / 2
+        
+        if (outW <= 0 || outH <= 0) {
+            image.close()
+            return
+        }
 
-        val outW = width / 2
-        val outH = height / 2
-
-        val pixR = IntArray(outW * outH)
-        val pixGr = IntArray(outW * outH)
-        val pixGb = IntArray(outW * outH)
-        val pixB = IntArray(outW * outH)
-
+        // 3. LUT for grayscale conversion
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         val lut = IntArray(65536) { i ->
             val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
@@ -1829,29 +1832,41 @@ class MainActivity : AppCompatActivity() {
             0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
         }
 
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
         buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
         val shortBuffer = buffer.asShortBuffer()
+        val strideInShorts = rowStride / 2
+        val psInShorts = pixelStride / 2
+
+        val pixR = IntArray(outW * outH)
+        val pixGr = IntArray(outW * outH)
+        val pixGb = IntArray(outW * outH)
+        val pixB = IntArray(outW * outH)
 
         for (y in 0 until outH) {
-            val rowOffset0 = y * 2 * (rowStride / 2)
-            val rowOffset1 = (y * 2 + 1) * (rowStride / 2)
+            val rO0 = (top + y * 2) * strideInShorts
+            val rO1 = (top + y * 2 + 1) * strideInShorts
+            
             for (x in 0 until outW) {
-                val col0 = x * 2
-                val col1 = x * 2 + 1
-
-                val v00 = shortBuffer.get(rowOffset0 + col0).toInt() and 0xFFFF
-                val v01 = shortBuffer.get(rowOffset0 + col1).toInt() and 0xFFFF
-                val v10 = shortBuffer.get(rowOffset1 + col0).toInt() and 0xFFFF
-                val v11 = shortBuffer.get(rowOffset1 + col1).toInt() and 0xFFFF
+                val sX0 = left + x * 2
+                val sX1 = sX0 + 1
+                
+                val v00 = shortBuffer.get(rO0 + sX0 * psInShorts).toInt() and 0xFFFF
+                val v01 = shortBuffer.get(rO0 + sX1 * psInShorts).toInt() and 0xFFFF
+                val v10 = shortBuffer.get(rO1 + sX0 * psInShorts).toInt() and 0xFFFF
+                val v11 = shortBuffer.get(rO1 + sX1 * psInShorts).toInt() and 0xFFFF
 
                 var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
                 when (bayerPattern) {
-                    0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 }
-                    1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 }
-                    2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 }
-                    3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 }
+                    0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 } // RGGB
+                    1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 } // GRBG
+                    2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 } // GBRG
+                    3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 } // BGGR
                 }
-
+                
                 val idx = y * outW + x
                 pixR[idx] = lut[rVal]
                 pixGr[idx] = lut[grVal]
@@ -1865,23 +1880,31 @@ class MainActivity : AppCompatActivity() {
         val bmpGb = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixGb, 0, outW, 0, 0, outW, outH) }
         val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
 
-        val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        val f1 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpR, "R", rotationDegrees, ts) })
-        val f2 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpGr, "RG", rotationDegrees, ts) })
-        val f3 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpGb, "GB", rotationDegrees, ts) })
-        val f4 = saveExecutor.submit(java.util.concurrent.Callable { savePngBitmap(bmpB, "B", rotationDegrees, ts) })
+        // Rotate each channel individually
+        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
+        val rGr = Bitmap.createBitmap(bmpGr, 0, 0, outW, outH, matrix, true)
+        val rGb = Bitmap.createBitmap(bmpGb, 0, 0, outW, outH, matrix, true)
+        val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
+        
+        val rw = rR.width
+        val rh = rR.height
+        
+        // Stitch horizontally: 1 row, 4 columns
+        val combinedBitmap = Bitmap.createBitmap(rw * 4, rh, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(combinedBitmap)
+        canvas.drawBitmap(rR, 0f, 0f, null)
+        canvas.drawBitmap(rGr, rw.toFloat(), 0f, null)
+        canvas.drawBitmap(rGb, (rw * 2).toFloat(), 0f, null)
+        canvas.drawBitmap(rB, (rw * 3).toFloat(), 0f, null)
 
-        try {
-            f1.get()
-            f2.get()
-            f3.get()
-            val lastUri = f4.get()
-            updateRecentPhotoPreview(lastUri)
-        } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "Error saving 4-channel grayscale", e)
-        }
+        val uri = savePngBitmap(combinedBitmap, "4CH", 0) // Already rotated inside
+        updateRecentPhotoPreview(uri)
 
+        // Cleanup
         bmpR.recycle(); bmpGr.recycle(); bmpGb.recycle(); bmpB.recycle()
+        if (rR != bmpR) { rR.recycle(); rGr.recycle(); rGb.recycle(); rB.recycle() }
+        combinedBitmap.recycle()
     }
 
 
