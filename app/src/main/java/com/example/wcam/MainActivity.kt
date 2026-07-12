@@ -1433,7 +1433,7 @@ class MainActivity : AppCompatActivity() {
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
         val algoKey = when {
-            savedAlgoFull.startsWith("4通道灰度") -> "Gray4Ch"
+            savedAlgoFull.startsWith("RGB通道") -> "RgbCh"
             savedAlgoFull.startsWith("灰度") -> "Mono"
             savedAlgoFull.startsWith("无") -> "None"
             else -> savedAlgoFull.split('：', ':')[0].trim()
@@ -1473,10 +1473,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 if (savedFormat != "RAW") {
-                    if (algoKey == "Gray4Ch") {
-                        val sGray4 = System.currentTimeMillis()
-                        save4ChannelGrayscale(image, bayerPattern, blackLevel, whiteLevel, rotation.degrees)
-                        android.util.Log.i("CapturePerformance", "4-Channel Gray Save: ${System.currentTimeMillis() - sGray4}ms")
+                    if (algoKey == "RgbCh") {
+                        val sRgb = System.currentTimeMillis()
+                        saveRgbChannels(image, bayerPattern, blackLevel, whiteLevel, rotation.degrees)
+                        android.util.Log.i("CapturePerformance", "RGB Channels Save: ${System.currentTimeMillis() - sRgb}ms")
                     } else {
                         val sDemosaic = System.currentTimeMillis()
                         var bitmap = com.example.wcam.camera.DemosaicEngine.process(
@@ -1798,7 +1798,7 @@ class MainActivity : AppCompatActivity() {
         return uri
     }
 
-    private fun save4ChannelGrayscale(
+    private fun saveRgbChannels(
         image: Image,
         bayerPattern: Int,
         blackLevel: Int,
@@ -1824,11 +1824,17 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // 3. LUT for grayscale conversion
+        // 3. LUT for grayscale conversion (Apply sRGB Gamma)
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         val lut = IntArray(65536) { i ->
             val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
-            val gray = (norm * 255).toInt()
+            // sRGB Gamma curve
+            val gamma = if (norm <= 0.0031308f) {
+                12.92f * norm
+            } else {
+                (1.055f * Math.pow(norm.toDouble(), 1.0 / 2.4) - 0.055f).toFloat()
+            }
+            val gray = (gamma * 255).toInt().coerceIn(0, 255)
             0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
         }
 
@@ -1842,8 +1848,7 @@ class MainActivity : AppCompatActivity() {
         val psInShorts = pixelStride / 2
 
         val pixR = IntArray(outW * outH)
-        val pixGr = IntArray(outW * outH)
-        val pixGb = IntArray(outW * outH)
+        val pixG = IntArray(outW * outH)
         val pixB = IntArray(outW * outH)
 
         for (y in 0 until outH) {
@@ -1867,43 +1872,44 @@ class MainActivity : AppCompatActivity() {
                     3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 } // BGGR
                 }
                 
+                // Average G, use original R and B (now handled by Gamma LUT)
+                val gAvg = (grVal + gbVal) / 2
+                val rNorm = rVal.coerceIn(0, 65535)
+                val bNorm = bVal.coerceIn(0, 65535)
+
                 val idx = y * outW + x
-                pixR[idx] = lut[rVal]
-                pixGr[idx] = lut[grVal]
-                pixGb[idx] = lut[gbVal]
-                pixB[idx] = lut[bVal]
+                pixR[idx] = lut[rNorm]
+                pixG[idx] = lut[gAvg]
+                pixB[idx] = lut[bNorm]
             }
         }
 
         val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
-        val bmpGr = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixGr, 0, outW, 0, 0, outW, outH) }
-        val bmpGb = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixGb, 0, outW, 0, 0, outW, outH) }
+        val bmpG = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixG, 0, outW, 0, 0, outW, outH) }
         val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
 
         // Rotate each channel individually
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
-        val rGr = Bitmap.createBitmap(bmpGr, 0, 0, outW, outH, matrix, true)
-        val rGb = Bitmap.createBitmap(bmpGb, 0, 0, outW, outH, matrix, true)
+        val rG = Bitmap.createBitmap(bmpG, 0, 0, outW, outH, matrix, true)
         val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
         
         val rw = rR.width
         val rh = rR.height
         
-        // Stitch horizontally: 1 row, 4 columns
-        val combinedBitmap = Bitmap.createBitmap(rw * 4, rh, Bitmap.Config.ARGB_8888)
+        // Stitch horizontally: 1 row, 3 columns (R, G, B)
+        val combinedBitmap = Bitmap.createBitmap(rw * 3, rh, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(combinedBitmap)
         canvas.drawBitmap(rR, 0f, 0f, null)
-        canvas.drawBitmap(rGr, rw.toFloat(), 0f, null)
-        canvas.drawBitmap(rGb, (rw * 2).toFloat(), 0f, null)
-        canvas.drawBitmap(rB, (rw * 3).toFloat(), 0f, null)
+        canvas.drawBitmap(rG, rw.toFloat(), 0f, null)
+        canvas.drawBitmap(rB, (rw * 2).toFloat(), 0f, null)
 
-        val uri = savePngBitmap(combinedBitmap, "4CH", 0) // Already rotated inside
+        val uri = savePngBitmap(combinedBitmap, "RGB", 0)
         updateRecentPhotoPreview(uri)
 
         // Cleanup
-        bmpR.recycle(); bmpGr.recycle(); bmpGb.recycle(); bmpB.recycle()
-        if (rR != bmpR) { rR.recycle(); rGr.recycle(); rGb.recycle(); rB.recycle() }
+        bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
+        if (rR != bmpR) { rR.recycle(); rG.recycle(); rB.recycle() }
         combinedBitmap.recycle()
     }
 
