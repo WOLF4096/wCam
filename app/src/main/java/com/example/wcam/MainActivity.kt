@@ -1825,24 +1825,22 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 3. Define Gamma values for each channel (Modify these values to change contrast/brightness)
-        val gammaR = 3.0  // Red channel gamma (Standard sRGB is 2.4)
+        val gammaR = 3.0  // Red channel gamma
         val gammaG = 2.4  // Green channel gamma
         val gammaB = 2.8  // Blue channel gamma
 
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         
         fun createGammaLut(gammaPower: Double): IntArray {
-            return IntArray(65536) { i ->
+            val lut = IntArray(65536)
+            val invGamma = 1.0 / gammaPower
+            for (i in 0..65535) {
                 val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
-                // sRGB Gamma curve with custom power
-                val gamma = if (norm <= 0.0031308f) {
-                    12.92f * norm
-                } else {
-                    (1.055f * Math.pow(norm.toDouble(), 1.0 / gammaPower) - 0.055f).toFloat()
-                }
+                val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
                 val gray = (gamma * 255).toInt().coerceIn(0, 255)
-                0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
+                lut[i] = 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
             }
+            return lut
         }
 
         val lutR = createGammaLut(gammaR)
@@ -1854,7 +1852,7 @@ class MainActivity : AppCompatActivity() {
         val rowStride = plane.rowStride
         val pixelStride = plane.pixelStride
         buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        val shortBuffer = buffer.asShortBuffer()
+        val fullShortBuffer = buffer.asShortBuffer()
         val strideInShorts = rowStride / 2
         val psInShorts = pixelStride / 2
 
@@ -1862,65 +1860,104 @@ class MainActivity : AppCompatActivity() {
         val pixG = IntArray(outW * outH)
         val pixB = IntArray(outW * outH)
 
-        for (y in 0 until outH) {
-            val rO0 = (top + y * 2) * strideInShorts
-            val rO1 = (top + y * 2 + 1) * strideInShorts
+        // Parallel processing: Divide the image into horizontal strips
+        val numThreads = Runtime.getRuntime().availableProcessors().coerceAtMost(8)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(numThreads)
+        val latch = java.util.concurrent.CountDownLatch(numThreads)
+        val rowsPerChunk = outH / numThreads
+
+        for (t in 0 until numThreads) {
+            val startY = t * rowsPerChunk
+            val endY = if (t == numThreads - 1) outH else (t + 1) * rowsPerChunk
             
-            for (x in 0 until outW) {
-                val sX0 = left + x * 2
-                val sX1 = sX0 + 1
-                
-                val v00 = shortBuffer.get(rO0 + sX0 * psInShorts).toInt() and 0xFFFF
-                val v01 = shortBuffer.get(rO0 + sX1 * psInShorts).toInt() and 0xFFFF
-                val v10 = shortBuffer.get(rO1 + sX0 * psInShorts).toInt() and 0xFFFF
-                val v11 = shortBuffer.get(rO1 + sX1 * psInShorts).toInt() and 0xFFFF
+            executor.execute {
+                try {
+                    val threadBuffer = fullShortBuffer.duplicate()
+                    val row0 = ShortArray(strideInShorts)
+                    val row1 = ShortArray(strideInShorts)
+                    
+                    for (y in startY until endY) {
+                        val rO0 = (top + y * 2) * strideInShorts
+                        val rO1 = (top + y * 2 + 1) * strideInShorts
+                        
+                        threadBuffer.position(rO0)
+                        threadBuffer.get(row0)
+                        threadBuffer.position(rO1)
+                        threadBuffer.get(row1)
+                        
+                        val baseIdx = y * outW
+                        for (x in 0 until outW) {
+                            val sX0 = left + x * 2
+                            val sX1 = sX0 + 1
+                            
+                            val v00 = row0[sX0 * psInShorts].toInt() and 0xFFFF
+                            val v01 = row0[sX1 * psInShorts].toInt() and 0xFFFF
+                            val v10 = row1[sX0 * psInShorts].toInt() and 0xFFFF
+                            val v11 = row1[sX1 * psInShorts].toInt() and 0xFFFF
 
-                var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
-                when (bayerPattern) {
-                    0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 } // RGGB
-                    1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 } // GRBG
-                    2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 } // GBRG
-                    3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 } // BGGR
+                            var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
+                            when (bayerPattern) {
+                                0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 } // RGGB
+                                1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 } // GRBG
+                                2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 } // GBRG
+                                3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 } // BGGR
+                            }
+                            
+                            val gAvg = (grVal + gbVal) / 2
+                            val idx = baseIdx + x
+                            pixR[idx] = lutR[rVal.coerceIn(0, 65535)]
+                            pixG[idx] = lutG[gAvg.coerceIn(0, 65535)]
+                            pixB[idx] = lutB[bVal.coerceIn(0, 65535)]
+                        }
+                    }
+                } finally {
+                    latch.countDown()
                 }
-                
-                // Average G, use original R and B
-                val gAvg = (grVal + gbVal) / 2
-                val rNorm = rVal.coerceIn(0, 65535)
-                val bNorm = bVal.coerceIn(0, 65535)
-
-                val idx = y * outW + x
-                pixR[idx] = lutR[rNorm]
-                pixG[idx] = lutG[gAvg]
-                pixB[idx] = lutB[bNorm]
             }
         }
+        latch.await()
+        executor.shutdown()
 
         val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
         val bmpG = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixG, 0, outW, 0, 0, outW, outH) }
         val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
 
-        // Rotate each channel individually
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
         val rG = Bitmap.createBitmap(bmpG, 0, 0, outW, outH, matrix, true)
         val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
         
+        bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
+        
         val rw = rR.width
         val rh = rR.height
-        
-        // Stitch horizontally: 1 row, 3 columns (R, G, B)
         val combinedBitmap = Bitmap.createBitmap(rw * 3, rh, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(combinedBitmap)
         canvas.drawBitmap(rR, 0f, 0f, null)
         canvas.drawBitmap(rG, rw.toFloat(), 0f, null)
         canvas.drawBitmap(rB, (rw * 2).toFloat(), 0f, null)
 
-        val uri = savePngBitmap(combinedBitmap, "RGB", 0)
+        // Save as JPG using the quality setting from the format panel
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val fileName = "${timestamp}_IMG_RGB.jpg"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
+            }
+        }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("Failed to create MediaStore entry")
+        
+        val quality = seekbarJpgQuality.progress
+        contentResolver.openOutputStream(uri)?.use { os ->
+            combinedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
+        } ?: throw IOException("Failed to open output stream")
+
         updateRecentPhotoPreview(uri)
 
-        // Cleanup
-        bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
-        if (rR != bmpR) { rR.recycle(); rG.recycle(); rB.recycle() }
+        rR.recycle(); rG.recycle(); rB.recycle()
         combinedBitmap.recycle()
     }
 
