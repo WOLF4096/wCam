@@ -1433,6 +1433,18 @@ class MainActivity : AppCompatActivity() {
         // Capture all necessary state now on the background thread
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
+        
+        // Calculate ISO-Adaptive LSC Strength
+        // Standard LSC is 100% at ISO 100, drops to 50% at high ISOs to prevent noise glow
+        val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
+        val baseLsc = 1.30f 
+        val lscWeight = when {
+            iso <= 100 -> 1.0f
+            iso >= 3200 -> 0.5f
+            else -> 1.0f - ((iso - 100).toFloat() / (3200 - 100) * 0.5f)
+        }
+        val currentLsc = baseLsc * lscWeight
+        
         val algoKey = when {
             savedAlgoFull.startsWith("RGB通道") -> "RgbCh"
             savedAlgoFull.startsWith("灰度") -> "Mono"
@@ -1476,12 +1488,12 @@ class MainActivity : AppCompatActivity() {
                 if (savedFormat != "RAW") {
                     if (algoKey == "RgbCh") {
                         val sRgb = System.currentTimeMillis()
-                        saveRgbChannels(image, bayerPattern, blackLevel, whiteLevel, rotation.degrees)
+                        saveRgbChannels(image, bayerPattern, blackLevel, whiteLevel, rotation.degrees, currentLsc)
                         android.util.Log.i("CapturePerformance", "RGB Channels Save: ${System.currentTimeMillis() - sRgb}ms")
                     } else {
                         val sDemosaic = System.currentTimeMillis()
                         var bitmap = com.example.wcam.camera.DemosaicEngine.process(
-                            image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel, lscStrength
+                            image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel, currentLsc
                         )
                         android.util.Log.i("CapturePerformance", "Native Demosaic: ${System.currentTimeMillis() - sDemosaic}ms")
 
@@ -1804,7 +1816,8 @@ class MainActivity : AppCompatActivity() {
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
-        rotationDegrees: Int
+        rotationDegrees: Int,
+        lscStrength: Float
     ) {
         val sensorW = image.width
         val sensorH = image.height
