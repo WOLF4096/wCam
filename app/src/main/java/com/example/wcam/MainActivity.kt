@@ -1208,17 +1208,29 @@ class MainActivity : AppCompatActivity() {
             val supportedSizes = map?.getOutputSizes(SurfaceTexture::class.java)
 
             // 确定的分辨率选择逻辑
-            val targetRatio = if (isPhotoMode) 4f/3f else {
-                val p = selectedVideoRatioStr.split(":")
-                if (p.size == 2) p[0].toFloat() / p[1].toFloat() else 1.777f
+            val previewSize = if (isPhotoMode) {
+                val targetRatio = 1.333f // 4:3
+                supportedSizes?.filter { 
+                    val r = it.width.toFloat() / it.height
+                    Math.abs(r - targetRatio) < 0.1 
+                }?.sortedByDescending { it.width * it.height }
+                 ?.find { it.width <= 2500 } 
+                 ?: Size(1440, 1080)
+            } else {
+                // 录像模式下优先直接匹配手动选择的特定分辨率
+                val dims = selectedVideoSizeStr.split("x")
+                if (dims.size == 2) {
+                    val targetW = dims[0].toInt()
+                    val targetH = dims[1].toInt()
+                    // 在支持列表中找，同时兼容横竖屏声明差异
+                    supportedSizes?.find { 
+                        (it.width == targetW && it.height == targetH) || 
+                        (it.width == targetH && it.height == targetW) 
+                    } ?: Size(targetW, targetH)
+                } else {
+                    Size(1920, 1080)
+                }
             }
-
-            val previewSize = supportedSizes?.filter { 
-                val r = it.width.toFloat() / it.height
-                Math.abs(r - targetRatio) < 0.05 
-            }?.sortedByDescending { it.width * it.height }
-             ?.find { it.width <= 2000 } // 优先选 1080p 级别的预览以保证性能
-             ?: Size(1920, 1080)
 
             texture.setDefaultBufferSize(previewSize.width, previewSize.height)
             runOnUiThread { configureTransform(previewSize.width, previewSize.height) }
