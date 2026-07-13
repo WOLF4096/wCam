@@ -154,8 +154,8 @@ inline float tonemap(float x) {
 }
 
 inline uint32_t rgb_to_pixel(float r, float g, float b) {
-    // 1. 曝光补偿
-    float exposure = 1.45f;
+    // 1. 曝光补偿 (降低基础增益以匹配预览亮度，原本 1.45f 过亮)
+    float exposure = 1.10f;
     r *= exposure; g *= exposure; b *= exposure;
 
     // 2. 色彩校正矩阵 (CCM) - 整合了 -2% 的色调 (Hue) 旋转

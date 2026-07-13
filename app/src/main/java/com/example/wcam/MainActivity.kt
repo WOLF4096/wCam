@@ -1867,8 +1867,9 @@ class MainActivity : AppCompatActivity() {
         fun createGammaLut(gammaPower: Double): IntArray {
             val lut = IntArray(65536)
             val invGamma = 1.0 / gammaPower
+            val exposureScale = 0.5f // Reduce exposure by ~0.4 EV to match preview
             for (i in 0..65535) {
-                val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
+                val norm = (((i - blackLevel).toFloat() / range) * exposureScale).coerceIn(0f, 1f)
                 val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
                 val gray = (gamma * 255).toInt().coerceIn(0, 255)
                 lut[i] = 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
