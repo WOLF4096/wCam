@@ -320,6 +320,7 @@ class MainActivity : AppCompatActivity() {
         tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
         btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         
+        refreshLensUI()
         updateModeUI()
 
         selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "16:9")
@@ -340,24 +341,22 @@ class MainActivity : AppCompatActivity() {
         val set = ConstraintSet()
         set.clone(rootLayout)
         
+        // 核心修改：预览容器始终固定为 3:4 比例
+        set.setDimensionRatio(R.id.preview_container, "3:4")
+        
         if (isPhotoMode) {
             btnResolution.text = "4:3"
-            set.setDimensionRatio(R.id.preview_container, "3:4")
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
             viewCropOverlay.visibility = View.VISIBLE
             btnModeSwitch.text = "切换\n录像"
         } else {
             btnResolution.text = selectedVideoRatioStr
-            val parts = selectedVideoRatioStr.split(":")
-            if (parts.size == 2) {
-                // Flip ratio for portrait container (e.g. 16:9 -> 9:16)
-                set.setDimensionRatio(R.id.preview_container, "${parts[1]}:${parts[0]}")
-            }
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
             viewCropOverlay.visibility = View.GONE
             btnModeSwitch.text = "切换\n拍照"
         }
         set.applyTo(rootLayout)
+        rootLayout.requestLayout()
         
         btnModeSwitch.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
         if (isFormatPanelOpen) {
@@ -894,71 +893,83 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupLensSelector() {
-        val buttons = listOf(btnLensFront, btnLensWide, btnLensMain, btnLensTele)
-
-        val switchLens = { selectedBtn: TextView, logicalId: String, physicalId: String? ->
-            buttons.forEach {
-                it.setTextColor(Color.parseColor("#B3FFFFFF"))
-                it.textSize = 14f
-                it.setTypeface(null, android.graphics.Typeface.NORMAL)
-            }
-            selectedBtn.setTextColor(Color.parseColor("#FFCC00"))
-            selectedBtn.textSize = 18f
-            selectedBtn.setTypeface(null, android.graphics.Typeface.BOLD)
-
-            if (currentLogicalCameraId != logicalId || currentPhysicalCameraId != physicalId) {
-                currentLogicalCameraId = logicalId
-                currentPhysicalCameraId = physicalId
-                saveCurrentLensSettings()
-
-                // Refresh video params for the new lens
-                if (!isPhotoMode) {
-                    val newId = physicalId ?: logicalId
-                    val caps = allVideoCapabilities[newId] ?: emptyList()
-                    
-                    val supported = caps.find { 
-                        "${it.width}x${it.height}" == selectedVideoSizeStr && it.maxFps >= selectedVideoFps 
-                    }
-                    
-                    if (supported == null) {
-                        // Try fallback to 1080p@60
-                        val fallback = caps.find { it.width == 1920 && it.height == 1080 && it.maxFps >= 60 }
-                        if (fallback != null) {
-                            selectedVideoSizeStr = "1920x1080"
-                            selectedVideoFps = 60
-                            selectedVideoRatioStr = fallback.ratioStr
-                        } else {
-                            // Last resort: 30fps max res for current ratio or any ratio
-                            val ratioCaps = caps.filter { it.ratioStr == selectedVideoRatioStr }
-                            val best = ratioCaps.filter { it.maxFps >= 30 }
-                                .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) })
-                                .firstOrNull() ?: caps.maxByOrNull { it.width * it.height }
-                            
-                            if (best != null) {
-                                selectedVideoSizeStr = "${best.width}x${best.height}"
-                                selectedVideoFps = if (best.maxFps >= 30) 30 else best.maxFps
-                                selectedVideoRatioStr = best.ratioStr
-                            }
-                        }
-                        preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
-                        preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
-                        preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, selectedVideoRatioStr)
-                    }
-                    btnResolution.text = selectedVideoRatioStr
-                }
-
-                closeCamera()
-                if (isFormatPanelOpen) updateFormatPanelUI()
-                if (textureView.isAvailable) {
-                    openCamera()
-                }
-            }
-        }
-
         btnLensFront.setOnClickListener { switchLens(btnLensFront, "1", null) }
         btnLensWide.setOnClickListener { switchLens(btnLensWide, "0", "4") }
         btnLensMain.setOnClickListener { switchLens(btnLensMain, "0", "2") }
         btnLensTele.setOnClickListener { switchLens(btnLensTele, "0", "3") }
+        refreshLensUI()
+    }
+
+    private fun refreshLensUI() {
+        val buttons = listOf(btnLensFront, btnLensWide, btnLensMain, btnLensTele)
+        buttons.forEach {
+            it.setTextColor(Color.parseColor("#B3FFFFFF"))
+            it.textSize = 14f
+            it.setTypeface(null, android.graphics.Typeface.NORMAL)
+        }
+
+        val activeBtn = when {
+            currentLogicalCameraId == "1" -> btnLensFront
+            currentPhysicalCameraId == "4" -> btnLensWide
+            currentPhysicalCameraId == "2" -> btnLensMain
+            currentPhysicalCameraId == "3" -> btnLensTele
+            else -> btnLensMain
+        }
+
+        activeBtn.setTextColor(Color.parseColor("#FFCC00"))
+        activeBtn.textSize = 18f
+        activeBtn.setTypeface(null, android.graphics.Typeface.BOLD)
+    }
+
+    private fun switchLens(selectedBtn: TextView, logicalId: String, physicalId: String?) {
+        if (currentLogicalCameraId != logicalId || currentPhysicalCameraId != physicalId) {
+            currentLogicalCameraId = logicalId
+            currentPhysicalCameraId = physicalId
+            saveCurrentLensSettings()
+            refreshLensUI()
+
+            // Refresh video params for the new lens
+            if (!isPhotoMode) {
+                val newId = physicalId ?: logicalId
+                val caps = allVideoCapabilities[newId] ?: emptyList()
+                
+                val supported = caps.find { 
+                    "${it.width}x${it.height}" == selectedVideoSizeStr && it.maxFps >= selectedVideoFps 
+                }
+                
+                if (supported == null) {
+                    // Try fallback to 1080p@60
+                    val fallback = caps.find { it.width == 1920 && it.height == 1080 && it.maxFps >= 60 }
+                    if (fallback != null) {
+                        selectedVideoSizeStr = "1920x1080"
+                        selectedVideoFps = 60
+                        selectedVideoRatioStr = fallback.ratioStr
+                    } else {
+                        // Last resort: 30fps max res for current ratio or any ratio
+                        val ratioCaps = caps.filter { it.ratioStr == selectedVideoRatioStr }
+                        val best = ratioCaps.filter { it.maxFps >= 30 }
+                            .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) })
+                            .firstOrNull() ?: caps.maxByOrNull { it.width * it.height }
+                        
+                        if (best != null) {
+                            selectedVideoSizeStr = "${best.width}x${best.height}"
+                            selectedVideoFps = if (best.maxFps >= 30) 30 else best.maxFps
+                            selectedVideoRatioStr = best.ratioStr
+                        }
+                    }
+                    preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
+                    preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
+                    preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, selectedVideoRatioStr)
+                }
+                btnResolution.text = selectedVideoRatioStr
+            }
+
+            closeCamera()
+            if (isFormatPanelOpen) updateFormatPanelUI()
+            if (textureView.isAvailable) {
+                openCamera()
+            }
+        }
     }
 
     private fun updateFormatPanelUI() {
@@ -1049,10 +1060,13 @@ class MainActivity : AppCompatActivity() {
         updateModeUI()
         updateCropOverlayUI()
 
-        if (textureView.isAvailable) {
-            openCamera()
-        } else {
-            textureView.surfaceTextureListener = surfaceTextureListener
+        // 关键修复：强制等待布局稳定后再开启相机
+        textureView.post {
+            if (textureView.isAvailable) {
+                openCamera()
+            } else {
+                textureView.surfaceTextureListener = surfaceTextureListener
+            }
         }
     }
 
@@ -1092,6 +1106,7 @@ class MainActivity : AppCompatActivity() {
         override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
     }
 
+    @SuppressLint("MissingPermission")
     private fun openCamera() {
         if (!hasAllRequiredPermissions()) {
             ActivityCompat.requestPermissions(this, requiredPermissions(), REQUEST_CAMERA_PERMISSION)
@@ -1192,27 +1207,28 @@ class MainActivity : AppCompatActivity() {
             val map = characteristics?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val supportedSizes = map?.getOutputSizes(SurfaceTexture::class.java)
 
-            val previewSize: Size
-            if (isPhotoMode) {
-                val targetPreviewW = 1920
-                val targetPreviewH = 1440
-                previewSize = supportedSizes?.find { it.width == targetPreviewW && it.height == targetPreviewH }
-                    ?: supportedSizes?.filter { Math.abs(it.width.toFloat() / it.height - 4f/3f) < 0.01 }?.maxByOrNull { it.width }
-                    ?: Size(targetPreviewW, targetPreviewH)
-            } else {
-                val dimensions = selectedVideoSizeStr.split("x")
-                val w = dimensions[0].toInt()
-                val h = dimensions[1].toInt()
-                previewSize = Size(w, h)
+            // 确定的分辨率选择逻辑
+            val targetRatio = if (isPhotoMode) 4f/3f else {
+                val p = selectedVideoRatioStr.split(":")
+                if (p.size == 2) p[0].toFloat() / p[1].toFloat() else 1.777f
             }
 
+            val previewSize = supportedSizes?.filter { 
+                val r = it.width.toFloat() / it.height
+                Math.abs(r - targetRatio) < 0.05 
+            }?.sortedByDescending { it.width * it.height }
+             ?.find { it.width <= 2000 } // 优先选 1080p 级别的预览以保证性能
+             ?: Size(1920, 1080)
+
             texture.setDefaultBufferSize(previewSize.width, previewSize.height)
+            runOnUiThread { configureTransform(previewSize.width, previewSize.height) }
+            
             previewSurface?.release()
             previewSurface = Surface(texture)
             val surface = previewSurface ?: return
 
-            // 1. 创建带有 Session Parameters 的请求模板
-            val sessionTemplate = if (currentPhysicalCameraId == "2") CameraDevice.TEMPLATE_STILL_CAPTURE else CameraDevice.TEMPLATE_PREVIEW
+            // 1. 创建带有 Session Parameters 的请求模板 (回归到 TEMPLATE_PREVIEW 以保证稳定性)
+            val sessionTemplate = CameraDevice.TEMPLATE_PREVIEW
             previewRequestBuilder = camera.createCaptureRequest(sessionTemplate).apply {
                 addTarget(surface)
                 PhotoParamMapper.applyPhotoParamsToRequest(this, photoParamState, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, isStream = true)
@@ -1456,7 +1472,7 @@ class MainActivity : AppCompatActivity() {
         // Calculate ISO-Adaptive LSC Strength
         // Standard LSC is 100% at ISO 100, drops to 50% at high ISOs to prevent noise glow
         val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
-        val baseLsc = 1.30f 
+        val baseLsc = lscStrength
         val lscWeight = when {
             iso <= 100 -> 1.0f
             iso >= 3200 -> 0.5f
@@ -2687,6 +2703,40 @@ class MainActivity : AppCompatActivity() {
             is android.graphics.Rect -> "${value.left},${value.top},${value.right},${value.bottom}"
             else -> value.toString()
         }
+    }
+
+    private fun configureTransform(viewWidth: Int, viewHeight: Int) {
+        val matrix = android.graphics.Matrix()
+        val viewW = textureView.width.toFloat()
+        val viewH = textureView.height.toFloat()
+        
+        if (viewW == 0f || viewH == 0f) return
+
+        // 视频流在传感器坐标系下（通常是横屏）的宽高
+        val streamW = viewWidth.toFloat()
+        val streamH = viewHeight.toFloat()
+        
+        // 旋转后的视频流在屏幕坐标系下的宽高（假设 90 度旋转）
+        val rotatedStreamW = streamH
+        val rotatedStreamH = streamW
+        
+        val viewRatio = viewW / viewH // 0.75
+        val streamRatio = rotatedStreamW / rotatedStreamH // 例如 16:9 是 0.5625
+        
+        var scaleX = 1.0f
+        var scaleY = 1.0f
+        
+        // 抵消 TextureView 默认的 FILL 拉伸，实现 Center Inside
+        if (streamRatio > viewRatio) {
+            // 流比预览框更“胖”：宽度铺满，高度按比例缩小以保持不拉伸
+            scaleY = (viewW / streamRatio) / viewH
+        } else {
+            // 流比预览框更“瘦”：高度铺满，宽度按比例缩小以保持不拉伸
+            scaleX = (viewH * streamRatio) / viewW
+        }
+        
+        matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+        textureView.setTransform(matrix)
     }
 
     private fun showToast(message: String) {
