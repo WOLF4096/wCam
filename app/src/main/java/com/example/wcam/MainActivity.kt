@@ -52,6 +52,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.ListPopupWindow
 import androidx.appcompat.widget.PopupMenu
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.constraintlayout.widget.ConstraintSet
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -110,6 +112,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewGridLines: GridLineView
     private lateinit var viewHistogram: HistogramView
     private lateinit var viewCropOverlay: CropOverlayView
+    private lateinit var previewContainer: ViewGroup
     private lateinit var tvPhysicalRes: TextView
     private lateinit var viewFocusRing: View
 
@@ -304,10 +307,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadSettings() {
-        // Force default Photo mode and Main lens on startup
-        currentLogicalCameraId = "0"
-        currentPhysicalCameraId = "2"
-        isPhotoMode = true
+        isPhotoMode = preferenceManager.getBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, true)
+        currentLogicalCameraId = preferenceManager.getString(PreferenceManager.KEY_LENS_ID, "0")
+        currentPhysicalCameraId = preferenceManager.getString(PreferenceManager.KEY_PHYSICAL_LENS_ID, "2")
         
         isGridVisible = preferenceManager.getBoolean(PreferenceManager.KEY_GRID_VISIBLE, false)
         viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
@@ -334,17 +336,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateModeUI() {
+        val rootLayout = findViewById<ConstraintLayout>(R.id.main)
+        val set = ConstraintSet()
+        set.clone(rootLayout)
+        
         if (isPhotoMode) {
             btnResolution.text = "4:3"
+            set.setDimensionRatio(R.id.preview_container, "3:4")
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
             viewCropOverlay.visibility = View.VISIBLE
             btnModeSwitch.text = "切换\n录像"
         } else {
             btnResolution.text = selectedVideoRatioStr
+            val parts = selectedVideoRatioStr.split(":")
+            if (parts.size == 2) {
+                // Flip ratio for portrait container (e.g. 16:9 -> 9:16)
+                set.setDimensionRatio(R.id.preview_container, "${parts[1]}:${parts[0]}")
+            }
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
             viewCropOverlay.visibility = View.GONE
             btnModeSwitch.text = "切换\n拍照"
         }
+        set.applyTo(rootLayout)
+        
         btnModeSwitch.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
         if (isFormatPanelOpen) {
             updateFormatPanelUI()
@@ -548,6 +562,7 @@ class MainActivity : AppCompatActivity() {
         viewGridLines = findViewById(R.id.view_grid_lines)
         viewHistogram = findViewById(R.id.view_histogram)
         viewCropOverlay = findViewById(R.id.view_crop_overlay)
+        previewContainer = findViewById(R.id.preview_container)
         tvPhysicalRes = findViewById(R.id.tv_physical_res)
         viewFocusRing = findViewById(R.id.view_focus_ring)
 
@@ -1030,6 +1045,10 @@ class MainActivity : AppCompatActivity() {
         backgroundHandler?.post(freezeWatchdog)
         deviceOrientationTracker.enable()
         rawMediaStore.findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
+        
+        updateModeUI()
+        updateCropOverlayUI()
+
         if (textureView.isAvailable) {
             openCamera()
         } else {
