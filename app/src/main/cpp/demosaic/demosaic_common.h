@@ -27,6 +27,11 @@ struct DemosaicParams {
     int blackLevel;
     int whiteLevel;
     float normFactor;
+    // LSC Parameters
+    float lscStrength;
+    float opticalCenterX;
+    float opticalCenterY;
+    float maxDistSq;
 };
 
 extern float gamma_lut[1024];
@@ -46,35 +51,48 @@ inline int to_srgb(float v) {
 }
 
 inline float get_raw(const DemosaicParams& p, int x, int y) {
+    float val_f = 0.0f;
+    int cur_x = x;
+    int cur_y = y;
+
     // Fast path for in-bounds
     if (x >= 0 && x < p.width && y >= 0 && y < p.height) {
         uint64_t offset = (uint64_t)y * (uint64_t)p.rowStride + (uint64_t)x * (uint64_t)p.pixelStride;
         const uint8_t* ptr = p.rawData + offset;
         uint16_t val;
         std::memcpy(&val, ptr, 2);
-        return std::max(0.0f, (float)val - p.blackLevel) * p.normFactor;
+        val_f = std::max(0.0f, (float)val - p.blackLevel);
+    } else {
+        // Slow path for out-of-bounds
+        if (p.width <= 0 || p.height <= 0) return 0.0f;
+        cur_x = std::clamp(x, 0, p.width - 1);
+        cur_y = std::clamp(y, 0, p.height - 1);
+
+        if (p.rawData == nullptr) return 0.0f;
+
+        uint64_t offset = (uint64_t)cur_y * (uint64_t)p.rowStride + (uint64_t)cur_x * (uint64_t)p.pixelStride;
+
+        if (offset + 1 >= p.rawDataSize) return 0.0f;
+
+        const uint8_t* ptr = p.rawData + offset;
+        uint16_t val = 0;
+        std::memcpy(&val, ptr, 2);
+        val_f = std::max(0.0f, (float)val - p.blackLevel);
     }
 
-    // Slow path for out-of-bounds
-    if (p.width <= 0 || p.height <= 0) return 0.0f;
-    x = std::clamp(x, 0, p.width - 1);
-    y = std::clamp(y, 0, p.height - 1);
-
-    if (p.rawData == nullptr) return 0.0f;
-
-    uint64_t offset = (uint64_t)y * (uint64_t)p.rowStride + (uint64_t)x * (uint64_t)p.pixelStride;
-
-    // Safety check against buffer size
-    if (offset + 1 >= p.rawDataSize) {
-        return 0.0f;
+    // Apply Lens Shading Correction (LSC)
+    if (p.lscStrength > 0.0f) {
+        float dx = (float)cur_x - p.opticalCenterX;
+        float dy = (float)cur_y - p.opticalCenterY;
+        float distSq = dx * dx + dy * dy;
+        float r2 = distSq / p.maxDistSq;
+        float r4 = r2 * r2;
+        float r6 = r4 * r2;
+        float lscGain = 1.0f + p.lscStrength * (r2 + r4 + r6);
+        val_f *= lscGain;
     }
 
-    const uint8_t* ptr = p.rawData + offset;
-    uint16_t val = 0;
-    // Use memcpy for safe unaligned read
-    std::memcpy(&val, ptr, 2);
-
-    return std::max(0.0f, (float)val - p.blackLevel) * p.normFactor;
+    return val_f * p.normFactor;
 }
 
 inline int get_channel_type(int x, int y, int bayerPattern) {

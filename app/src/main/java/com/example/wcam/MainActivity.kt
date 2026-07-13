@@ -148,6 +148,7 @@ class MainActivity : AppCompatActivity() {
     private var jpegImageReader: ImageReader? = null
     private var histogramImageReader: ImageReader? = null
     private var pendingRawImage: Image? = null
+    private var lscStrength = 1.30f
     private var pendingJpegImage: Image? = null
     private var pendingCaptureResult: TotalCaptureResult? = null
     @Volatile
@@ -1480,7 +1481,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         val sDemosaic = System.currentTimeMillis()
                         var bitmap = com.example.wcam.camera.DemosaicEngine.process(
-                            image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel
+                            image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel, lscStrength
                         )
                         android.util.Log.i("CapturePerformance", "Native Demosaic: ${System.currentTimeMillis() - sDemosaic}ms")
 
@@ -1847,6 +1848,13 @@ class MainActivity : AppCompatActivity() {
         val lutG = createGammaLut(gammaG)
         val lutB = createGammaLut(gammaB)
 
+        // 4. Lens Shading Correction (LSC) Parameters
+        // Route: Radial Gain Model (G = 1 + k * r^2)
+        // This compensates for lens vignetting which is stronger at corners.
+        val opticalCenterX = sensorW / 2.0f
+        val opticalCenterY = sensorH / 2.0f
+        val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
+
         val plane = image.planes[0]
         val buffer = plane.buffer
         val rowStride = plane.rowStride
@@ -1877,37 +1885,64 @@ class MainActivity : AppCompatActivity() {
                     val row1 = ShortArray(strideInShorts)
                     
                     for (y in startY until endY) {
-                        val rO0 = (top + y * 2) * strideInShorts
-                        val rO1 = (top + y * 2 + 1) * strideInShorts
+                        val sensorY = top + y * 2
+                        val rO0 = sensorY * strideInShorts
+                        val rO1 = (sensorY + 1) * strideInShorts
                         
                         threadBuffer.position(rO0)
                         threadBuffer.get(row0)
                         threadBuffer.position(rO1)
                         threadBuffer.get(row1)
                         
+                        val dy = sensorY - opticalCenterY
+                        val dySq = dy * dy
+                        
                         val baseIdx = y * outW
                         for (x in 0 until outW) {
-                            val sX0 = left + x * 2
-                            val sX1 = sX0 + 1
+                            val sensorX = left + x * 2
+                            val sX0 = sensorX
+                            val sX1 = sensorX + 1
                             
-                            val v00 = row0[sX0 * psInShorts].toInt() and 0xFFFF
-                            val v01 = row0[sX1 * psInShorts].toInt() and 0xFFFF
-                            val v10 = row1[sX0 * psInShorts].toInt() and 0xFFFF
+                            val dx = sensorX - opticalCenterX
+                            val distSq = dx * dx + dySq
+                            
+                            // Advanced LSC Model: 1 + k * (r^2 + r^4 + r^6)
+                            // We use a more aggressive polynomial to handle steep fall-offs
+                            val r2 = distSq / maxDistSq
+                            val r4 = r2 * r2
+                            val r6 = r4 * r2
+                            val lscGain = 1.0f + lscStrength * (r2 + r4 + r6)
+                            
+                            val v00 = (row0[sX0 * psInShorts].toInt() and 0xFFFF)
+                            val v01 = (row0[sX1 * psInShorts].toInt() and 0xFFFF)
+                            val v10 = (row1[sX0 * psInShorts].toInt() and 0xFFFF)
                             val v11 = row1[sX1 * psInShorts].toInt() and 0xFFFF
+
+                            // Apply LSC Gain before Gamma (Apply to signal, not black level pedestal)
+                            // Use a small epsilon to avoid multiplying zero signals in the corners
+                            fun applyLsc(v: Int, gain: Float): Int {
+                                val signal = (v - blackLevel).toFloat()
+                                return (signal * gain + blackLevel).toInt().coerceIn(0, 65535)
+                            }
+
+                            val gv00 = applyLsc(v00, lscGain)
+                            val gv01 = applyLsc(v01, lscGain)
+                            val gv10 = applyLsc(v10, lscGain)
+                            val gv11 = applyLsc(v11, lscGain)
 
                             var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
                             when (bayerPattern) {
-                                0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 } // RGGB
-                                1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 } // GRBG
-                                2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 } // GBRG
-                                3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 } // BGGR
+                                0 -> { rVal = gv00; grVal = gv01; gbVal = gv10; bVal = gv11 } // RGGB
+                                1 -> { grVal = gv00; rVal = gv01; bVal = gv10; gbVal = gv11 } // GRBG
+                                2 -> { gbVal = gv00; bVal = gv01; rVal = gv10; grVal = gv11 } // GBRG
+                                3 -> { bVal = gv00; gbVal = gv01; grVal = gv10; rVal = gv11 } // BGGR
                             }
                             
                             val gAvg = (grVal + gbVal) / 2
                             val idx = baseIdx + x
-                            pixR[idx] = lutR[rVal.coerceIn(0, 65535)]
-                            pixG[idx] = lutG[gAvg.coerceIn(0, 65535)]
-                            pixB[idx] = lutB[bVal.coerceIn(0, 65535)]
+                            pixR[idx] = lutR[rVal]
+                            pixG[idx] = lutG[gAvg]
+                            pixB[idx] = lutB[bVal]
                         }
                     }
                 } finally {

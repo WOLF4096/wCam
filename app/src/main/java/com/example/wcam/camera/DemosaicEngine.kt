@@ -21,7 +21,8 @@ object DemosaicEngine {
         wbGains: FloatArray,
         bayerPattern: Int,
         blackLevel: Int,
-        whiteLevel: Int
+        whiteLevel: Int,
+        lscStrength: Float
     )
 
     fun process(
@@ -30,9 +31,10 @@ object DemosaicEngine {
         wbGains: FloatArray,
         bayerPattern: Int,
         blackLevel: Int,
-        whiteLevel: Int
+        whiteLevel: Int,
+        lscStrength: Float = 0.0f
     ): Bitmap {
-        Log.d("DemosaicEngine", "Algo: $algorithm, WB: ${wbGains.joinToString()}, BL: $blackLevel, WL: $whiteLevel")
+        Log.d("DemosaicEngine", "Algo: $algorithm, WB: ${wbGains.joinToString()}, BL: $blackLevel, WL: $whiteLevel, LSC: $lscStrength")
         
         val width = image.width
         val height = image.height
@@ -50,7 +52,8 @@ object DemosaicEngine {
         try {
             nativeProcess(
                 buffer, width, height, plane.rowStride, plane.pixelStride, 
-                pixels, algorithm, wbGains, bayerPattern, blackLevel, whiteLevel
+                pixels, algorithm, wbGains, bayerPattern, blackLevel, whiteLevel,
+                lscStrength
             )
         } catch (e: Exception) {
             Log.e("DemosaicEngine", "Native process failed", e)

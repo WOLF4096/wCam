@@ -15,7 +15,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
         JNIEnv* env, jobject thiz, jobject buffer, jint width, jint height,
         jint rowStride, jint pixelStride, jintArray outputPixels,
         jstring algorithm, jfloatArray wbGainsArray, jint bayerPattern,
-        jint blackLevel, jint whiteLevel) {
+        jint blackLevel, jint whiteLevel, jfloat lscStrength) {
 
     init_lut();
     uint8_t* rawData = (uint8_t*)env->GetDirectBufferAddress(buffer);
@@ -48,6 +48,10 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     p.bayerPattern = bayerPattern;
     p.blackLevel = blackLevel;
     p.whiteLevel = whiteLevel;
+    p.lscStrength = lscStrength;
+    p.opticalCenterX = (float)width / 2.0f;
+    p.opticalCenterY = (float)height / 2.0f;
+    p.maxDistSq = p.opticalCenterX * p.opticalCenterX + p.opticalCenterY * p.opticalCenterY;
 
     float diff = (float)(whiteLevel - blackLevel);
     p.normFactor = (diff > 0) ? (1.0f / diff) : 1.0f;
