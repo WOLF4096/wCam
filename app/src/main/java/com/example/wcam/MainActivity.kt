@@ -161,6 +161,7 @@ class MainActivity : AppCompatActivity() {
     private var isRawCaptureComplete = false
     @Volatile
     private var isJpegCaptureComplete = false
+    private var captureStartTime = 0L
 
     private var selectedResolution: Size? = null
     private var isFollowZoom = true // Now repurposed for maximized crop
@@ -1379,8 +1380,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun captureRawPhoto() {
-        val startTime = System.currentTimeMillis()
-        android.util.Log.i("CapturePerformance", "--- Starting RAW Capture Flow ---")
+        android.util.Log.d("CapturePerformance", "按下快门")
+        captureStartTime = System.currentTimeMillis()
         
         if (!isPhotoMode) {
             showToast("请先切换到拍照模式")
@@ -1521,6 +1522,7 @@ class MainActivity : AppCompatActivity() {
             request: CaptureRequest,
             result: TotalCaptureResult
         ) {
+            android.util.Log.d("CapturePerformance", "OnCaptureCompleted (Metadata Ready): ${System.currentTimeMillis() - captureStartTime}ms")
             pendingCaptureResult = result
             runOnUiThread {
                 resumePreview()
@@ -1538,8 +1540,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun maybePersistPendingRaw() {
-        val startPersist = System.currentTimeMillis()
         val image = pendingRawImage ?: return
+        android.util.Log.d("CapturePerformance", "Data Received (RAW Image): ${System.currentTimeMillis() - captureStartTime}ms")
         val captureResult = pendingCaptureResult ?: return
         val characteristics = activeCameraCharacteristics
         if (characteristics == null) {
@@ -1548,7 +1550,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         
-        android.util.Log.i("CapturePerformance", "Metadata extraction + post start: ${System.currentTimeMillis() - startPersist}ms")
+        android.util.Log.d("CapturePerformance", "Metadata extraction + post start: ${System.currentTimeMillis() - captureStartTime}ms")
 
         // Capture all necessary state now on the background thread
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
@@ -1598,11 +1600,12 @@ class MainActivity : AppCompatActivity() {
         pendingRawImage = null
         processingHandler?.post {
             val startProcess = System.currentTimeMillis()
+            android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - captureStartTime}ms")
             try {
                 if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
                     val sRaw = System.currentTimeMillis()
                     rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
-                    android.util.Log.i("CapturePerformance", "Save DNG: ${System.currentTimeMillis() - sRaw}ms")
+                    android.util.Log.i("CapturePerformance", "Save DNG: ${System.currentTimeMillis() - sRaw}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
                 }
                 
                 if (savedFormat != "RAW") {
@@ -1638,12 +1641,13 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             saveJpegBitmap(bitmap, rotation.degrees)
                         }
-                        android.util.Log.i("CapturePerformance", "Save image ($algoKey): ${System.currentTimeMillis() - sSave}ms")
+                        android.util.Log.i("CapturePerformance", "Save image ($algoKey): ${System.currentTimeMillis() - sSave}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
                         
                         val sThumb = System.currentTimeMillis()
                         updateRecentPhotoPreview(savedUri)
-                        android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms")
+                        android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
                         bitmap.recycle()
+                        android.util.Log.d("CapturePerformance", "保存完成 (总耗时: ${System.currentTimeMillis() - captureStartTime}ms)")
                     }
                 }
 
@@ -2459,6 +2463,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun captureJpgPhoto() {
         if (isCaptureInProgress) return
+        android.util.Log.d("CapturePerformance", "按下快门")
+        captureStartTime = System.currentTimeMillis()
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
         val rawReader = rawImageReader ?: return
@@ -2501,7 +2507,9 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 session.stopRepeating()
+                val sReq = System.currentTimeMillis()
                 session.capture(captureBuilder.build(), stillCaptureCallback, backgroundHandler)
+                android.util.Log.d("CapturePerformance", "Capture Request Issued: ${System.currentTimeMillis() - sReq}ms (Total from shutter: ${System.currentTimeMillis() - captureStartTime}ms)")
             } catch (e: CameraAccessException) {
                 finishCaptureWithError("拍照失败")
             }
