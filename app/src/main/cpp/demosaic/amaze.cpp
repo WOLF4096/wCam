@@ -7,6 +7,7 @@ void demosaic_amaze(const DemosaicParams& p, int* pixels) {
     std::vector<float> full_g(p.width * p.height);
 
     // Step 1: Directional Green interpolation with more context
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < p.height; ++y) {
         for (int x = 0; x < p.width; ++x) {
             int channel = get_channel_type(x, y, p.bayerPattern);

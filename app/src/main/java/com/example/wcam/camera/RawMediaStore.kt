@@ -1,10 +1,8 @@
 package com.example.wcam.camera
 
-import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
@@ -17,13 +15,29 @@ import android.provider.MediaStore
 import android.util.Size
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 
-private const val RAW_MIME_TYPE = "image/x-adobe-dng"
-private const val RAW_FOLDER_NAME = "wCam"
+const val RAW_MIME_TYPE = "image/x-adobe-dng"
+const val RAW_FOLDER_NAME = "wCam"
 
 class RawMediaStore(private val context: Context) {
     fun saveRawImage(
         image: Image,
+        characteristics: CameraCharacteristics,
+        captureResult: TotalCaptureResult,
+        exifOrientation: Int,
+    ): Uri {
+        return saveRawImageFromBuffer(
+            image.planes[0].buffer, image.width, image.height, image.planes[0].rowStride,
+            characteristics, captureResult, exifOrientation
+        )
+    }
+
+    fun saveRawImageFromBuffer(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int,
         characteristics: CameraCharacteristics,
         captureResult: TotalCaptureResult,
         exifOrientation: Int,
@@ -61,7 +75,7 @@ class RawMediaStore(private val context: Context) {
         }
         try {
             resolver.openOutputStream(uri)?.use { outputStream ->
-                dngCreator.writeImage(outputStream, image)
+                dngCreator.writeByteBuffer(outputStream, Size(width, height), buffer, rowStride.toLong())
             } ?: throw IOException("Unable to open RAW output stream")
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -84,46 +98,27 @@ class RawMediaStore(private val context: Context) {
     fun loadThumbnailBitmap(uri: Uri): Bitmap? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                context.contentResolver.loadThumbnail(uri, Size(160, 160), null)
+                context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
             } else {
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    BitmapFactory.decodeStream(input)
-                }
+                null
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         }
     }
 
     fun findLatestRecentPhotoUri(): Uri? {
+        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Images.Media._ID)
-        val selection: String
-        val selectionArgs: Array<String>
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
-            selectionArgs = arrayOf("${Environment.DIRECTORY_PICTURES}/$RAW_FOLDER_NAME/")
-        } else {
-            selection = "${MediaStore.Images.Media.DATA} LIKE ?"
-            selectionArgs = arrayOf("%/Pictures/$RAW_FOLDER_NAME/%")
-        }
+        val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
 
-        return try {
-            context.contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                selection,
-                selectionArgs,
-                "${MediaStore.Images.Media.DATE_ADDED} DESC, ${MediaStore.Images.Media._ID} DESC"
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val id = cursor.getLong(0)
-                    ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                } else {
-                    null
-                }
+        context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val id = cursor.getLong(idColumn)
+                return Uri.withAppendedPath(collection, id.toString())
             }
-        } catch (_: Exception) {
-            null
         }
+        return null
     }
 }

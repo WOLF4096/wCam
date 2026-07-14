@@ -1,6 +1,7 @@
 #include "demosaic_common.h"
 
 void demosaic_ahd(const DemosaicParams& p, int* pixels) {
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < p.height; ++y) {
         int out_row = y * p.width;
         for (int x = 0; x < p.width; ++x) {

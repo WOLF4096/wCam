@@ -3,7 +3,6 @@
 #include <vector>
 #include <android/log.h>
 #include <thread>
-#include <android/log.h>
 #include "demosaic/demosaic.h"
 
 #define LOG_TAG "wCam_Native"
@@ -39,7 +38,6 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
 
     DemosaicParams p;
     p.rawData = rawData;
-    p.rawDataSize = (uint64_t)rawDataSize;
     p.width = width;
     p.height = height;
     p.rowStride = rowStride;
@@ -67,6 +65,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
 
     try {
         if (algo == "None") {
+            #pragma omp parallel for schedule(dynamic, 16)
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
                     float val = get_raw(p, x, y);
@@ -78,6 +77,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                 }
             }
         } else if (algo == "Mono") {
+            #pragma omp parallel for schedule(dynamic, 16)
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
                     float val = get_raw(p, x, y);

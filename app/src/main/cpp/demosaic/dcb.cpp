@@ -7,6 +7,7 @@ void demosaic_dcb(const DemosaicParams& p, int* pixels) {
     // Simplified DCB concept: Calculate directional color differences and average them.
 
     std::vector<float> full_g(p.width * p.height);
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < p.height; ++y) {
         for (int x = 0; x < p.width; ++x) {
             int channel = get_channel_type(x, y, p.bayerPattern);
@@ -23,6 +24,7 @@ void demosaic_dcb(const DemosaicParams& p, int* pixels) {
         }
     }
 
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < p.height; ++y) {
         int out_row = y * p.width;
         for (int x = 0; x < p.width; ++x) {

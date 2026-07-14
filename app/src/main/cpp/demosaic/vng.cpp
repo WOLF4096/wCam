@@ -4,6 +4,7 @@ void demosaic_vng(const DemosaicParams& p, int* pixels) {
     // Variable Number of Gradients (VNG) - Simplified version
     // This calculates gradients in 8 directions and uses a threshold to average.
 
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < p.height; ++y) {
         int out_row = y * p.width;
         for (int x = 0; x < p.width; ++x) {

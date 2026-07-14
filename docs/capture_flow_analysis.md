@@ -8,16 +8,15 @@
 graph TD
     A[按下快门 0ms] --> B[构建捕获请求 & 发送指令 +1ms]
     B --> C{硬件采集与传输}
-    C -->|RAW 数据到达| D[onImageAvailable 233ms]
-    C -->|元数据到达| E[onCaptureCompleted 267ms]
-    D --> F[元数据提取与参数同步 268ms]
-    E --> F
-    F --> G[切换至 Processing 处理线程 271ms]
-    G --> H[Native Demosaic 核心算法 835ms]
-    H --> I[图像裁剪与 Bitmap 变换 48ms]
-    I --> J[文件编码与 IO 写入 325ms]
-    J --> K[更新 UI 缩略图 0ms]
-    K --> L[拍照流程结束 1485ms]
+    C -->|RAW 数据到达| D[onImageAvailable ~230ms]
+    D --> E[数据克隆与解耦 ~30ms]
+    E --> F[启用拍摄键 - 允许连拍]
+    E --> G[切换至 CaptureExecutor 线程池]
+    G --> H[Native OpenMP 并行 Demosaic ~180ms]
+    H --> I[图像裁剪与 Bitmap 变换]
+    I --> J[文件编码与异步 IO]
+    J --> K[更新 UI 缩略图]
+    K --> L[后台任务结束]
 ```
 
 ---

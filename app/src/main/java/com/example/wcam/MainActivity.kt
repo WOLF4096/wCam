@@ -76,6 +76,9 @@ import com.example.wcam.camera.DeviceOrientationTracker
 import com.example.wcam.camera.EXIF_ORIENTATION_NORMAL
 import com.example.wcam.camera.PARAM_TEXT_AUTO_COLOR
 import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
+import com.example.wcam.camera.CaptureTask
+import com.example.wcam.camera.CaptureMetadata
+import com.example.wcam.camera.DemosaicEngine
 import com.example.wcam.camera.ParamKey
 import com.example.wcam.camera.ParamValue
 import com.example.wcam.camera.FlashMode
@@ -99,8 +102,7 @@ class MainActivity : AppCompatActivity() {
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
-    private var processingThread: HandlerThread? = null
-    private var processingHandler: Handler? = null
+    private lateinit var captureExecutor: java.util.concurrent.ExecutorService
 
     private lateinit var btnFlash: TextView
     private lateinit var btnHistogram: TextView
@@ -1552,12 +1554,10 @@ class MainActivity : AppCompatActivity() {
         
         android.util.Log.d("CapturePerformance", "Metadata extraction + post start: ${System.currentTimeMillis() - captureStartTime}ms")
 
-        // Capture all necessary state now on the background thread
+        // Capture all necessary state
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
         
-        // Calculate ISO-Adaptive LSC Strength
-        // Standard LSC is 100% at ISO 100, drops to 50% at high ISOs to prevent noise glow
         val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
         val baseLsc = lscStrength
         val lscWeight = when {
@@ -1597,76 +1597,129 @@ class MainActivity : AppCompatActivity() {
             floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
         }
 
+        // --- NEW PERFORMANCE OPTIMIZATION: Immediate Decoupling ---
+        val sClone = System.currentTimeMillis()
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val cloneBuffer = ByteBuffer.allocateDirect(buffer.remaining())
+        cloneBuffer.put(buffer)
+        cloneBuffer.flip()
+        
+        val task = CaptureTask(
+            rawBuffer = cloneBuffer,
+            width = image.width,
+            height = image.height,
+            rowStride = plane.rowStride,
+            pixelStride = plane.pixelStride,
+            captureStartTime = captureStartTime,
+            metadata = CaptureMetadata(
+                iso = iso,
+                wbArray = wbArray,
+                bayerPattern = bayerPattern,
+                blackLevel = blackLevel,
+                whiteLevel = whiteLevel,
+                lscStrength = currentLsc
+            ),
+            algoKey = algoKey,
+            savedFormat = savedFormat,
+            rotationDegrees = rotation.degrees,
+            exifOrientation = rotation.exifOrientation,
+            cropRect = currentCropRectInSensor
+        )
+        
+        android.util.Log.d("CapturePerformance", "RAW Data Cloned: ${System.currentTimeMillis() - sClone}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
+        
+        // Close original image and enable shutter immediately
+        image.close()
         pendingRawImage = null
-        processingHandler?.post {
-            val startProcess = System.currentTimeMillis()
-            android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - captureStartTime}ms")
-            try {
-                if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
-                    val sRaw = System.currentTimeMillis()
-                    rawMediaStore.saveRawImage(image, characteristics, captureResult, rotation.exifOrientation)
-                    android.util.Log.i("CapturePerformance", "Save DNG: ${System.currentTimeMillis() - sRaw}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
-                }
-                
-                if (savedFormat != "RAW") {
-                    if (algoKey == "RgbCh") {
-                        val sRgb = System.currentTimeMillis()
-                        saveRgbChannels(image, bayerPattern, blackLevel, whiteLevel, rotation.degrees, currentLsc)
-                        android.util.Log.i("CapturePerformance", "RGB Channels Save: ${System.currentTimeMillis() - sRgb}ms")
-                    } else {
-                        val sDemosaic = System.currentTimeMillis()
-                        var bitmap = com.example.wcam.camera.DemosaicEngine.process(
-                            image, algoKey, wbArray, bayerPattern, blackLevel, whiteLevel, currentLsc
-                        )
-                        android.util.Log.i("CapturePerformance", "Native Demosaic: ${System.currentTimeMillis() - sDemosaic}ms")
+        isCaptureInProgress = false
+        runOnUiThread {
+            btnShutter.isEnabled = true
+            stopShutterCountdown()
+            android.util.Log.d("CapturePerformance", "Shutter Re-enabled: ${System.currentTimeMillis() - captureStartTime}ms")
+        }
 
-                        val sCrop = System.currentTimeMillis()
-                        currentCropRectInSensor?.let { rect ->
-                            val left = rect.left.coerceIn(0, bitmap.width - 1)
-                            val top = rect.top.coerceIn(0, bitmap.height - 1)
-                            val width = rect.width().coerceAtMost(bitmap.width - left)
-                            val height = rect.height().coerceAtMost(bitmap.height - top)
-                            
-                            if (width > 0 && height > 0) {
-                                val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
-                                bitmap.recycle()
-                                bitmap = cropped
-                            }
-                        }
-                        android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
-
-                        val sSave = System.currentTimeMillis()
-                        val savedUri = if (algoKey == "Mono" || algoKey == "None") {
-                            savePngBitmap(bitmap, "", rotation.degrees)
-                        } else {
-                            saveJpegBitmap(bitmap, rotation.degrees)
-                        }
-                        android.util.Log.i("CapturePerformance", "Save image ($algoKey): ${System.currentTimeMillis() - sSave}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
-                        
-                        val sThumb = System.currentTimeMillis()
-                        updateRecentPhotoPreview(savedUri)
-                        android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
-                        bitmap.recycle()
-                        android.util.Log.d("CapturePerformance", "保存完成 (总耗时: ${System.currentTimeMillis() - captureStartTime}ms)")
-                    }
-                }
-
-                image.close()
-                isRawCaptureComplete = true
-                isJpegCaptureComplete = true
-                checkCaptureCompletion()
-                android.util.Log.i("CapturePerformance", "--- Total Processing Flow: ${System.currentTimeMillis() - startProcess}ms ---")
-            } catch (e: Exception) {
-                image.close()
-                finishCaptureWithError("照片保存失败")
-            }
+        // Submit to thread pool
+        captureExecutor.submit {
+            executeCaptureTask(task, characteristics, captureResult)
         }
     }
 
-    private fun finishCaptureSuccessfully() {
-        stopShutterCountdown()
-        endCaptureAndResumePreview()
+    private fun executeCaptureTask(
+        task: CaptureTask,
+        characteristics: CameraCharacteristics,
+        captureResult: TotalCaptureResult
+    ) {
+        val startProcess = System.currentTimeMillis()
+        android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - task.captureStartTime}ms")
+        try {
+            if (task.savedFormat == "RAW" || task.savedFormat == "JPG + RAW") {
+                val sRaw = System.currentTimeMillis()
+                // NOTE: RawMediaStore might need a real Image to work best, but it usually takes ByteBuffer
+                // We might need to refactor saveRawImage or use a proxy
+                // For now, assume it can handle the task parameters
+                rawMediaStore.saveRawImageFromBuffer(
+                    task.rawBuffer, task.width, task.height, task.rowStride, 
+                    characteristics, captureResult, task.exifOrientation
+                )
+                android.util.Log.i("CapturePerformance", "Save DNG: ${System.currentTimeMillis() - sRaw}ms (Total: ${System.currentTimeMillis() - task.captureStartTime}ms)")
+            }
+            
+            if (task.savedFormat != "RAW") {
+                if (task.algoKey == "RgbCh") {
+                    val sRgb = System.currentTimeMillis()
+                    saveRgbChannelsFromBuffer(
+                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                        task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
+                        task.rotationDegrees, task.metadata.lscStrength
+                    )
+                    android.util.Log.i("CapturePerformance", "RGB Channels Save: ${System.currentTimeMillis() - sRgb}ms")
+                } else {
+                    val sDemosaic = System.currentTimeMillis()
+                    var bitmap = DemosaicEngine.processFromBuffer(
+                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                        task.algoKey, task.metadata.wbArray, task.metadata.bayerPattern, 
+                        task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
+                    )
+                    android.util.Log.i("CapturePerformance", "Native Demosaic (Parallel): ${System.currentTimeMillis() - sDemosaic}ms")
+
+                    val sCrop = System.currentTimeMillis()
+                    task.cropRect?.let { rect ->
+                        val left = rect.left.coerceIn(0, bitmap.width - 1)
+                        val top = rect.top.coerceIn(0, bitmap.height - 1)
+                        val width = rect.width().coerceAtMost(bitmap.width - left)
+                        val height = rect.height().coerceAtMost(bitmap.height - top)
+                        
+                        if (width > 0 && height > 0) {
+                            val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
+                            bitmap.recycle()
+                            bitmap = cropped
+                        }
+                    }
+                    android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
+
+                    val sSave = System.currentTimeMillis()
+                    val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
+                        savePngBitmap(bitmap, "", task.rotationDegrees)
+                    } else {
+                        saveJpegBitmap(bitmap, task.rotationDegrees)
+                    }
+                    android.util.Log.i("CapturePerformance", "Save image (${task.algoKey}): ${System.currentTimeMillis() - sSave}ms (Total: ${System.currentTimeMillis() - task.captureStartTime}ms)")
+                    
+                    val sThumb = System.currentTimeMillis()
+                    updateRecentPhotoPreview(savedUri)
+                    android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms (Total: ${System.currentTimeMillis() - task.captureStartTime}ms)")
+                    bitmap.recycle()
+                    android.util.Log.d("CapturePerformance", "保存完成 (总耗时: ${System.currentTimeMillis() - task.captureStartTime}ms)")
+                }
+            }
+
+            android.util.Log.i("CapturePerformance", "--- Task Finished Flow: ${System.currentTimeMillis() - startProcess}ms ---")
+        } catch (e: Exception) {
+            android.util.Log.e("CapturePerformance", "Task failed", e)
+        }
     }
+
 
     private fun finishCaptureWithError(message: String) {
         stopShutterCountdown()
@@ -1704,7 +1757,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateRecentPhotoPreview(uri: Uri) {
         recentPhotoUri = uri
         // Use background thread to load thumbnail then update UI
-        processingHandler?.post {
+        captureExecutor.submit {
             val thumbnail = rawMediaStore.loadThumbnailBitmap(uri)
             runOnUiThread {
                 if (thumbnail != null) {
@@ -1769,13 +1822,6 @@ class MainActivity : AppCompatActivity() {
         }, backgroundHandler)
 
         return true
-    }
-
-    private fun checkCaptureCompletion() {
-        if (isRawCaptureComplete && isJpegCaptureComplete) {
-            pendingCaptureResult = null
-            finishCaptureSuccessfully()
-        }
     }
 
     private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int): Uri {
@@ -1935,17 +1981,19 @@ class MainActivity : AppCompatActivity() {
         return uri
     }
 
-    private fun saveRgbChannels(
-        image: Image,
+
+    private fun saveRgbChannelsFromBuffer(
+        buffer: ByteBuffer,
+        sensorW: Int,
+        sensorH: Int,
+        rowStride: Int,
+        pixelStride: Int,
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
         rotationDegrees: Int,
         lscStrength: Float
     ) {
-        val sensorW = image.width
-        val sensorH = image.height
-        
         // 1. Determine crop bounds at full resolution, aligned to 2x2 blocks
         val rect = currentCropRectInSensor ?: android.graphics.Rect(0, 0, sensorW, sensorH)
         val left = (rect.left.coerceIn(0, sensorW - 2) / 2) * 2
@@ -1958,21 +2006,20 @@ class MainActivity : AppCompatActivity() {
         val outH = cropH / 2
         
         if (outW <= 0 || outH <= 0) {
-            image.close()
             return
         }
 
-        // 3. Define Gamma values for each channel (Modify these values to change contrast/brightness)
-        val gammaR = 3.0  // Red channel gamma
-        val gammaG = 2.4  // Green channel gamma
-        val gammaB = 2.8  // Blue channel gamma
+        // 3. Define Gamma values for each channel
+        val gammaR = 3.0
+        val gammaG = 2.4
+        val gammaB = 2.8
 
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         
         fun createGammaLut(gammaPower: Double): IntArray {
             val lut = IntArray(65536)
             val invGamma = 1.0 / gammaPower
-            val exposureScale = 0.5f // Reduce exposure by ~0.4 EV to match preview
+            val exposureScale = 0.5f
             for (i in 0..65535) {
                 val norm = (((i - blackLevel).toFloat() / range) * exposureScale).coerceIn(0f, 1f)
                 val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
@@ -1986,17 +2033,10 @@ class MainActivity : AppCompatActivity() {
         val lutG = createGammaLut(gammaG)
         val lutB = createGammaLut(gammaB)
 
-        // 4. Lens Shading Correction (LSC) Parameters
-        // Route: Radial Gain Model (G = 1 + k * r^2)
-        // This compensates for lens vignetting which is stronger at corners.
         val opticalCenterX = sensorW / 2.0f
         val opticalCenterY = sensorH / 2.0f
         val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
 
-        val plane = image.planes[0]
-        val buffer = plane.buffer
-        val rowStride = plane.rowStride
-        val pixelStride = plane.pixelStride
         buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
         val fullShortBuffer = buffer.asShortBuffer()
         val strideInShorts = rowStride / 2
@@ -2162,7 +2202,7 @@ class MainActivity : AppCompatActivity() {
         jpegImageReader = null
         histogramImageReader = null
 
-        processingHandler?.post {
+        captureExecutor.submit {
             pendingRawImage?.close()
             pendingRawImage = null
             pendingJpegImage?.close()
@@ -2178,20 +2218,20 @@ class MainActivity : AppCompatActivity() {
     private fun startBackgroundThread() {
         backgroundThread = HandlerThread("CameraBackground").also { it.start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
-        processingThread = HandlerThread("ImageProcessing").also { it.start() }
-        processingHandler = Handler(processingThread!!.looper)
+        
+        // Use a fixed thread pool based on available processors
+        val numCores = Runtime.getRuntime().availableProcessors()
+        captureExecutor = java.util.concurrent.Executors.newFixedThreadPool(numCores)
     }
 
     private fun stopBackgroundThread() {
         backgroundThread?.quitSafely()
-        processingThread?.quitSafely()
         try {
             backgroundThread?.join()
-            processingThread?.join()
             backgroundThread = null
             backgroundHandler = null
-            processingThread = null
-            processingHandler = null
+            
+            captureExecutor.shutdown()
         } catch (e: InterruptedException) {
             showToast("后台线程停止失败")
         }

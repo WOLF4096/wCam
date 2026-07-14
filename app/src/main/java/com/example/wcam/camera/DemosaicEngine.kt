@@ -18,7 +18,7 @@ object DemosaicEngine {
         pixelStride: Int,
         outputPixels: IntArray,
         algorithm: String,
-        wbGains: FloatArray,
+        wbGainsArray: FloatArray,
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
@@ -34,14 +34,28 @@ object DemosaicEngine {
         whiteLevel: Int,
         lscStrength: Float = 0.0f
     ): Bitmap {
+        val plane = image.planes[0]
+        return processFromBuffer(
+            plane.buffer, image.width, image.height, plane.rowStride, plane.pixelStride,
+            algorithm, wbGains, bayerPattern, blackLevel, whiteLevel, lscStrength
+        )
+    }
+
+    fun processFromBuffer(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        pixelStride: Int,
+        algorithm: String,
+        wbGains: FloatArray,
+        bayerPattern: Int,
+        blackLevel: Int,
+        whiteLevel: Int,
+        lscStrength: Float = 0.0f
+    ): Bitmap {
         Log.d("DemosaicEngine", "Algo: $algorithm, WB: ${wbGains.joinToString()}, BL: $blackLevel, WL: $whiteLevel, LSC: $lscStrength")
         
-        val width = image.width
-        val height = image.height
-        val plane = image.planes[0]
-        
-        // Use a direct buffer and ensure it remains valid during the call
-        val buffer = plane.buffer
         if (!buffer.isDirect) {
             throw IllegalArgumentException("Image buffer must be direct")
         }
@@ -51,7 +65,7 @@ object DemosaicEngine {
         
         try {
             nativeProcess(
-                buffer, width, height, plane.rowStride, plane.pixelStride, 
+                buffer, width, height, rowStride, pixelStride,
                 pixels, algorithm, wbGains, bayerPattern, blackLevel, whiteLevel,
                 lscStrength
             )
