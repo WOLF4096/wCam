@@ -77,6 +77,7 @@ import com.example.wcam.camera.EXIF_ORIENTATION_NORMAL
 import com.example.wcam.camera.PARAM_TEXT_AUTO_COLOR
 import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
 import com.example.wcam.camera.ParamKey
+import com.example.wcam.camera.ParamValue
 import com.example.wcam.camera.FlashMode
 import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
@@ -334,6 +335,32 @@ class MainActivity : AppCompatActivity() {
 
         btnResolution.text = if (isPhotoMode) "4:3" else selectedVideoRatioStr
         updateCropOverlayUI()
+        restorePhotoParamState()
+    }
+
+    private fun restorePhotoParamState() {
+        val evAuto = preferenceManager.getBoolean(PreferenceManager.KEY_PARAM_EV_AUTO, true)
+        val evVal = preferenceManager.getString(PreferenceManager.KEY_PARAM_EV_VAL, "+0.0")
+        
+        val wbAuto = preferenceManager.getBoolean(PreferenceManager.KEY_PARAM_WB_AUTO, true)
+        val wbVal = preferenceManager.getString(PreferenceManager.KEY_PARAM_WB_VAL, "5200K")
+        
+        val isoAuto = preferenceManager.getBoolean(PreferenceManager.KEY_PARAM_ISO_AUTO, true)
+        val isoVal = preferenceManager.getString(PreferenceManager.KEY_PARAM_ISO_VAL, "100")
+        
+        val sAuto = preferenceManager.getBoolean(PreferenceManager.KEY_PARAM_S_AUTO, true)
+        val sVal = preferenceManager.getString(PreferenceManager.KEY_PARAM_S_VAL, "1/125")
+        
+        val afAuto = preferenceManager.getBoolean(PreferenceManager.KEY_PARAM_AF_AUTO, true)
+        val afVal = preferenceManager.getString(PreferenceManager.KEY_PARAM_AF_VAL, "0")
+
+        photoParamState = PhotoParamState(
+            ev = ParamValue(evAuto, evVal, null),
+            wb = ParamValue(wbAuto, wbVal, null),
+            iso = ParamValue(isoAuto, isoVal, null),
+            shutter = ParamValue(sAuto, sVal, null),
+            af = ParamValue(afAuto, afVal, null)
+        )
     }
 
     private fun updateModeUI() {
@@ -710,17 +737,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupParamGestures() {
-        val evValues = listOf("-2.0", "-1.5", "-1.0", "-0.5", "0.0", "+0.5", "+1.0", "+1.5", "+2.0")
-        val wbValues = listOf("3200K", "4000K", "5200K", "6000K", "7000K")
-        val isoValues = listOf("50", "100", "200", "400", "800", "1600", "3200", "6400", "12.8k", "25.6k", "51.2k", "64k")
-        val sValues = listOf("1/1000s", "1/500s", "1/250s", "1/125s", "1/100s", "1/60s", "1/30s", "1/8s")
-        val afValues = listOf("0.1", "0.3", "0.5", "0.7", "0.9", "1.0")
-
-        ParamController(R.id.layout_param_ev, tvValEv, evValues, 4, ParamKey.EV).setup()
-        ParamController(R.id.layout_param_wb, tvValWb, wbValues, 2, ParamKey.WB).setup()
-        ParamController(R.id.layout_param_iso, tvValIso, isoValues, 1, ParamKey.ISO).setup()
-        ParamController(R.id.layout_param_s, tvValS, sValues, 4, ParamKey.SHUTTER).setup()
-        ParamController(R.id.layout_param_af, tvValAf, afValues, 2, ParamKey.AF).setup()
+        // Handled dynamically in setupDynamicParamGestures() once camera is ready
         refreshParamViews()
     }
 
@@ -732,14 +749,45 @@ class MainActivity : AppCompatActivity() {
             capabilities = cameraCapabilities,
             currentState = photoParamState,
         )
+        saveParamState(key)
         refreshParamViews()
         applyPhotoParamsToPreview()
     }
 
     private fun onParamAutoReset(key: ParamKey) {
+        if (key == ParamKey.EV) {
+            // EV从手动恢复自动时还原为0
+            onParamManualStep(ParamKey.EV, "+0.0")
+        }
         photoParamState = PhotoParamMapper.restoreAutoState(key, photoParamState)
+        saveParamState(key)
         refreshParamViews()
         applyPhotoParamsToPreview()
+    }
+
+    private fun saveParamState(key: ParamKey) {
+        when (key) {
+            ParamKey.EV -> {
+                preferenceManager.saveBoolean(PreferenceManager.KEY_PARAM_EV_AUTO, photoParamState.ev.isAuto)
+                preferenceManager.saveString(PreferenceManager.KEY_PARAM_EV_VAL, photoParamState.ev.displayValue)
+            }
+            ParamKey.WB -> {
+                preferenceManager.saveBoolean(PreferenceManager.KEY_PARAM_WB_AUTO, photoParamState.wb.isAuto)
+                preferenceManager.saveString(PreferenceManager.KEY_PARAM_WB_VAL, photoParamState.wb.displayValue)
+            }
+            ParamKey.ISO -> {
+                preferenceManager.saveBoolean(PreferenceManager.KEY_PARAM_ISO_AUTO, photoParamState.iso.isAuto)
+                preferenceManager.saveString(PreferenceManager.KEY_PARAM_ISO_VAL, photoParamState.iso.displayValue)
+            }
+            ParamKey.SHUTTER -> {
+                preferenceManager.saveBoolean(PreferenceManager.KEY_PARAM_S_AUTO, photoParamState.shutter.isAuto)
+                preferenceManager.saveString(PreferenceManager.KEY_PARAM_S_VAL, photoParamState.shutter.displayValue)
+            }
+            ParamKey.AF -> {
+                preferenceManager.saveBoolean(PreferenceManager.KEY_PARAM_AF_AUTO, photoParamState.af.isAuto)
+                preferenceManager.saveString(PreferenceManager.KEY_PARAM_AF_VAL, photoParamState.af.displayValue)
+            }
+        }
     }
 
     private fun refreshParamViews() {
@@ -761,7 +809,13 @@ class MainActivity : AppCompatActivity() {
         setParamText(tvValWb, wbDisplay, photoParamState.wb.isAuto)
 
         val isoDisplay = if (photoParamState.iso.isAuto) {
-            previewAutoIso?.toString() ?: photoParamState.iso.displayValue
+            previewAutoIso?.let { iso ->
+                if (iso >= 1000) {
+                    val kValue = iso / 1000.0
+                    if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dK", kValue.toInt())
+                    else String.format(java.util.Locale.US, "%.1fK", kValue)
+                } else iso.toString()
+            } ?: photoParamState.iso.displayValue
         } else {
             photoParamState.iso.displayValue
         }
@@ -804,14 +858,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractNumber(s: String): Float? {
         return try {
-            if (s.contains("/")) {
-                val parts = s.replace(Regex("[^0-9./]"), "").split("/")
-                if (parts.size == 2) parts[0].toFloat() / parts[1].toFloat() else parts[0].toFloat()
+            val upper = s.uppercase(java.util.Locale.US)
+            if (upper.contains("/")) {
+                val parts = upper.replace(Regex("[^0-9./K]"), "").split("/")
+                if (parts.size == 2) {
+                    val num = parsePart(parts[0])
+                    val den = parsePart(parts[1])
+                    num / den
+                } else parsePart(parts[0])
             } else {
-                s.replace(Regex("[^0-9.-]"), "").toFloat()
+                parsePart(upper.replace(Regex("[^0-9.-K]"), ""))
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    private fun parsePart(p: String): Float {
+        val clean = p.trim()
+        if (clean.isEmpty() || clean == "K") return 0f
+        return if (clean.endsWith("K")) {
+            clean.removeSuffix("K").toFloatOrNull()?.let { it * 1000f } ?: 0f
+        } else {
+            clean.toFloatOrNull() ?: 0f
         }
     }
 
@@ -861,8 +930,8 @@ class MainActivity : AppCompatActivity() {
                                 ParamKey.ISO -> previewAutoIso?.let { iso ->
                                     if (iso >= 1000) {
                                         val kValue = iso / 1000.0
-                                        if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dk", kValue.toInt())
-                                        else String.format(java.util.Locale.US, "%.1fk", kValue)
+                                        if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dK", kValue.toInt())
+                                        else String.format(java.util.Locale.US, "%.1fK", kValue)
                                     } else iso.toString()
                                 }
                                 ParamKey.SHUTTER -> previewAutoShutterNanos?.let(PhotoParamMapper::formatShutterDisplay)
@@ -876,6 +945,10 @@ class MainActivity : AppCompatActivity() {
                     MotionEvent.ACTION_MOVE -> {
                         val deltaY = event.y - startY
                         if (abs(deltaY) > scrollSensitivity) {
+                            // Slide UP (deltaY < 0) increments index.
+                            // For WB/ISO/S/EV (sorted small to large), this increases value.
+                            // For AF (sorted 50 to 0), this decreases value.
+                            // This matches the requirement: AF slide up decreases, others increase.
                             currentIndex = if (deltaY < 0) {
                                 (currentIndex + 1).coerceAtMost(values.size - 1)
                             } else {
@@ -2497,58 +2570,75 @@ class MainActivity : AppCompatActivity() {
         }
         
         runOnUiThread {
+            reapplyRestoredManualValues()
             setupDynamicParamGestures()
             updateCropOverlayUI()
+        }
+    }
+
+    private fun reapplyRestoredManualValues() {
+        // This ensures manualValue is populated using the current cameraCapabilities
+        if (!photoParamState.ev.isAuto) {
+            onParamManualStep(ParamKey.EV, photoParamState.ev.displayValue)
+        }
+        if (!photoParamState.wb.isAuto) {
+            onParamManualStep(ParamKey.WB, photoParamState.wb.displayValue)
+        }
+        if (!photoParamState.iso.isAuto) {
+            onParamManualStep(ParamKey.ISO, photoParamState.iso.displayValue)
+        }
+        if (!photoParamState.shutter.isAuto) {
+            onParamManualStep(ParamKey.SHUTTER, photoParamState.shutter.displayValue)
+        }
+        if (!photoParamState.af.isAuto) {
+            onParamManualStep(ParamKey.AF, photoParamState.af.displayValue)
         }
     }
 
     private fun setupDynamicParamGestures() {
         val caps = cameraCapabilities
         
-        // EV: -4.0 to +4.0, 0.2 step (Linear)
-        val evValues = (-20..20).map { String.format(java.util.Locale.US, "%+.1f", it * 0.2f) }
+        // EV: -4.0 to +4.0, 0.1 step (Linear)
+        val evValues = (-40..40).map { String.format(java.util.Locale.US, "%+.1f", it * 0.1f) }
 
-        // WB: 2000K to 8000K, 200 step (Linear)
-        val wbValues = (2000..8000 step 200).map { "${it}K" }
+        // WB: 2000K to 8000K, 100 step (Linear)
+        val wbValues = (2000..8000 step 100).map { "${it}K" }
         
         // ISO: 50 to 64k (Logarithmic)
-        // Standard steps: 50, 64, 80, 100, 125, 160, 200, 250, 320, 400...
-        // We'll generate a dense logarithmic scale and format it.
-        val isoValues = generateLogValues(50.0, 64000.0, 80).map {
+        val isoValues = generateLogValues(50.0, 64000.0, 150).map {
             val iso = Math.round(it).toInt()
             if (iso >= 1000) {
                 val kValue = iso / 1000.0
-                if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dk", kValue.toInt())
-                else String.format(java.util.Locale.US, "%.1fk", kValue)
+                if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dK", kValue.toInt())
+                else String.format(java.util.Locale.US, "%.1fK", kValue)
             } else iso.toString()
         }.distinct()
         
-        // S: 1/12000s to 32s (Logarithmic), no 's' suffix
+        // S: 1/12000s to 32s (Logarithmic)
         val sRangeMin = 1_000_000_000L / 12000
         val sRangeMax = 32_000_000_000L
-        val sValues = generateLogValues(sRangeMin.toDouble(), sRangeMax.toDouble(), 100).map { 
+        val sValues = generateLogValues(sRangeMin.toDouble(), sRangeMax.toDouble(), 150).map { 
             PhotoParamMapper.formatShutterDisplay(it.toLong()) 
         }.distinct()
         
-        // AF: Custom extended steps as requested
-        val afValues = listOf(
-            "0.10m", "0.12m", "0.14m", "0.17m", "0.21m", "0.25m", "0.30m", "0.36m",
-            "0.43m", "0.52m", "0.62m", "0.74m", "0.89m", "1.07m", "1.28m", "1.54m",
-            "1.85m", "2.22m", "2.66m", "3.19m", "3.83m", "4.60m", "5.52m", "6.62m",
-            "7.95m", "9.54m", "11.45m", "13.74m", "16.48m", "19.78m", "23.74m",
-            "28.49m", "34.18m", "41.02m", "49.22m", "59.07m", "70.88m", "85.06m", "∞"
-        )
+        // AF: Diopter 50 to 0 (50% travel for 50-1, 50% for 1-0) - 128 steps
+        val nearDiopters = generateLogValues(1.0, 50.0, 64).reversed()
+        val farDiopters = generateLogValues(0.0001, 1.0, 64).reversed()
+        val afValues = (nearDiopters + farDiopters).map { 
+            PhotoParamMapper.formatDiopterDisplay(it.toFloat()) 
+        }.distinct().toMutableList()
+        if (!afValues.contains("0")) afValues.add("0")
 
-        ParamController(R.id.layout_param_ev, tvValEv, evValues, evValues.indexOf("+0.0").coerceAtLeast(0), ParamKey.EV).setup()
-        ParamController(R.id.layout_param_wb, tvValWb, wbValues, wbValues.indexOf("5200K").coerceAtLeast(0), ParamKey.WB).setup()
-        ParamController(R.id.layout_param_iso, tvValIso, isoValues, findClosestIndex("100", isoValues), ParamKey.ISO).setup()
-        ParamController(R.id.layout_param_s, tvValS, sValues, findClosestIndex("1/125s", sValues), ParamKey.SHUTTER).setup()
-        ParamController(R.id.layout_param_af, tvValAf, afValues, afValues.size - 1, ParamKey.AF).setup()
+        ParamController(R.id.layout_param_ev, tvValEv, evValues, findClosestIndex(photoParamState.ev.displayValue, evValues), ParamKey.EV).setup()
+        ParamController(R.id.layout_param_wb, tvValWb, wbValues, findClosestIndex(photoParamState.wb.displayValue, wbValues), ParamKey.WB).setup()
+        ParamController(R.id.layout_param_iso, tvValIso, isoValues, findClosestIndex(photoParamState.iso.displayValue, isoValues), ParamKey.ISO).setup()
+        ParamController(R.id.layout_param_s, tvValS, sValues, findClosestIndex(photoParamState.shutter.displayValue, sValues), ParamKey.SHUTTER).setup()
+        ParamController(R.id.layout_param_af, tvValAf, afValues, findClosestIndex(photoParamState.af.displayValue, afValues), ParamKey.AF).setup()
     }
 
     private fun generateLogValues(min: Double, max: Double, steps: Int): List<Double> {
-        val logMin = Math.log(min.coerceAtLeast(1.0))
-        val logMax = Math.log(max.coerceAtLeast(1.0))
+        val logMin = Math.log(min.coerceAtLeast(1e-10))
+        val logMax = Math.log(max.coerceAtLeast(1e-10))
         val delta = (logMax - logMin) / (steps - 1)
         return (0 until steps).map { Math.exp(logMin + it * delta) }
     }

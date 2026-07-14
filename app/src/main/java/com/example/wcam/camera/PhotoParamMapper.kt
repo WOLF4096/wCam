@@ -34,7 +34,7 @@ object PhotoParamMapper {
     }
 
     fun parseShutterLabel(label: String): Long {
-        val normalized = label // No more 's' suffix
+        val normalized = label.uppercase(Locale.US)
         return if (normalized.contains("/")) {
             val parts = normalized.split("/")
             if (parts.size == 2) {
@@ -56,9 +56,9 @@ object PhotoParamMapper {
     }
 
     fun parseIsoLabel(label: String): Int {
-        val clean = label.lowercase(Locale.US).trim()
-        return if (clean.endsWith("k")) {
-            (clean.removeSuffix("k").toFloat() * 1000).toInt()
+        val clean = label.uppercase(Locale.US).trim()
+        return if (clean.endsWith("K")) {
+            (clean.removeSuffix("K").toFloat() * 1000).toInt()
         } else {
             clean.toIntOrNull() ?: 100
         }
@@ -106,9 +106,26 @@ object PhotoParamMapper {
 
 
     fun formatFocusDistanceDisplay(focusDistance: Float): String {
-        if (focusDistance < 0.011f) return "∞" // Less than ~0.011 diopters (roughly > 90m)
-        val meters = 1f / focusDistance
-        return if (meters >= 86f) "∞" else String.format(Locale.US, "%.2fm", meters)
+        return formatDiopterDisplay(focusDistance)
+    }
+
+    fun formatDiopterDisplay(diopter: Float): String {
+        if (diopter < 0.0001f) return "0"
+        return if (diopter >= 1.0f) {
+            String.format(Locale.US, "%.1f", diopter)
+        } else {
+            val denominator = (1.0f / diopter).roundToInt()
+            if (denominator >= 1000) {
+                val kValue = denominator / 1000.0
+                if (kValue == kValue.toInt().toDouble()) {
+                    "1/${kValue.toInt()}K"
+                } else {
+                    String.format(Locale.US, "1/%.1fK", kValue)
+                }
+            } else {
+                "1/$denominator"
+            }
+        }
     }
 
     fun gainsToKelvinLabel(gains: RggbChannelVector, supportedValues: List<Int>): String {
@@ -206,15 +223,25 @@ object PhotoParamMapper {
                 if (minDistance <= 0f) {
                     currentState
                 } else {
-                    val focusDistance = if (label == "∞") 0f else {
-                        val meters = label.removeSuffix("m").toFloat()
-                        1f / meters
+                    val diopter = if (label == "0") 0f else if (label.contains("/")) {
+                        val parts = label.split("/")
+                        if (parts.size == 2) {
+                            val denStr = parts[1].uppercase(Locale.US)
+                            val den = if (denStr.endsWith("K")) {
+                                (denStr.removeSuffix("K").toFloatOrNull() ?: 1.0f) * 1000f
+                            } else {
+                                denStr.toFloatOrNull() ?: 1.0f
+                            }
+                            1f / den
+                        } else 0f
+                    } else {
+                        label.toFloatOrNull() ?: 0f
                     }
                     currentState.copy(
                         af = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = focusDistance.coerceIn(0f, minDistance),
+                            manualValue = diopter.coerceIn(0f, 50.0f),
                         ),
                     )
                 }
@@ -274,8 +301,12 @@ object PhotoParamMapper {
             }
         }
 
-        state.ev.manualValue?.takeIf { !state.ev.isAuto }?.let {
-            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, it)
+        if (!state.ev.isAuto) {
+            state.ev.manualValue?.let {
+                builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, it)
+            }
+        } else {
+            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0)
         }
 
         if (!state.wb.isAuto && capabilities.supportsManualWhiteBalance) {

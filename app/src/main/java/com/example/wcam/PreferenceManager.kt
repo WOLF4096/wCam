@@ -19,6 +19,18 @@ class PreferenceManager(context: Context) {
         const val KEY_VIDEO_RESOLUTION = "video_resolution"
         const val KEY_VIDEO_FPS = "video_fps"
         const val KEY_VIDEO_BITRATE = "video_bitrate"
+
+        // Manual Param Keys
+        const val KEY_PARAM_EV_AUTO = "param_ev_auto"
+        const val KEY_PARAM_EV_VAL = "param_ev_val"
+        const val KEY_PARAM_WB_AUTO = "param_wb_auto"
+        const val KEY_PARAM_WB_VAL = "param_wb_val"
+        const val KEY_PARAM_ISO_AUTO = "param_iso_auto"
+        const val KEY_PARAM_ISO_VAL = "param_iso_val"
+        const val KEY_PARAM_S_AUTO = "param_s_auto"
+        const val KEY_PARAM_S_VAL = "param_s_val"
+        const val KEY_PARAM_AF_AUTO = "param_af_auto"
+        const val KEY_PARAM_AF_VAL = "param_af_val"
     }
 
     fun clear() {
