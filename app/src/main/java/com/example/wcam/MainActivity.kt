@@ -1409,7 +1409,7 @@ class MainActivity : AppCompatActivity() {
         startShutterCountdown(shutterNanos)
 
         if (currentFlashMode == FlashMode.SINGLE) {
-            runPrecaptureSequence {
+            runFlashPulse {
                 executeStillCapture(camera, session, imageReader.surface, surface)
             }
         } else {
@@ -1461,19 +1461,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runPrecaptureSequence(onReady: () -> Unit) {
+    private fun runFlashPulse(onReady: () -> Unit) {
         val session = captureSession ?: return
         val builder = previewRequestBuilder ?: return
-
+        
+        builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
         try {
-            builder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START)
-            session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                    builder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
-                    onReady()
-                }
-            }, backgroundHandler)
-        } catch (e: CameraAccessException) {
+            session.setRepeatingRequest(builder.build(), previewCaptureCallback, backgroundHandler)
+            // 延迟一小段时间让闪光灯稳定并让传感器适应光线变化
+            backgroundHandler?.postDelayed({
+                onReady()
+            }, 10)
+        } catch (e: Exception) {
             onReady()
         }
     }
@@ -1493,7 +1492,7 @@ class MainActivity : AppCompatActivity() {
             android.util.Log.d("CapturePerformance", "OnCaptureCompleted: ts=$sensorTimestamp, wall=$wallTime")
             
             runOnUiThread {
-                resumePreview()
+                applyPhotoParamsToPreview()
             }
             processPendingCaptures()
         }
@@ -1822,7 +1821,7 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             btnShutter.isEnabled = true
         }
-        resumePreview()
+        applyPhotoParamsToPreview()
     }
 
     private fun openRecentPhotoInGallery() {
@@ -2453,7 +2452,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (currentFlashMode == FlashMode.SINGLE) {
-            runPrecaptureSequence { captureAction() }
+            runFlashPulse { captureAction() }
         } else {
             captureAction()
         }
