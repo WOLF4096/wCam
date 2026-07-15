@@ -1514,7 +1514,7 @@ class MainActivity : AppCompatActivity() {
             captureExecutor.submit {
                 try {
                     // 直接调用 writeImage，不进行任何 Buffer 偏移计算
-                    rawMediaStore.saveRawImage(rawImageToSave, characteristics, captureResult, 0)
+                    rawMediaStore.saveRawImage(rawImageToSave, characteristics, captureResult, 0, captureStartTime)
                 } catch (e: Exception) {
                     android.util.Log.e("CapturePerformance", "RAW 直接保存失败", e)
                 } finally {
@@ -1640,7 +1640,7 @@ class MainActivity : AppCompatActivity() {
                     saveRgbChannelsFromBuffer(
                         task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
                         task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
-                        task.rotationDegrees, task.metadata.lscStrength
+                        task.rotationDegrees, task.metadata.lscStrength, task.captureStartTime
                     )
                 } else {
                     var bitmap = DemosaicEngine.processFromBuffer(
@@ -1663,9 +1663,9 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                        savePngBitmap(bitmap, "", task.rotationDegrees)
+                        savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
                     } else {
-                        saveJpegBitmap(bitmap, task.rotationDegrees)
+                        saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime)
                     }
                     
                     updateRecentPhotoPreview(savedUri)
@@ -1689,7 +1689,8 @@ class MainActivity : AppCompatActivity() {
         blackLevel: Int,
         whiteLevel: Int,
         rotationDegrees: Int,
-        lscStrength: Float
+        lscStrength: Float,
+        timestamp: Long
     ) {
         val rect = currentCropRectInSensor ?: android.graphics.Rect(0, 0, sensorW, sensorH)
         val left = (rect.left.coerceIn(0, sensorW - 2) / 2) * 2
@@ -1788,7 +1789,7 @@ class MainActivity : AppCompatActivity() {
         val canvas = android.graphics.Canvas(combinedBitmap)
         canvas.drawBitmap(rR, 0f, 0f, null); canvas.drawBitmap(rG, rR.width.toFloat(), 0f, null); canvas.drawBitmap(rB, (rR.width * 2).toFloat(), 0f, null)
 
-        val uri = saveJpegBitmap(combinedBitmap, 0) // Already rotated
+        val uri = saveJpegBitmap(combinedBitmap, 0, timestamp) // Already rotated
         updateRecentPhotoPreview(uri)
         rR.recycle(); rG.recycle(); rB.recycle(); combinedBitmap.recycle()
     }
@@ -1896,11 +1897,11 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int): Uri {
+    private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int, timestamp: Long = System.currentTimeMillis()): Uri {
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
         
-        val fileName = createPhotoDisplayName(extension = "jpg")
+        val fileName = createPhotoDisplayName(timestamp, "jpg")
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
@@ -2023,7 +2024,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int, timestamp: String? = null): Uri {
+    private fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int, timestamp: Long = System.currentTimeMillis()): Uri {
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = if (rotationDegrees != 0) {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
@@ -2031,7 +2032,7 @@ class MainActivity : AppCompatActivity() {
             bitmap
         }
         
-        val ts = timestamp ?: java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+        val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date(timestamp))
         val fileName = if (suffix.isEmpty()) "$ts.png" else "${ts}_$suffix.png"
         
         val values = android.content.ContentValues().apply {
@@ -2054,9 +2055,9 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun createPhotoDisplayName(extension: String): String {
-        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
-        return "$timestamp.$extension"
+    private fun createPhotoDisplayName(timestampMillis: Long = System.currentTimeMillis(), extension: String): String {
+        val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US)
+        return "${formatter.format(java.util.Date(timestampMillis))}.$extension"
     }
 
     private fun closeCamera() {

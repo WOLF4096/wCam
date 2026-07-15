@@ -25,9 +25,10 @@ class RawMediaStore(private val context: Context) {
         characteristics: CameraCharacteristics,
         captureResult: TotalCaptureResult,
         exifOrientation: Int,
+        timestamp: Long = System.currentTimeMillis()
     ): Uri {
         val resolver = context.contentResolver
-        val fileName = createPhotoDisplayName(extension = "dng")
+        val fileName = createPhotoDisplayName(timestamp, "dng")
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         var outputPathForScan: String? = null
 
