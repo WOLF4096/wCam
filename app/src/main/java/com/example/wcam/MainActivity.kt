@@ -1959,8 +1959,8 @@ class MainActivity : AppCompatActivity() {
             bitmap
         }
         
-        val ts = timestamp ?: java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        val fileName = if (suffix.isEmpty()) "${ts}_IMG.png" else "${ts}_IMG_$suffix.png"
+        val ts = timestamp ?: java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+        val fileName = if (suffix.isEmpty()) "$ts.png" else "${ts}_$suffix.png"
         
         val values = android.content.ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
@@ -2151,8 +2151,8 @@ class MainActivity : AppCompatActivity() {
         canvas.drawBitmap(rB, (rw * 2).toFloat(), 0f, null)
 
         // Save as JPG using the quality setting from the format panel
-        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        val fileName = "${timestamp}_IMG_RGB.jpg"
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+        val fileName = "${timestamp}_RGB.jpg"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
@@ -2176,8 +2176,8 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun createPhotoDisplayName(extension: String): String {
-        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-        return "${timestamp}_IMG.$extension"
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+        return "$timestamp.$extension"
     }
 
     private fun closeCamera() {

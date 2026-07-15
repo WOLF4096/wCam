@@ -4,32 +4,27 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class CaptureMediaKind(val token: String) {
-    PHOTO("IMG"),
-    VIDEO("VID"),
-}
 
 object CaptureFileNames {
     fun photoDisplayName(
         timestampMillis: Long = System.currentTimeMillis(),
         extension: String,
-    ): String = displayName(timestampMillis, CaptureMediaKind.PHOTO, extension)
+    ): String = displayName(timestampMillis, extension)
 
     fun videoDisplayName(
         timestampMillis: Long = System.currentTimeMillis(),
         extension: String,
-    ): String = displayName(timestampMillis, CaptureMediaKind.VIDEO, extension)
+    ): String = displayName(timestampMillis, extension)
 
     private fun displayName(
         timestampMillis: Long,
-        kind: CaptureMediaKind,
         extension: String,
     ): String {
         val normalizedExtension = extension.trim().trimStart('.')
         require(normalizedExtension.isNotBlank()) { "File extension must not be blank" }
 
-        val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-        return "${formatter.format(Date(timestampMillis))}_${kind.token}.$normalizedExtension"
+        val formatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+        return "${formatter.format(Date(timestampMillis))}.$normalizedExtension"
     }
 }
 
