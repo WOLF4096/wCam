@@ -15,7 +15,6 @@ import android.provider.MediaStore
 import android.util.Size
 import java.io.File
 import java.io.IOException
-import java.nio.ByteBuffer
 
 const val RAW_MIME_TYPE = "image/x-adobe-dng"
 const val RAW_FOLDER_NAME = "wCam"
@@ -23,21 +22,6 @@ const val RAW_FOLDER_NAME = "wCam"
 class RawMediaStore(private val context: Context) {
     fun saveRawImage(
         image: Image,
-        characteristics: CameraCharacteristics,
-        captureResult: TotalCaptureResult,
-        exifOrientation: Int,
-    ): Uri {
-        return saveRawImageFromBuffer(
-            image.planes[0].buffer, image.width, image.height, image.planes[0].rowStride,
-            characteristics, captureResult, exifOrientation
-        )
-    }
-
-    fun saveRawImageFromBuffer(
-        buffer: ByteBuffer,
-        width: Int,
-        height: Int,
-        rowStride: Int,
         characteristics: CameraCharacteristics,
         captureResult: TotalCaptureResult,
         exifOrientation: Int,
@@ -75,7 +59,8 @@ class RawMediaStore(private val context: Context) {
         }
         try {
             resolver.openOutputStream(uri)?.use { outputStream ->
-                dngCreator.writeByteBuffer(outputStream, Size(width, height), buffer, rowStride.toLong())
+                // Direct saving without calculating strides or buffers manually
+                dngCreator.writeImage(outputStream, image)
             } ?: throw IOException("Unable to open RAW output stream")
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

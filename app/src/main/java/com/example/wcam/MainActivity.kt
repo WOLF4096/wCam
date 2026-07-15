@@ -76,9 +76,6 @@ import com.example.wcam.camera.DeviceOrientationTracker
 import com.example.wcam.camera.EXIF_ORIENTATION_NORMAL
 import com.example.wcam.camera.PARAM_TEXT_AUTO_COLOR
 import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
-import com.example.wcam.camera.CaptureTask
-import com.example.wcam.camera.CaptureMetadata
-import com.example.wcam.camera.DemosaicEngine
 import com.example.wcam.camera.ParamKey
 import com.example.wcam.camera.ParamValue
 import com.example.wcam.camera.FlashMode
@@ -87,7 +84,6 @@ import com.example.wcam.camera.PhotoParamState
 import com.example.wcam.camera.RawMediaStore
 import com.example.wcam.ui.FormatPanelController
 import com.example.wcam.ui.HistogramView
-import java.nio.ByteBuffer
 
 class MainActivity : AppCompatActivity() {
 
@@ -1322,9 +1318,6 @@ class MainActivity : AppCompatActivity() {
                 PhotoParamMapper.applyPhotoParamsToRequest(this, photoParamState, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, isStream = true)
                 currentFlashMode.applyToRequest(this, isStillCapture = false)
                 applyZoomToRequest(this)
-                
-                // 在预览请求中也注入高像素 Key 尝试激活 HAL 状态
-                injectHighResVendorKeys(this)
             }
 
             val previewStateCallback = object : CameraCaptureSession.StateCallback() {
@@ -1355,13 +1348,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 2. 盲测 Session 模式：Vivo 高像素模式通常是 0x8004 或 0x8001
-            val sessionMode = if (currentPhysicalCameraId == "2") {
-                android.util.Log.i("HighResAttack", "使用 Vivo 私有 Session 模式: 0x8004")
-                0x8004 
-            } else {
-                SessionConfiguration.SESSION_REGULAR
-            }
+            // 2. 盲测 Session 模式：使用标准模式
+            val sessionMode = SessionConfiguration.SESSION_REGULAR
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val sessionConfig = SessionConfiguration(
@@ -1440,9 +1428,6 @@ class MainActivity : AppCompatActivity() {
                      rawImageReader?.surface?.let { addTarget(it) }
                 }
                 
-                // 强行注入 Remosaic 控制键
-                injectHighResVendorKeys(this)
-                
                 PhotoParamMapper.applyPhotoParamsToRequest(
                     builder = this,
                     state = photoParamState,
@@ -1469,35 +1454,6 @@ class MainActivity : AppCompatActivity() {
             session.capture(captureBuilder.build(), stillCaptureCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
             finishCaptureWithError("拍照失败")
-        }
-    }
-
-    private fun injectHighResVendorKeys(builder: CaptureRequest.Builder) {
-        val currentId = activeMetadataCameraId()
-        if (currentId != "2") return
-
-        android.util.Log.i("HighResAttack", "注入盲测解封指令集...")
-        
-        val blindTestKeys = mapOf(
-            "com.vivo.cfaRemosaicType" to 4,
-            "com.vivo.sensor.worktype" to 2,
-            "vivo.control.ultra_highresolution" to 1,
-            "vivo.control.ai_highresolution" to 1,
-            "com.mediatek.control.capture.remosaicenable" to 1,
-            "com.mediatek.control.capture.highres.enable" to 1,
-            "vendor.vivo.remosaic.enable" to 1,
-            "com.vivo.chi.override.remosaic.enable" to 1
-        )
-
-        for ((name, value) in blindTestKeys) {
-            try {
-                val keyConstructor = CaptureRequest.Key::class.java.getConstructor(String::class.java, Class::class.java)
-                val manualKey = keyConstructor.newInstance(name, Int::class.javaObjectType)
-                builder.set(manualKey as CaptureRequest.Key<Int>, value)
-                android.util.Log.i("HighResAttack", "注入成功: $name = $value")
-            } catch (e: Exception) {
-                // Ignore failure for individual keys
-            }
         }
     }
 
@@ -1543,190 +1499,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun maybePersistPendingRaw() {
         val image = pendingRawImage ?: return
-        android.util.Log.d("CapturePerformance", "Data Received (RAW Image): ${System.currentTimeMillis() - captureStartTime}ms")
         val captureResult = pendingCaptureResult ?: return
-        val characteristics = activeCameraCharacteristics
-        if (characteristics == null) {
-            image.close()
-            pendingRawImage = null
-            return
-        }
-        
-        android.util.Log.d("CapturePerformance", "Metadata extraction + post start: ${System.currentTimeMillis() - captureStartTime}ms")
+        val characteristics = activeCameraCharacteristics ?: return
 
-        // Capture all necessary state
-        val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
-        val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
-        
-        val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
-        val baseLsc = lscStrength
-        val lscWeight = when {
-            iso <= 100 -> 1.0f
-            iso >= 3200 -> 0.5f
-            else -> 1.0f - ((iso - 100).toFloat() / (3200 - 100) * 0.5f)
-        }
-        val currentLsc = baseLsc * lscWeight
-        
-        val algoKey = when {
-            savedAlgoFull.startsWith("RGB通道") -> "RgbCh"
-            savedAlgoFull.startsWith("灰度") -> "Mono"
-            savedAlgoFull.startsWith("无") -> "None"
-            else -> savedAlgoFull.split('：', ':')[0].trim()
-        }
-        
-        val rotation = CaptureOrientationCalculator.captureRotation(
-            sensorOrientation = currentSensorOrientation,
-            lensFacing = currentLensFacing,
-            deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
-        )
-
-        val bayerPattern = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
-        val blackLevelPattern = characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
-        val blackLevel = if (blackLevelPattern != null) {
-            (blackLevelPattern.getOffsetForIndex(0, 0) + 
-             blackLevelPattern.getOffsetForIndex(1, 0) + 
-             blackLevelPattern.getOffsetForIndex(0, 1) + 
-             blackLevelPattern.getOffsetForIndex(1, 1)) / 4
-        } else 64
-        val whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
-        
-        val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
-        val wbArray = if (wbGains != null) {
-            floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
-        } else {
-            floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
+        // 一旦收到 Image 对象和 TotalCaptureResult，不需要任何计算，直接保存 RAW 为 dng 文件
+        // 在保存过程中，不进行 Buffer 克隆、旋转计算或 LSC 等处理
+        captureExecutor.submit {
+            try {
+                val uri = rawMediaStore.saveRawImage(image, characteristics, captureResult, 0)
+                updateRecentPhotoPreview(uri)
+            } catch (e: Exception) {
+                android.util.Log.e("CapturePerformance", "保存 RAW 失败", e)
+            } finally {
+                image.close()
+            }
         }
 
-        // --- NEW PERFORMANCE OPTIMIZATION: Immediate Decoupling ---
-        val sClone = System.currentTimeMillis()
-        val plane = image.planes[0]
-        val buffer = plane.buffer
-        val rowStride = plane.rowStride
-        val height = image.height
-
-        // Fix for Vivo X300 and some other Mediatek devices where DngCreator expects a slightly larger buffer
-        // than the actual image data (typically one extra row). We allocate enough to satisfy it.
-        val minSizeNeeded = rowStride * (height + 1)
-        val capacity = Math.max(buffer.remaining(), minSizeNeeded)
-
-        val cloneBuffer = ByteBuffer.allocateDirect(capacity)
-        cloneBuffer.put(buffer)
-        cloneBuffer.position(0)
-        cloneBuffer.limit(capacity)
-
-        val task = CaptureTask(
-            rawBuffer = cloneBuffer,
-            width = image.width,
-            height = image.height,
-            rowStride = rowStride,
-            pixelStride = plane.pixelStride,
-            captureStartTime = captureStartTime,
-            metadata = CaptureMetadata(
-                iso = iso,
-                wbArray = wbArray,
-                bayerPattern = bayerPattern,
-                blackLevel = blackLevel,
-                whiteLevel = whiteLevel,
-                lscStrength = currentLsc
-            ),
-            algoKey = algoKey,
-            savedFormat = savedFormat,
-            rotationDegrees = rotation.degrees,
-            exifOrientation = rotation.exifOrientation,
-            cropRect = currentCropRectInSensor
-        )
-        
-        android.util.Log.d("CapturePerformance", "RAW Data Cloned: ${System.currentTimeMillis() - sClone}ms (Total: ${System.currentTimeMillis() - captureStartTime}ms)")
-        
-        // Close original image and enable shutter immediately
-        image.close()
         pendingRawImage = null
+        pendingCaptureResult = null
         isCaptureInProgress = false
         runOnUiThread {
             btnShutter.isEnabled = true
             stopShutterCountdown()
-            android.util.Log.d("CapturePerformance", "Shutter Re-enabled: ${System.currentTimeMillis() - captureStartTime}ms")
-        }
-
-        // Submit to thread pool
-        captureExecutor.submit {
-            executeCaptureTask(task, characteristics, captureResult)
-        }
-    }
-
-    private fun executeCaptureTask(
-        task: CaptureTask,
-        characteristics: CameraCharacteristics,
-        captureResult: TotalCaptureResult
-    ) {
-        val startProcess = System.currentTimeMillis()
-        android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - task.captureStartTime}ms")
-        logRawCorners(task)
-        try {
-            if (task.savedFormat == "RAW" || task.savedFormat == "JPG + RAW") {
-                val sRaw = System.currentTimeMillis()
-                // NOTE: RawMediaStore might need a real Image to work best, but it usually takes ByteBuffer
-                // We might need to refactor saveRawImage or use a proxy
-                // For now, assume it can handle the task parameters
-                rawMediaStore.saveRawImageFromBuffer(
-                    task.rawBuffer, task.width, task.height, task.rowStride, 
-                    characteristics, captureResult, task.exifOrientation
-                )
-                android.util.Log.i("CapturePerformance", "Save DNG: ${System.currentTimeMillis() - sRaw}ms (Total: ${System.currentTimeMillis() - task.captureStartTime}ms)")
-            }
-            
-            if (task.savedFormat != "RAW") {
-                if (task.algoKey == "RgbCh") {
-                    val sRgb = System.currentTimeMillis()
-                    saveRgbChannelsFromBuffer(
-                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                        task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
-                        task.rotationDegrees, task.metadata.lscStrength
-                    )
-                    android.util.Log.i("CapturePerformance", "RGB Channels Save: ${System.currentTimeMillis() - sRgb}ms")
-                } else {
-                    val sDemosaic = System.currentTimeMillis()
-                    var bitmap = DemosaicEngine.processFromBuffer(
-                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                        task.algoKey, task.metadata.wbArray, task.metadata.bayerPattern, 
-                        task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
-                    )
-                    android.util.Log.i("CapturePerformance", "Native Demosaic (Parallel): ${System.currentTimeMillis() - sDemosaic}ms")
-
-                    val sCrop = System.currentTimeMillis()
-                    task.cropRect?.let { rect ->
-                        val left = rect.left.coerceIn(0, bitmap.width - 1)
-                        val top = rect.top.coerceIn(0, bitmap.height - 1)
-                        val width = rect.width().coerceAtMost(bitmap.width - left)
-                        val height = rect.height().coerceAtMost(bitmap.height - top)
-                        
-                        if (width > 0 && height > 0) {
-                            val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
-                            bitmap.recycle()
-                            bitmap = cropped
-                        }
-                    }
-                    android.util.Log.i("CapturePerformance", "Crop + Bitmap Op: ${System.currentTimeMillis() - sCrop}ms")
-
-                    val sSave = System.currentTimeMillis()
-                    val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                        savePngBitmap(bitmap, "", task.rotationDegrees)
-                    } else {
-                        saveJpegBitmap(bitmap, task.rotationDegrees)
-                    }
-                    android.util.Log.i("CapturePerformance", "Save image (${task.algoKey}): ${System.currentTimeMillis() - sSave}ms (Total: ${System.currentTimeMillis() - task.captureStartTime}ms)")
-                    
-                    val sThumb = System.currentTimeMillis()
-                    updateRecentPhotoPreview(savedUri)
-                    android.util.Log.i("CapturePerformance", "Update UI Thumb: ${System.currentTimeMillis() - sThumb}ms (Total: ${System.currentTimeMillis() - task.captureStartTime}ms)")
-                    bitmap.recycle()
-                    android.util.Log.d("CapturePerformance", "保存完成 (总耗时: ${System.currentTimeMillis() - task.captureStartTime}ms)")
-                }
-            }
-
-            android.util.Log.i("CapturePerformance", "--- Task Finished Flow: ${System.currentTimeMillis() - startProcess}ms ---")
-        } catch (e: Exception) {
-            android.util.Log.e("CapturePerformance", "Task failed", e)
         }
     }
 
@@ -1989,199 +1783,6 @@ class MainActivity : AppCompatActivity() {
         
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         return uri
-    }
-
-
-    private fun saveRgbChannelsFromBuffer(
-        buffer: ByteBuffer,
-        sensorW: Int,
-        sensorH: Int,
-        rowStride: Int,
-        pixelStride: Int,
-        bayerPattern: Int,
-        blackLevel: Int,
-        whiteLevel: Int,
-        rotationDegrees: Int,
-        lscStrength: Float
-    ) {
-        // 1. Determine crop bounds at full resolution, aligned to 2x2 blocks
-        val rect = currentCropRectInSensor ?: android.graphics.Rect(0, 0, sensorW, sensorH)
-        val left = (rect.left.coerceIn(0, sensorW - 2) / 2) * 2
-        val top = (rect.top.coerceIn(0, sensorH - 2) / 2) * 2
-        val cropW = (rect.width().coerceAtMost(sensorW - left) / 2) * 2
-        val cropH = (rect.height().coerceAtMost(sensorH - top) / 2) * 2
-        
-        // 2. Output dimensions for each channel
-        val outW = cropW / 2
-        val outH = cropH / 2
-        
-        if (outW <= 0 || outH <= 0) {
-            return
-        }
-
-        // 3. Define Gamma values for each channel
-        val gammaR = 3.0
-        val gammaG = 2.4
-        val gammaB = 2.8
-
-        val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
-        
-        fun createGammaLut(gammaPower: Double): IntArray {
-            val lut = IntArray(65536)
-            val invGamma = 1.0 / gammaPower
-            val exposureScale = 0.5f
-            for (i in 0..65535) {
-                val norm = (((i - blackLevel).toFloat() / range) * exposureScale).coerceIn(0f, 1f)
-                val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
-                val gray = (gamma * 255).toInt().coerceIn(0, 255)
-                lut[i] = 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
-            }
-            return lut
-        }
-
-        val lutR = createGammaLut(gammaR)
-        val lutG = createGammaLut(gammaG)
-        val lutB = createGammaLut(gammaB)
-
-        val opticalCenterX = sensorW / 2.0f
-        val opticalCenterY = sensorH / 2.0f
-        val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
-
-        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        val fullShortBuffer = buffer.asShortBuffer()
-        val strideInShorts = rowStride / 2
-        val psInShorts = pixelStride / 2
-
-        val pixR = IntArray(outW * outH)
-        val pixG = IntArray(outW * outH)
-        val pixB = IntArray(outW * outH)
-
-        // Parallel processing: Divide the image into horizontal strips
-        val numThreads = Runtime.getRuntime().availableProcessors().coerceAtMost(8)
-        val executor = java.util.concurrent.Executors.newFixedThreadPool(numThreads)
-        val latch = java.util.concurrent.CountDownLatch(numThreads)
-        val rowsPerChunk = outH / numThreads
-
-        for (t in 0 until numThreads) {
-            val startY = t * rowsPerChunk
-            val endY = if (t == numThreads - 1) outH else (t + 1) * rowsPerChunk
-            
-            executor.execute {
-                try {
-                    val threadBuffer = fullShortBuffer.duplicate()
-                    val row0 = ShortArray(strideInShorts)
-                    val row1 = ShortArray(strideInShorts)
-                    
-                    for (y in startY until endY) {
-                        val sensorY = top + y * 2
-                        val rO0 = sensorY * strideInShorts
-                        val rO1 = (sensorY + 1) * strideInShorts
-                        
-                        threadBuffer.position(rO0)
-                        threadBuffer.get(row0)
-                        threadBuffer.position(rO1)
-                        threadBuffer.get(row1)
-                        
-                        val dy = sensorY - opticalCenterY
-                        val dySq = dy * dy
-                        
-                        val baseIdx = y * outW
-                        for (x in 0 until outW) {
-                            val sensorX = left + x * 2
-                            val sX0 = sensorX
-                            val sX1 = sensorX + 1
-                            
-                            val dx = sensorX - opticalCenterX
-                            val distSq = dx * dx + dySq
-                            
-                            // Advanced LSC Model: 1 + k * (r^2 + r^4 + r^6)
-                            // We use a more aggressive polynomial to handle steep fall-offs
-                            val r2 = distSq / maxDistSq
-                            val r4 = r2 * r2
-                            val r6 = r4 * r2
-                            val lscGain = 1.0f + lscStrength * (r2 + r4 + r6)
-                            
-                            val v00 = (row0[sX0 * psInShorts].toInt() and 0xFFFF)
-                            val v01 = (row0[sX1 * psInShorts].toInt() and 0xFFFF)
-                            val v10 = (row1[sX0 * psInShorts].toInt() and 0xFFFF)
-                            val v11 = row1[sX1 * psInShorts].toInt() and 0xFFFF
-
-                            // Apply LSC Gain before Gamma (Apply to signal, not black level pedestal)
-                            // Use a small epsilon to avoid multiplying zero signals in the corners
-                            fun applyLsc(v: Int, gain: Float): Int {
-                                val signal = (v - blackLevel).toFloat()
-                                return (signal * gain + blackLevel).toInt().coerceIn(0, 65535)
-                            }
-
-                            val gv00 = applyLsc(v00, lscGain)
-                            val gv01 = applyLsc(v01, lscGain)
-                            val gv10 = applyLsc(v10, lscGain)
-                            val gv11 = applyLsc(v11, lscGain)
-
-                            var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
-                            when (bayerPattern) {
-                                0 -> { rVal = gv00; grVal = gv01; gbVal = gv10; bVal = gv11 } // RGGB
-                                1 -> { grVal = gv00; rVal = gv01; bVal = gv10; gbVal = gv11 } // GRBG
-                                2 -> { gbVal = gv00; bVal = gv01; rVal = gv10; grVal = gv11 } // GBRG
-                                3 -> { bVal = gv00; gbVal = gv01; grVal = gv10; rVal = gv11 } // BGGR
-                            }
-                            
-                            val gAvg = (grVal + gbVal) / 2
-                            val idx = baseIdx + x
-                            pixR[idx] = lutR[rVal]
-                            pixG[idx] = lutG[gAvg]
-                            pixB[idx] = lutB[bVal]
-                        }
-                    }
-                } finally {
-                    latch.countDown()
-                }
-            }
-        }
-        latch.await()
-        executor.shutdown()
-
-        val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
-        val bmpG = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixG, 0, outW, 0, 0, outW, outH) }
-        val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
-
-        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
-        val rG = Bitmap.createBitmap(bmpG, 0, 0, outW, outH, matrix, true)
-        val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
-        
-        bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
-        
-        val rw = rR.width
-        val rh = rR.height
-        val combinedBitmap = Bitmap.createBitmap(rw * 3, rh, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(combinedBitmap)
-        canvas.drawBitmap(rR, 0f, 0f, null)
-        canvas.drawBitmap(rG, rw.toFloat(), 0f, null)
-        canvas.drawBitmap(rB, (rw * 2).toFloat(), 0f, null)
-
-        // Save as JPG using the quality setting from the format panel
-        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
-        val fileName = "${timestamp}_RGB.jpg"
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
-            }
-        }
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("Failed to create MediaStore entry")
-        
-        val quality = seekbarJpgQuality.progress
-        contentResolver.openOutputStream(uri)?.use { os ->
-            combinedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
-        } ?: throw IOException("Failed to open output stream")
-
-        updateRecentPhotoPreview(uri)
-
-        rR.recycle(); rG.recycle(); rB.recycle()
-        combinedBitmap.recycle()
     }
 
 
@@ -2897,42 +2498,6 @@ class MainActivity : AppCompatActivity() {
         
         matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
         textureView.setTransform(matrix)
-    }
-
-    private fun logRawCorners(task: CaptureTask) {
-        val buffer = task.rawBuffer.duplicate()
-        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        val shortBuffer = buffer.asShortBuffer()
-        val strideInShorts = task.rowStride / 2
-        val psInShorts = task.pixelStride / 2
-        val w = task.width
-        val h = task.height
-
-        android.util.Log.d("RawDebug", "Bayer Pattern: ${task.metadata.bayerPattern} (0:RGGB, 1:GRBG, 2:GBRG, 3:BGGR)")
-        android.util.Log.d("RawDebug", "Dimensions: ${w}x${h}, Stride: ${task.rowStride}, BlackLevel: ${task.metadata.blackLevel}")
-
-        val corners = listOf(
-            "Top-Left" to (0 to 0),
-            "Top-Right" to (w - 10 to 0),
-            "Bottom-Left" to (0 to h - 10),
-            "Bottom-Right" to (w - 10 to h - 10)
-        )
-
-        for ((name, pos) in corners) {
-            val (startX, startY) = pos
-            android.util.Log.d("RawDebug", "--- Corner: $name ($startX, $startY) ---")
-            for (y in 0 until 10) {
-                val row = StringBuilder()
-                for (x in 0 until 10) {
-                    val idx = (startY + y) * strideInShorts + (startX + x) * psInShorts
-                    if (idx < shortBuffer.capacity()) {
-                        val value = shortBuffer.get(idx).toInt() and 0xFFFF
-                        row.append(String.format(java.util.Locale.US, "%5d ", value))
-                    }
-                }
-                android.util.Log.d("RawDebug", row.toString())
-            }
-        }
     }
 
     private fun showToast(message: String) {
