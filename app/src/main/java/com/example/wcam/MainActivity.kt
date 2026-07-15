@@ -67,6 +67,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.Calendar
 import java.util.concurrent.Executor
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 import com.example.wcam.camera.CameraCapabilities
@@ -153,10 +154,11 @@ class MainActivity : AppCompatActivity() {
     private var rawImageReader: ImageReader? = null
     private var jpegImageReader: ImageReader? = null
     private var histogramImageReader: ImageReader? = null
-    private var pendingRawImage: Image? = null
+    private val pendingRawImages = ConcurrentHashMap<Long, Image>()
+    private val pendingCaptureResults = ConcurrentHashMap<Long, TotalCaptureResult>()
+    private val captureStartTimeMap = ConcurrentHashMap<Long, Long>()
     private var lscStrength = 1.30f
     private var pendingJpegImage: Image? = null
-    private var pendingCaptureResult: TotalCaptureResult? = null
     @Volatile
     private var isCaptureInProgress = false
     @Volatile
@@ -1398,9 +1400,6 @@ class MainActivity : AppCompatActivity() {
         isRawCaptureComplete = false
         isJpegCaptureComplete = true
         btnShutter.isEnabled = false
-        pendingCaptureResult = null
-        pendingRawImage?.close()
-        pendingRawImage = null
 
         val shutterNanos = if (photoParamState.shutter.isAuto) {
             previewAutoShutterNanos ?: 100_000_000L
@@ -1428,6 +1427,7 @@ class MainActivity : AppCompatActivity() {
             val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(targetSurface)
                 previewSurface?.let { addTarget(it) }
+                setTag(captureStartTime)
                 if (isJpgAndRaw() || (!isRawOnly() && !isPhotoMode)) { // Logic for JPG from RAW
                      rawImageReader?.surface?.let { addTarget(it) }
                 }
@@ -1484,12 +1484,18 @@ class MainActivity : AppCompatActivity() {
             request: CaptureRequest,
             result: TotalCaptureResult
         ) {
-            android.util.Log.d("CapturePerformance", "OnCaptureCompleted (Metadata Ready): ${System.currentTimeMillis() - captureStartTime}ms")
-            pendingCaptureResult = result
+            val sensorTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: 0L
+            val wallTime = request.tag as? Long ?: System.currentTimeMillis()
+            
+            pendingCaptureResults[sensorTimestamp] = result
+            captureStartTimeMap[sensorTimestamp] = wallTime
+            
+            android.util.Log.d("CapturePerformance", "OnCaptureCompleted: ts=$sensorTimestamp, wall=$wallTime")
+            
             runOnUiThread {
                 resumePreview()
             }
-            maybePersistPendingRaw()
+            processPendingCaptures()
         }
 
         override fun onCaptureFailed(
@@ -1501,50 +1507,88 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun maybePersistPendingRaw() {
-        val image = pendingRawImage ?: return
-        val captureResult = pendingCaptureResult ?: return
+    private fun processPendingCaptures() {
         val characteristics = activeCameraCharacteristics ?: return
         
+        // Match images with capture results by timestamp
+        for (timestamp in pendingRawImages.keys()) {
+            val image = pendingRawImages[timestamp]
+            val result = pendingCaptureResults[timestamp]
+            val wallTime = captureStartTimeMap[timestamp]
+            
+            if (image != null && result != null && wallTime != null) {
+                // Remove from maps BEFORE submitting to ensure they aren't processed again
+                pendingRawImages.remove(timestamp)
+                pendingCaptureResults.remove(timestamp)
+                captureStartTimeMap.remove(timestamp)
+                
+                dispatchCaptureTask(image, result, characteristics, wallTime)
+            }
+        }
+        
+        // Cleanup old data if burst is very long or something dropped
+        if (pendingRawImages.size > 20) {
+            val oldest = pendingRawImages.keys().toList().sorted().first()
+            pendingRawImages.remove(oldest)?.close()
+        }
+        if (pendingCaptureResults.size > 20) {
+            val oldest = pendingCaptureResults.keys().toList().sorted().first()
+            pendingCaptureResults.remove(oldest)
+            captureStartTimeMap.remove(oldest)
+        }
+    }
+
+    private fun dispatchCaptureTask(
+        image: Image,
+        captureResult: TotalCaptureResult,
+        characteristics: CameraCharacteristics,
+        timestamp: Long
+    ) {
         val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
 
-        // 1. 如果需要保存 RAW，则直接进行最简单的保存，不进行额外计算
-        if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
-            val rawImageToSave = image
-            captureExecutor.submit {
-                try {
-                    // 直接调用 writeImage，不进行任何 Buffer 偏移计算
-                    rawMediaStore.saveRawImage(rawImageToSave, characteristics, captureResult, 0, captureStartTime)
-                } catch (e: Exception) {
-                    android.util.Log.e("CapturePerformance", "RAW 直接保存失败", e)
-                } finally {
-                    // 无论成功失败，在后台任务结束时关闭 Image
-                    rawImageToSave.close()
-                }
-            }
-            
-            if (savedFormat == "RAW") {
-                pendingRawImage = null
-                pendingCaptureResult = null
-                isCaptureInProgress = false
-                runOnUiThread {
-                    btnShutter.isEnabled = true
-                    stopShutterCountdown()
-                }
-                return 
-            }
+        // 立即重置 UI 状态，允许下一次快门触发 (对于连拍，这个逻辑可能需要更精细，
+        // 但目前先保持原样，只是把 image 传下去)
+        isCaptureInProgress = false
+        runOnUiThread {
+            btnShutter.isEnabled = true
+            stopShutterCountdown()
         }
 
-        // 2. 如果需要保存 JPG（即 savedFormat 为 "JPG" 或 "JPG + RAW"），则需要恢复处理流程
-        val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
-        val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
-        val lscWeight = when {
-            iso <= 100 -> 1.0f
-            iso >= 3200 -> 0.5f
-            else -> 1.0f - ((iso - 100).toFloat() / (3200 - 100) * 0.5f)
+        captureExecutor.submit {
+            try {
+                if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
+                    try {
+                        rawMediaStore.saveRawImage(image, characteristics, captureResult, 0, timestamp)
+                    } catch (e: Exception) {
+                        android.util.Log.e("CapturePerformance", "RAW 直接保存失败", e)
+                    }
+                }
+
+                if (savedFormat == "JPG" || savedFormat == "JPG + RAW") {
+                    try {
+                        val task = prepareCaptureTask(image, captureResult, characteristics, savedFormat, timestamp)
+                        executeCaptureTask(task, characteristics, captureResult)
+                    } catch (e: Exception) {
+                        android.util.Log.e("CapturePerformance", "JPG 处理失败", e)
+                    }
+                }
+            } finally {
+                image.close()
+            }
         }
-        val currentLsc = lscStrength * lscWeight
+    }
+
+    private fun prepareCaptureTask(
+        image: Image,
+        result: TotalCaptureResult,
+        chars: CameraCharacteristics,
+        format: String,
+        timestamp: Long
+    ): CaptureTask {
+        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
+        val currentLsc = lscStrength * (if (iso <= 100) 1.0f else if (iso >= 3200) 0.5f else 1.0f - ((iso - 100).toFloat() / 3100f * 0.5f))
         
+        val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
         val algoKey = when {
             savedAlgoFull.startsWith("RGB通道") -> "RgbCh"
             savedAlgoFull.startsWith("灰度") -> "Mono"
@@ -1558,72 +1602,37 @@ class MainActivity : AppCompatActivity() {
             deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
         )
 
-        val bayerPattern = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
-        val blackLevelPattern = characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+        val bayerPattern = chars.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
+        val blackLevelPattern = chars.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
         val blackLevel = if (blackLevelPattern != null) {
-            (blackLevelPattern.getOffsetForIndex(0, 0) + 
-             blackLevelPattern.getOffsetForIndex(1, 0) + 
-             blackLevelPattern.getOffsetForIndex(0, 1) + 
-             blackLevelPattern.getOffsetForIndex(1, 1)) / 4
+            (blackLevelPattern.getOffsetForIndex(0, 0) + blackLevelPattern.getOffsetForIndex(1, 0) + 
+             blackLevelPattern.getOffsetForIndex(0, 1) + blackLevelPattern.getOffsetForIndex(1, 1)) / 4
         } else 64
-        val whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
+        val whiteLevel = chars.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
         
-        val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
-        val wbArray = if (wbGains != null) {
-            floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
-        } else {
-            floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
-        }
+        val wbGains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
+        val wbArray = if (wbGains != null) floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
+                      else floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
 
         val plane = image.planes[0]
-        val buffer = plane.buffer
-        val rowStride = plane.rowStride
-        
-        // 为了 JPG 处理，我们需要克隆 Buffer 以便快速释放 Image 对象
-        val capacity = buffer.remaining()
-        val cloneBuffer = ByteBuffer.allocateDirect(capacity)
-        cloneBuffer.put(buffer)
+        val cloneBuffer = ByteBuffer.allocateDirect(plane.buffer.remaining())
+        cloneBuffer.put(plane.buffer)
         cloneBuffer.position(0)
 
-        val task = CaptureTask(
+        return CaptureTask(
             rawBuffer = cloneBuffer,
             width = image.width,
             height = image.height,
-            rowStride = rowStride,
+            rowStride = plane.rowStride,
             pixelStride = plane.pixelStride,
-            captureStartTime = captureStartTime,
-            metadata = CaptureMetadata(
-                iso = iso,
-                wbArray = wbArray,
-                bayerPattern = bayerPattern,
-                blackLevel = blackLevel,
-                whiteLevel = whiteLevel,
-                lscStrength = currentLsc
-            ),
+            captureStartTime = timestamp,
+            metadata = CaptureMetadata(iso, wbArray, bayerPattern, blackLevel, whiteLevel, currentLsc),
             algoKey = algoKey,
-            savedFormat = savedFormat,
+            savedFormat = format,
             rotationDegrees = rotation.degrees,
             exifOrientation = rotation.exifOrientation,
             cropRect = currentCropRectInSensor
         )
-        
-        // 如果不是 JPG+RAW 模式（即只有 JPG 模式），则在此处关闭 Image
-        // 如果是 JPG+RAW 模式，Image 会由上面的后台任务关闭
-        if (savedFormat == "JPG") {
-            image.close()
-        }
-
-        pendingRawImage = null
-        pendingCaptureResult = null
-        isCaptureInProgress = false
-        runOnUiThread {
-            btnShutter.isEnabled = true
-            stopShutterCountdown()
-        }
-
-        captureExecutor.submit {
-            executeCaptureTask(task, characteristics, captureResult)
-        }
     }
 
 
@@ -1665,7 +1674,7 @@ class MainActivity : AppCompatActivity() {
                     val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
                         savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
                     } else {
-                        saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime)
+                        saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, captureResult)
                     }
                     
                     updateRecentPhotoPreview(savedUri)
@@ -1789,7 +1798,9 @@ class MainActivity : AppCompatActivity() {
         val canvas = android.graphics.Canvas(combinedBitmap)
         canvas.drawBitmap(rR, 0f, 0f, null); canvas.drawBitmap(rG, rR.width.toFloat(), 0f, null); canvas.drawBitmap(rB, (rR.width * 2).toFloat(), 0f, null)
 
-        val uri = saveJpegBitmap(combinedBitmap, 0, timestamp) // Already rotated
+        // Note: For RgbCh, we don't pass captureResult currently to simplify, 
+        // as it doesn't support full EXIF anyway
+        val uri = saveJpegBitmap(combinedBitmap, 0, timestamp, null) 
         updateRecentPhotoPreview(uri)
         rR.recycle(); rG.recycle(); rB.recycle(); combinedBitmap.recycle()
     }
@@ -1869,16 +1880,16 @@ class MainActivity : AppCompatActivity() {
 
         if (rawImageReader == null || rawImageReader!!.width != rawWidth || rawImageReader!!.height != rawHeight) {
             rawImageReader?.close()
-            rawImageReader = ImageReader.newInstance(rawWidth, rawHeight, ImageFormat.RAW_SENSOR, 2)
+            // 增加 maxImages 到 8 以支持连拍时后台保存 RAW 的压力
+            rawImageReader = ImageReader.newInstance(rawWidth, rawHeight, ImageFormat.RAW_SENSOR, 8)
             android.util.Log.i("HighResAttack", "ImageReader 已恢复为标准尺寸: ${rawWidth}x${rawHeight}")
         }
         
         rawImageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            android.util.Log.i("HighResAttack", "收到 RAW 图像: ${image.width}x${image.height}, Format: ${image.format}")
-            pendingRawImage?.close()
-            pendingRawImage = image
-            maybePersistPendingRaw()
+            val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
+            android.util.Log.i("HighResAttack", "收到 RAW 图像: ts=${image.timestamp}, ${image.width}x${image.height}")
+            pendingRawImages[image.timestamp] = image
+            processPendingCaptures()
         }, backgroundHandler)
 
         // JPEG/YUV
@@ -1897,7 +1908,7 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int, timestamp: Long = System.currentTimeMillis()): Uri {
+    private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int, timestamp: Long = System.currentTimeMillis(), captureResult: TotalCaptureResult? = null): Uri {
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
         
@@ -1922,7 +1933,7 @@ class MainActivity : AppCompatActivity() {
         try {
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val exif = ExifInterface(pfd.fileDescriptor)
-                writeExifMetadata(exif, rotationDegrees)
+                writeExifMetadata(exif, rotationDegrees, captureResult)
                 exif.saveAttributes()
             }
         } catch (e: Exception) {
@@ -1933,8 +1944,8 @@ class MainActivity : AppCompatActivity() {
         return uri
     }
 
-    private fun writeExifMetadata(exif: ExifInterface, rotation: Int) {
-        val result = pendingCaptureResult ?: return
+    private fun writeExifMetadata(exif: ExifInterface, rotation: Int, result: TotalCaptureResult?) {
+        if (result == null) return
         val characteristics = activeCameraCharacteristics ?: return
 
         // Basic settings
@@ -1943,10 +1954,10 @@ class MainActivity : AppCompatActivity() {
         exif.setAttribute(ExifInterface.TAG_SOFTWARE, "wCam 1.1")
         
         // Exposure settings
-        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
-        val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) as? Int
+        val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) as? Long
         val aperture = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
-        val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH)
+        val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH) as? Float
 
         iso?.let { exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString()) }
         exposureTime?.let {
@@ -1957,22 +1968,22 @@ class MainActivity : AppCompatActivity() {
         focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
         
         // Advanced EXIF
-        val expMode = result.get(CaptureResult.CONTROL_AE_MODE)
+        val expMode = result.get(CaptureResult.CONTROL_AE_MODE) as? Int
         val expProg = if (expMode == CaptureResult.CONTROL_AE_MODE_OFF) "1" else "2" // 1: Manual, 2: Normal
         exif.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, expProg)
         
-        val bias = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)
+        val bias = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION) as? Int
         val step = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
         if (bias != null && step != null) {
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, (bias * step.toFloat()).toString())
         }
         
-        val whiteBalance = result.get(CaptureResult.CONTROL_AWB_MODE)
+        val whiteBalance = result.get(CaptureResult.CONTROL_AWB_MODE) as? Int
         val wbAttr = if (whiteBalance == CaptureResult.CONTROL_AWB_MODE_OFF) "1" else "0" // 1: Manual, 0: Auto
         exif.setAttribute(ExifInterface.TAG_WHITE_BALANCE, wbAttr)
         
         val metering = result.get(CaptureResult.CONTROL_AE_REGIONS)
-        if (metering != null && metering.isNotEmpty()) {
+        if (metering != null && (metering as? Array<*>)?.isNotEmpty() == true) {
             exif.setAttribute(ExifInterface.TAG_METERING_MODE, "2") // 2: CenterWeighted (approximation)
         } else {
             exif.setAttribute(ExifInterface.TAG_METERING_MODE, "5") // 5: Pattern
@@ -1980,7 +1991,7 @@ class MainActivity : AppCompatActivity() {
         
         // Zoom and 35mm equivalent
         val zoom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            result.get(CaptureResult.CONTROL_ZOOM_RATIO) ?: 1.0f
+            (result.get(CaptureResult.CONTROL_ZOOM_RATIO) as? Float) ?: 1.0f
         } else {
             currentZoomRatio
         }
@@ -2083,11 +2094,13 @@ class MainActivity : AppCompatActivity() {
         histogramImageReader = null
 
         captureExecutor.submit {
-            pendingRawImage?.close()
-            pendingRawImage = null
+            pendingRawImages.values.forEach { it.close() }
+            pendingRawImages.clear()
+            pendingCaptureResults.clear()
+            captureStartTimeMap.clear()
+            
             pendingJpegImage?.close()
             pendingJpegImage = null
-            pendingCaptureResult = null
             
             rReader?.close()
             jReader?.close()
@@ -2394,11 +2407,8 @@ class MainActivity : AppCompatActivity() {
         isJpegCaptureComplete = false
         isRawCaptureComplete = false
         btnShutter.isEnabled = false
-        pendingCaptureResult = null
         pendingJpegImage?.close()
         pendingJpegImage = null
-        pendingRawImage?.close()
-        pendingRawImage = null
 
         val shutterNanos = if (photoParamState.shutter.isAuto) {
             previewAutoShutterNanos ?: 100_000_000L
@@ -2412,6 +2422,7 @@ class MainActivity : AppCompatActivity() {
                 val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                     addTarget(rawReader.surface) // Always capture RAW for demosaicing
                     surface?.let { addTarget(it) }
+                    setTag(captureStartTime)
                     
                     PhotoParamMapper.applyPhotoParamsToRequest(
                         builder = this,
