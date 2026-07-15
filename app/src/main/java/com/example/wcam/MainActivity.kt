@@ -1556,14 +1556,20 @@ class MainActivity : AppCompatActivity() {
 
         captureExecutor.submit {
             try {
+                // 1. 保存 RAW (如果需要)
                 if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
                     try {
-                        rawMediaStore.saveRawImage(image, characteristics, captureResult, 0, timestamp)
+                        val uri = rawMediaStore.saveRawImage(image, characteristics, captureResult, 0, timestamp)
+                        // 如果只有 RAW 模式，更新预览图。如果是 JPG+RAW，则由 JPG 任务负责更新更好的预览
+                        if (savedFormat == "RAW") {
+                            updateRecentPhotoPreview(uri)
+                        }
                     } catch (e: Exception) {
                         android.util.Log.e("CapturePerformance", "RAW 直接保存失败", e)
                     }
                 }
 
+                // 2. 处理 JPG (如果需要)
                 if (savedFormat == "JPG" || savedFormat == "JPG + RAW") {
                     try {
                         val task = prepareCaptureTask(image, captureResult, characteristics, savedFormat, timestamp)
