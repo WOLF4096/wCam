@@ -1601,15 +1601,24 @@ class MainActivity : AppCompatActivity() {
         val sClone = System.currentTimeMillis()
         val plane = image.planes[0]
         val buffer = plane.buffer
-        val cloneBuffer = ByteBuffer.allocateDirect(buffer.remaining())
+        val rowStride = plane.rowStride
+        val height = image.height
+
+        // Fix for Vivo X300 and some other Mediatek devices where DngCreator expects a slightly larger buffer
+        // than the actual image data (typically one extra row). We allocate enough to satisfy it.
+        val minSizeNeeded = rowStride * (height + 1)
+        val capacity = Math.max(buffer.remaining(), minSizeNeeded)
+
+        val cloneBuffer = ByteBuffer.allocateDirect(capacity)
         cloneBuffer.put(buffer)
-        cloneBuffer.flip()
-        
+        cloneBuffer.position(0)
+        cloneBuffer.limit(capacity)
+
         val task = CaptureTask(
             rawBuffer = cloneBuffer,
             width = image.width,
             height = image.height,
-            rowStride = plane.rowStride,
+            rowStride = rowStride,
             pixelStride = plane.pixelStride,
             captureStartTime = captureStartTime,
             metadata = CaptureMetadata(
