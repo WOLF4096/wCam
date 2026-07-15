@@ -76,7 +76,11 @@ import com.example.wcam.camera.DeviceOrientationTracker
 import com.example.wcam.camera.EXIF_ORIENTATION_NORMAL
 import com.example.wcam.camera.PARAM_TEXT_AUTO_COLOR
 import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
+import com.example.wcam.camera.CaptureTask
+import com.example.wcam.camera.CaptureMetadata
+import com.example.wcam.camera.DemosaicEngine
 import com.example.wcam.camera.ParamKey
+import java.nio.ByteBuffer
 import com.example.wcam.camera.ParamValue
 import com.example.wcam.camera.FlashMode
 import com.example.wcam.camera.PhotoParamMapper
@@ -1501,20 +1505,114 @@ class MainActivity : AppCompatActivity() {
         val image = pendingRawImage ?: return
         val captureResult = pendingCaptureResult ?: return
         val characteristics = activeCameraCharacteristics ?: return
+        
+        val savedFormat = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
 
-        // 一旦收到 Image 对象和 TotalCaptureResult，不需要任何计算，直接保存 RAW 为 dng 文件
-        // 在保存过程中，不进行 Buffer 克隆、旋转计算或 LSC 等处理
-        captureExecutor.submit {
-            try {
-                val uri = rawMediaStore.saveRawImage(image, characteristics, captureResult, 0)
-                updateRecentPhotoPreview(uri)
-            } catch (e: Exception) {
-                android.util.Log.e("CapturePerformance", "保存 RAW 失败", e)
-            } finally {
-                image.close()
+        // 1. 如果需要保存 RAW，则直接进行最简单的保存，不进行额外计算
+        if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
+            // 注意：因为 writeImage 是阻塞的，为了不阻塞 UI 且满足“直接保存”，我们依然在 executor 中执行
+            // 但不再提取复杂的 LSC 权重等元数据
+            val rawImageToSave = image // Image object is valid here
+            captureExecutor.submit {
+                try {
+                    // 直接调用 writeImage，不进行任何 Buffer 偏移计算
+                    rawMediaStore.saveRawImage(rawImageToSave, characteristics, captureResult, 0)
+                } catch (e: Exception) {
+                    android.util.Log.e("CapturePerformance", "RAW 直接保存失败", e)
+                } finally {
+                    // 如果只保存 RAW，则在这里关闭
+                    if (savedFormat == "RAW") {
+                        rawImageToSave.close()
+                    }
+                }
+            }
+            
+            if (savedFormat == "RAW") {
+                pendingRawImage = null
+                pendingCaptureResult = null
+                isCaptureInProgress = false
+                runOnUiThread {
+                    btnShutter.isEnabled = true
+                    stopShutterCountdown()
+                }
+                return 
             }
         }
 
+        // 2. 如果需要保存 JPG（即 savedFormat 为 "JPG" 或 "JPG + RAW"），则需要恢复处理流程
+        // 这部分属于“JPG 拍照流程”，必须进行解拜耳所需的计算
+        val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
+        val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
+        val lscWeight = when {
+            iso <= 100 -> 1.0f
+            iso >= 3200 -> 0.5f
+            else -> 1.0f - ((iso - 100).toFloat() / (3200 - 100) * 0.5f)
+        }
+        val currentLsc = lscStrength * lscWeight
+        
+        val algoKey = when {
+            savedAlgoFull.startsWith("RGB通道") -> "RgbCh"
+            savedAlgoFull.startsWith("灰度") -> "Mono"
+            savedAlgoFull.startsWith("无") -> "None"
+            else -> savedAlgoFull.split('：', ':')[0].trim()
+        }
+        
+        val rotation = CaptureOrientationCalculator.captureRotation(
+            sensorOrientation = currentSensorOrientation,
+            lensFacing = currentLensFacing,
+            deviceRotationDegrees = deviceOrientationTracker.deviceRotationDegrees,
+        )
+
+        val bayerPattern = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
+        val blackLevelPattern = characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+        val blackLevel = if (blackLevelPattern != null) {
+            (blackLevelPattern.getOffsetForIndex(0, 0) + 
+             blackLevelPattern.getOffsetForIndex(1, 0) + 
+             blackLevelPattern.getOffsetForIndex(0, 1) + 
+             blackLevelPattern.getOffsetForIndex(1, 1)) / 4
+        } else 64
+        val whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
+        
+        val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
+        val wbArray = if (wbGains != null) {
+            floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
+        } else {
+            floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
+        }
+
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride
+        
+        // 为了 JPG 处理，我们需要克隆 Buffer 以便快速释放 Image 对象
+        val capacity = buffer.remaining()
+        val cloneBuffer = ByteBuffer.allocateDirect(capacity)
+        cloneBuffer.put(buffer)
+        cloneBuffer.position(0)
+
+        val task = CaptureTask(
+            rawBuffer = cloneBuffer,
+            width = image.width,
+            height = image.height,
+            rowStride = rowStride,
+            pixelStride = plane.pixelStride,
+            captureStartTime = captureStartTime,
+            metadata = CaptureMetadata(
+                iso = iso,
+                wbArray = wbArray,
+                bayerPattern = bayerPattern,
+                blackLevel = blackLevel,
+                whiteLevel = whiteLevel,
+                lscStrength = currentLsc
+            ),
+            algoKey = algoKey,
+            savedFormat = savedFormat,
+            rotationDegrees = rotation.degrees,
+            exifOrientation = rotation.exifOrientation,
+            cropRect = currentCropRectInSensor
+        )
+        
+        image.close()
         pendingRawImage = null
         pendingCaptureResult = null
         isCaptureInProgress = false
@@ -1522,8 +1620,178 @@ class MainActivity : AppCompatActivity() {
             btnShutter.isEnabled = true
             stopShutterCountdown()
         }
+
+        captureExecutor.submit {
+            executeCaptureTask(task, characteristics, captureResult)
+        }
     }
 
+
+    private fun executeCaptureTask(
+        task: CaptureTask,
+        characteristics: CameraCharacteristics,
+        captureResult: TotalCaptureResult
+    ) {
+        val startProcess = System.currentTimeMillis()
+        android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - task.captureStartTime}ms")
+        try {
+            if (task.savedFormat != "RAW") {
+                if (task.algoKey == "RgbCh") {
+                    saveRgbChannelsFromBuffer(
+                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                        task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
+                        task.rotationDegrees, task.metadata.lscStrength
+                    )
+                } else {
+                    var bitmap = DemosaicEngine.processFromBuffer(
+                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                        task.algoKey, task.metadata.wbArray, task.metadata.bayerPattern, 
+                        task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
+                    )
+
+                    task.cropRect?.let { rect ->
+                        val left = rect.left.coerceIn(0, bitmap.width - 1)
+                        val top = rect.top.coerceIn(0, bitmap.height - 1)
+                        val width = rect.width().coerceAtMost(bitmap.width - left)
+                        val height = rect.height().coerceAtMost(bitmap.height - top)
+                        
+                        if (width > 0 && height > 0) {
+                            val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
+                            bitmap.recycle()
+                            bitmap = cropped
+                        }
+                    }
+
+                    val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
+                        savePngBitmap(bitmap, "", task.rotationDegrees)
+                    } else {
+                        saveJpegBitmap(bitmap, task.rotationDegrees)
+                    }
+                    
+                    updateRecentPhotoPreview(savedUri)
+                    bitmap.recycle()
+                }
+            }
+
+            android.util.Log.i("CapturePerformance", "--- Task Finished Flow: ${System.currentTimeMillis() - startProcess}ms ---")
+        } catch (e: Exception) {
+            android.util.Log.e("CapturePerformance", "Task failed", e)
+        }
+    }
+
+    private fun saveRgbChannelsFromBuffer(
+        buffer: ByteBuffer,
+        sensorW: Int,
+        sensorH: Int,
+        rowStride: Int,
+        pixelStride: Int,
+        bayerPattern: Int,
+        blackLevel: Int,
+        whiteLevel: Int,
+        rotationDegrees: Int,
+        lscStrength: Float
+    ) {
+        val rect = currentCropRectInSensor ?: android.graphics.Rect(0, 0, sensorW, sensorH)
+        val left = (rect.left.coerceIn(0, sensorW - 2) / 2) * 2
+        val top = (rect.top.coerceIn(0, sensorH - 2) / 2) * 2
+        val cropW = (rect.width().coerceAtMost(sensorW - left) / 2) * 2
+        val cropH = (rect.height().coerceAtMost(sensorH - top) / 2) * 2
+        
+        val outW = cropW / 2
+        val outH = cropH / 2
+        
+        if (outW <= 0 || outH <= 0) return
+
+        val gammaR = 3.0; val gammaG = 2.4; val gammaB = 2.8
+        val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
+        
+        fun createGammaLut(gammaPower: Double): IntArray {
+            val lut = IntArray(65536)
+            val invGamma = 1.0 / gammaPower
+            for (i in 0..65535) {
+                val norm = (((i - blackLevel).toFloat() / range) * 0.5f).coerceIn(0f, 1f)
+                val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
+                val gray = (gamma * 255).toInt().coerceIn(0, 255)
+                lut[i] = 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
+            }
+            return lut
+        }
+
+        val lutR = createGammaLut(gammaR); val lutG = createGammaLut(gammaG); val lutB = createGammaLut(gammaB)
+        val opticalCenterX = sensorW / 2.0f; val opticalCenterY = sensorH / 2.0f
+        val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
+
+        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val fullShortBuffer = buffer.asShortBuffer()
+        val strideInShorts = rowStride / 2; val psInShorts = pixelStride / 2
+        val pixR = IntArray(outW * outH); val pixG = IntArray(outW * outH); val pixB = IntArray(outW * outH)
+
+        val numThreads = Runtime.getRuntime().availableProcessors().coerceAtMost(8)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(numThreads)
+        val latch = java.util.concurrent.CountDownLatch(numThreads)
+        val rowsPerChunk = outH / numThreads
+
+        for (t in 0 until numThreads) {
+            val startY = t * rowsPerChunk
+            val endY = if (t == numThreads - 1) outH else (t + 1) * rowsPerChunk
+            executor.execute {
+                try {
+                    val threadBuffer = fullShortBuffer.duplicate()
+                    val row0 = ShortArray(strideInShorts); val row1 = ShortArray(strideInShorts)
+                    for (y in startY until endY) {
+                        val sensorY = top + y * 2
+                        val rO0 = sensorY * strideInShorts; val rO1 = (sensorY + 1) * strideInShorts
+                        threadBuffer.position(rO0); threadBuffer.get(row0)
+                        threadBuffer.position(rO1); threadBuffer.get(row1)
+                        val dy = sensorY - opticalCenterY; val dySq = dy * dy; val baseIdx = y * outW
+                        for (x in 0 until outW) {
+                            val sensorX = left + x * 2
+                            val dx = sensorX - opticalCenterX; val distSq = dx * dx + dySq
+                            val r2 = distSq / maxDistSq; val r4 = r2 * r2; val r6 = r4 * r2
+                            val lscGain = 1.0f + lscStrength * (r2 + r4 + r6)
+                            
+                            fun applyLsc(v: Int, gain: Float): Int = ((v - blackLevel).toFloat() * gain + blackLevel).toInt().coerceIn(0, 65535)
+
+                            val v00 = applyLsc(row0[sensorX * psInShorts].toInt() and 0xFFFF, lscGain)
+                            val v01 = applyLsc(row0[(sensorX + 1) * psInShorts].toInt() and 0xFFFF, lscGain)
+                            val v10 = applyLsc(row1[sensorX * psInShorts].toInt() and 0xFFFF, lscGain)
+                            val v11 = applyLsc(row1[(sensorX + 1) * psInShorts].toInt() and 0xFFFF, lscGain)
+
+                            var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
+                            when (bayerPattern) {
+                                0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 }
+                                1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 }
+                                2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 }
+                                3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 }
+                            }
+                            pixR[baseIdx + x] = lutR[rVal]
+                            pixG[baseIdx + x] = lutG[(grVal + gbVal) / 2]
+                            pixB[baseIdx + x] = lutB[bVal]
+                        }
+                    }
+                } finally { latch.countDown() }
+            }
+        }
+        latch.await(); executor.shutdown()
+
+        val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
+        val bmpG = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixG, 0, outW, 0, 0, outW, outH) }
+        val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
+
+        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
+        val rG = Bitmap.createBitmap(bmpG, 0, 0, outW, outH, matrix, true)
+        val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
+        bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
+        
+        val combinedBitmap = Bitmap.createBitmap(rR.width * 3, rR.height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(combinedBitmap)
+        canvas.drawBitmap(rR, 0f, 0f, null); canvas.drawBitmap(rG, rR.width.toFloat(), 0f, null); canvas.drawBitmap(rB, (rR.width * 2).toFloat(), 0f, null)
+
+        val uri = saveJpegBitmap(combinedBitmap, 0) // Already rotated
+        updateRecentPhotoPreview(uri)
+        rR.recycle(); rG.recycle(); rB.recycle(); combinedBitmap.recycle()
+    }
 
     private fun finishCaptureWithError(message: String) {
         stopShutterCountdown()
