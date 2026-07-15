@@ -1510,9 +1510,7 @@ class MainActivity : AppCompatActivity() {
 
         // 1. 如果需要保存 RAW，则直接进行最简单的保存，不进行额外计算
         if (savedFormat == "RAW" || savedFormat == "JPG + RAW") {
-            // 注意：因为 writeImage 是阻塞的，为了不阻塞 UI 且满足“直接保存”，我们依然在 executor 中执行
-            // 但不再提取复杂的 LSC 权重等元数据
-            val rawImageToSave = image // Image object is valid here
+            val rawImageToSave = image
             captureExecutor.submit {
                 try {
                     // 直接调用 writeImage，不进行任何 Buffer 偏移计算
@@ -1520,10 +1518,8 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     android.util.Log.e("CapturePerformance", "RAW 直接保存失败", e)
                 } finally {
-                    // 如果只保存 RAW，则在这里关闭
-                    if (savedFormat == "RAW") {
-                        rawImageToSave.close()
-                    }
+                    // 无论成功失败，在后台任务结束时关闭 Image
+                    rawImageToSave.close()
                 }
             }
             
@@ -1540,7 +1536,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 2. 如果需要保存 JPG（即 savedFormat 为 "JPG" 或 "JPG + RAW"），则需要恢复处理流程
-        // 这部分属于“JPG 拍照流程”，必须进行解拜耳所需的计算
         val savedAlgoFull = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
         val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
         val lscWeight = when {
@@ -1612,7 +1607,12 @@ class MainActivity : AppCompatActivity() {
             cropRect = currentCropRectInSensor
         )
         
-        image.close()
+        // 如果不是 JPG+RAW 模式（即只有 JPG 模式），则在此处关闭 Image
+        // 如果是 JPG+RAW 模式，Image 会由上面的后台任务关闭
+        if (savedFormat == "JPG") {
+            image.close()
+        }
+
         pendingRawImage = null
         pendingCaptureResult = null
         isCaptureInProgress = false
