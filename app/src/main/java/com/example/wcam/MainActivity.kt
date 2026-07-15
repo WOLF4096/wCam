@@ -1661,6 +1661,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         val startProcess = System.currentTimeMillis()
         android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - task.captureStartTime}ms")
+        logRawCorners(task)
         try {
             if (task.savedFormat == "RAW" || task.savedFormat == "JPG + RAW") {
                 val sRaw = System.currentTimeMillis()
@@ -2896,6 +2897,42 @@ class MainActivity : AppCompatActivity() {
         
         matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
         textureView.setTransform(matrix)
+    }
+
+    private fun logRawCorners(task: CaptureTask) {
+        val buffer = task.rawBuffer.duplicate()
+        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val shortBuffer = buffer.asShortBuffer()
+        val strideInShorts = task.rowStride / 2
+        val psInShorts = task.pixelStride / 2
+        val w = task.width
+        val h = task.height
+
+        android.util.Log.d("RawDebug", "Bayer Pattern: ${task.metadata.bayerPattern} (0:RGGB, 1:GRBG, 2:GBRG, 3:BGGR)")
+        android.util.Log.d("RawDebug", "Dimensions: ${w}x${h}, Stride: ${task.rowStride}, BlackLevel: ${task.metadata.blackLevel}")
+
+        val corners = listOf(
+            "Top-Left" to (0 to 0),
+            "Top-Right" to (w - 10 to 0),
+            "Bottom-Left" to (0 to h - 10),
+            "Bottom-Right" to (w - 10 to h - 10)
+        )
+
+        for ((name, pos) in corners) {
+            val (startX, startY) = pos
+            android.util.Log.d("RawDebug", "--- Corner: $name ($startX, $startY) ---")
+            for (y in 0 until 10) {
+                val row = StringBuilder()
+                for (x in 0 until 10) {
+                    val idx = (startY + y) * strideInShorts + (startX + x) * psInShorts
+                    if (idx < shortBuffer.capacity()) {
+                        val value = shortBuffer.get(idx).toInt() and 0xFFFF
+                        row.append(String.format(java.util.Locale.US, "%5d ", value))
+                    }
+                }
+                android.util.Log.d("RawDebug", row.toString())
+            }
+        }
     }
 
     private fun showToast(message: String) {
