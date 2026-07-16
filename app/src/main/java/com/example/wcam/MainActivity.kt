@@ -1653,6 +1653,7 @@ class MainActivity : AppCompatActivity() {
                 if (task.algoKey == "RgbCh") {
                     saveRgbChannelsFromBuffer(
                         task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                        task.metadata.wbArray, // 传入白平衡增益
                         task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
                         task.rotationDegrees, task.metadata.lscStrength, task.captureStartTime
                     )
@@ -1699,6 +1700,7 @@ class MainActivity : AppCompatActivity() {
         sensorH: Int,
         rowStride: Int,
         pixelStride: Int,
+        wbArray: FloatArray,
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
@@ -1717,28 +1719,33 @@ class MainActivity : AppCompatActivity() {
         
         if (outW <= 0 || outH <= 0) return
 
-        val gammaR = 2.7;
-        val gammaG = 2.0;
-        val gammaB = 2.8;
-        val brightness = 1.4f; // 亮度变量，1.0为原始值
-        val contrast = 1.2f; // 增加对比度变量，1.0为原始值
+        // 核心修改：统一 Gamma 值，确保色彩平衡
+        val gammaCommon = 2.0
+        val brightness = 1.0f; // 亮度变量
+        val contrast = 1.2f; // 对比度变量
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         
         fun createGammaLut(gammaPower: Double): IntArray {
             val lut = IntArray(65536)
             val invGamma = 1.0 / gammaPower
             for (i in 0..65535) {
-                val norm = (((i - blackLevel).toFloat() / range) * 0.5f).coerceIn(0f, 1f)
+                // 这里的 norm 只是一个归一化基准
+                val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
                 val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
                 val gray = (gamma * 255 * brightness).toInt()
-                // 应用对比度调整: f(x) = contrast * (x - 128) + 128
                 val contrasted = (contrast * (gray - 128) + 128).toInt().coerceIn(0, 255)
                 lut[i] = 0xFF000000.toInt() or (contrasted shl 16) or (contrasted shl 8) or contrasted
             }
             return lut
         }
 
-        val lutR = createGammaLut(gammaR); val lutG = createGammaLut(gammaG); val lutB = createGammaLut(gammaB)
+        val lut = createGammaLut(gammaCommon)
+        
+        // 提取白平衡增益
+        val rGain = wbArray[0]
+        val gGain = (wbArray[1] + wbArray[2]) / 2.0f
+        val bGain = wbArray[3]
+
         val opticalCenterX = sensorW / 2.0f; val opticalCenterY = sensorH / 2.0f
         val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
 
@@ -1772,24 +1779,34 @@ class MainActivity : AppCompatActivity() {
                             val r2 = distSq / maxDistSq; val r4 = r2 * r2; val r6 = r4 * r2
                             val lscGain = 1.0f + lscStrength * (r2 + r4 + r6)
                             
-                            fun applyLsc(v: Int, gain: Float): Int = ((v - blackLevel).toFloat() * gain + blackLevel).toInt().coerceIn(0, 65535)
+                            // 应用白平衡和 LSC 的综合映射
+                            fun processPixel(v: Int, wbGain: Float, lscGain: Float): Int {
+                                val signal = (v - blackLevel).toFloat()
+                                // 核心步骤：扣除黑电平 -> 乘以白平衡增益 -> 乘以 LSC 增益 -> 加上黑电平还原到 16位空间供 LUT 查找
+                                return (signal * wbGain * lscGain + blackLevel).toInt().coerceIn(0, 65535)
+                            }
 
-                            val v00 = applyLsc(row0[sensorX * psInShorts].toInt() and 0xFFFF, lscGain)
-                            val v01 = applyLsc(row0[(sensorX + 1) * psInShorts].toInt() and 0xFFFF, lscGain)
-                            val v10 = applyLsc(row1[sensorX * psInShorts].toInt() and 0xFFFF, lscGain)
-                            val v11 = applyLsc(row1[(sensorX + 1) * psInShorts].toInt() and 0xFFFF, lscGain)
+                            val v00 = row0[sensorX * psInShorts].toInt() and 0xFFFF
+                            val v01 = row0[(sensorX + 1) * psInShorts].toInt() and 0xFFFF
+                            val v10 = row1[sensorX * psInShorts].toInt() and 0xFFFF
+                            val v11 = row1[(sensorX + 1) * psInShorts].toInt() and 0xFFFF
 
-                            var rVal = 0; var grVal = 0; var gbVal = 0; var bVal = 0
+                            var rRaw = 0; var g1Raw = 0; var g2Raw = 0; var bRaw = 0
                             when (bayerPattern) {
-                                0 -> { rVal = v00; grVal = v01; gbVal = v10; bVal = v11 }
-                                1 -> { grVal = v00; rVal = v01; bVal = v10; gbVal = v11 }
-                                2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 }
-                                3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 }
+                                0 -> { rRaw = v00; g1Raw = v01; g2Raw = v10; bRaw = v11 }
+                                1 -> { g1Raw = v00; rRaw = v01; bRaw = v10; g2Raw = v11 }
+                                2 -> { g1Raw = v00; bRaw = v01; rRaw = v10; g2Raw = v11 }
+                                3 -> { bRaw = v00; g2Raw = v01; g1Raw = v10; rRaw = v11 }
                             }
                             
-                            val r8 = lutR[rVal] and 0xFF
-                            val g8 = lutG[(grVal + gbVal) / 2] and 0xFF
-                            val b8 = lutB[bVal] and 0xFF
+                            // 分别应用各自通道的 WB 增益
+                            val rProc = processPixel(rRaw, rGain, lscGain)
+                            val gProc = processPixel((g1Raw + g2Raw) / 2, gGain, lscGain)
+                            val bProc = processPixel(bRaw, bGain, lscGain)
+                            
+                            val r8 = lut[rProc] and 0xFF
+                            val g8 = lut[gProc] and 0xFF
+                            val b8 = lut[bProc] and 0xFF
                             
                             pixMixed[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (g8 shl 8) or b8
                             pixR[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (r8 shl 8) or r8
