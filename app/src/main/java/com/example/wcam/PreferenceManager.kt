@@ -15,6 +15,8 @@ class PreferenceManager(context: Context) {
         const val KEY_JPG_QUALITY = "jpg_quality"
         const val KEY_DEMOSAIC_ALGO = "demosaic_algo"
         const val KEY_IS_PHOTO_MODE = "is_photo_mode"
+        const val KEY_PHOTO_RATIO = "photo_ratio"
+        const val KEY_PHOTO_RATIO_STR = "photo_ratio_str"
         const val KEY_VIDEO_RATIO = "video_ratio"
         const val KEY_VIDEO_RESOLUTION = "video_resolution"
         const val KEY_VIDEO_FPS = "video_fps"

@@ -194,6 +194,7 @@ class MainActivity : AppCompatActivity() {
     private var isPhotoMode = true
     private var isFormatPanelOpen = false
 
+    private var selectedPhotoRatioStr: String = "4:3"
     private var selectedVideoRatioStr: String = "16:9"
     private var selectedVideoSizeStr: String = "1920x1080"
     private var selectedVideoFps: Int = 30
@@ -327,6 +328,10 @@ class MainActivity : AppCompatActivity() {
         btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
         
         refreshLensUI()
+        
+        selectedPhotoRatioStr = preferenceManager.getString(PreferenceManager.KEY_PHOTO_RATIO_STR, "4:3")
+        cropRatio = preferenceManager.getFloat(PreferenceManager.KEY_PHOTO_RATIO, 4f / 3f)
+        
         updateModeUI()
 
         selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "16:9")
@@ -338,7 +343,7 @@ class MainActivity : AppCompatActivity() {
         seekbarJpgQuality.progress = jpgQual
         tvJpgQualityTitle.text = "JPG 质量: $jpgQual%"
 
-        btnResolution.text = if (isPhotoMode) "4:3" else selectedVideoRatioStr
+        btnResolution.text = if (isPhotoMode) selectedPhotoRatioStr else selectedVideoRatioStr
         updateCropOverlayUI()
         restorePhotoParamState()
     }
@@ -377,12 +382,14 @@ class MainActivity : AppCompatActivity() {
         set.setDimensionRatio(R.id.preview_container, "3:4")
         
         if (isPhotoMode) {
-            btnResolution.text = "4:3"
+            btnResolution.text = selectedPhotoRatioStr
+            btnResolution.setTextColor(if (selectedPhotoRatioStr != "4:3") Color.parseColor("#FFCC00") else Color.WHITE)
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
             viewCropOverlay.visibility = View.VISIBLE
             btnModeSwitch.text = "切换\n录像"
         } else {
             btnResolution.text = selectedVideoRatioStr
+            btnResolution.setTextColor(Color.parseColor("#FFCC00")) // Video ratio is usually non-default
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
             viewCropOverlay.visibility = View.GONE
             btnModeSwitch.text = "切换\n拍照"
@@ -2123,29 +2130,31 @@ class MainActivity : AppCompatActivity() {
             when (selected) {
                 "1:1" -> {
                     cropRatio = 1.0f
-                    btnResolution.text = "1:1"
-                    updateCropOverlayUI()
+                    selectedPhotoRatioStr = "1:1"
                 }
                 "3:4" -> {
                     cropRatio = 4f / 3f
-                    btnResolution.text = "3:4"
-                    updateCropOverlayUI()
+                    selectedPhotoRatioStr = "3:4"
                 }
                 "9:16" -> {
                     cropRatio = 16f / 9f
-                    btnResolution.text = "9:16"
-                    updateCropOverlayUI()
+                    selectedPhotoRatioStr = "9:16"
                 }
                 "1:2" -> {
                     cropRatio = 2.0f
-                    btnResolution.text = "1:2"
-                    updateCropOverlayUI()
+                    selectedPhotoRatioStr = "1:2"
                 }
                 "自定义" -> {
                     showCustomRatioDialog()
+                    return@showStyledPopup
                 }
             }
+            btnResolution.text = selectedPhotoRatioStr
             btnResolution.setTextColor(Color.parseColor("#FFCC00"))
+            updateCropOverlayUI()
+            
+            preferenceManager.saveFloat(PreferenceManager.KEY_PHOTO_RATIO, cropRatio)
+            preferenceManager.saveString(PreferenceManager.KEY_PHOTO_RATIO_STR, selectedPhotoRatioStr)
         }
     }
 
@@ -2179,8 +2188,12 @@ class MainActivity : AppCompatActivity() {
                     customRatioW = w
                     customRatioH = h
                     cropRatio = w.toFloat() / h
-                    btnResolution.text = "$h:$w"
+                    selectedPhotoRatioStr = "$h:$w"
+                    btnResolution.text = selectedPhotoRatioStr
                     updateCropOverlayUI()
+                    
+                    preferenceManager.saveFloat(PreferenceManager.KEY_PHOTO_RATIO, cropRatio)
+                    preferenceManager.saveString(PreferenceManager.KEY_PHOTO_RATIO_STR, selectedPhotoRatioStr)
                 }
             }
             .setNegativeButton("取消", null)
