@@ -1619,6 +1619,22 @@ class MainActivity : AppCompatActivity() {
         val wbArray = if (wbGains != null) floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
                       else floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
 
+        // 提取硬件 CCM (Color Correction Matrix)
+        // 优先使用 ForwardMatrix1 (白平衡后的 Sensor RGB -> XYZ)
+        val cct = chars.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1) 
+                  ?: chars.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
+
+        val ccm = FloatArray(9)
+        if (cct != null) {
+            val rationals = arrayOfNulls<android.util.Rational>(9)
+            cct.copyElements(rationals, 0)
+            for (i in 0 until 9) {
+                ccm[i] = rationals[i]?.toFloat() ?: 0f
+            }
+        } else {
+            ccm[0] = 1f; ccm[4] = 1f; ccm[8] = 1f // Identity
+        }
+
         val plane = image.planes[0]
         val cloneBuffer = ByteBuffer.allocateDirect(plane.buffer.remaining())
         cloneBuffer.put(plane.buffer)
@@ -1631,7 +1647,7 @@ class MainActivity : AppCompatActivity() {
             rowStride = plane.rowStride,
             pixelStride = plane.pixelStride,
             captureStartTime = timestamp,
-            metadata = CaptureMetadata(iso, wbArray, bayerPattern, blackLevel, whiteLevel, currentLsc),
+            metadata = CaptureMetadata(iso, wbArray, ccm, bayerPattern, blackLevel, whiteLevel, currentLsc),
             algoKey = algoKey,
             savedFormat = format,
             rotationDegrees = rotation.degrees,
@@ -1653,14 +1669,14 @@ class MainActivity : AppCompatActivity() {
                 if (task.algoKey == "RgbCh") {
                     saveRgbChannelsFromBuffer(
                         task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                        task.metadata.wbArray, // 传入白平衡增益
+                        task.metadata.wbArray, task.metadata.ccm,
                         task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
                         task.rotationDegrees, task.metadata.lscStrength, task.captureStartTime
                     )
                 } else {
                     var bitmap = DemosaicEngine.processFromBuffer(
                         task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                        task.algoKey, task.metadata.wbArray, task.metadata.bayerPattern, 
+                        task.algoKey, task.metadata.wbArray, task.metadata.ccm, task.metadata.bayerPattern,
                         task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
                     )
 
@@ -1701,6 +1717,7 @@ class MainActivity : AppCompatActivity() {
         rowStride: Int,
         pixelStride: Int,
         wbArray: FloatArray,
+        ccm: FloatArray,
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
@@ -1779,13 +1796,6 @@ class MainActivity : AppCompatActivity() {
                             val r2 = distSq / maxDistSq; val r4 = r2 * r2; val r6 = r4 * r2
                             val lscGain = 1.0f + lscStrength * (r2 + r4 + r6)
                             
-                            // 应用白平衡和 LSC 的综合映射
-                            fun processPixel(v: Int, wbGain: Float, lscGain: Float): Int {
-                                val signal = (v - blackLevel).toFloat()
-                                // 核心步骤：扣除黑电平 -> 乘以白平衡增益 -> 乘以 LSC 增益 -> 加上黑电平还原到 16位空间供 LUT 查找
-                                return (signal * wbGain * lscGain + blackLevel).toInt().coerceIn(0, 65535)
-                            }
-
                             val v00 = row0[sensorX * psInShorts].toInt() and 0xFFFF
                             val v01 = row0[(sensorX + 1) * psInShorts].toInt() and 0xFFFF
                             val v10 = row1[sensorX * psInShorts].toInt() and 0xFFFF
@@ -1800,18 +1810,34 @@ class MainActivity : AppCompatActivity() {
                             }
                             
                             // 分别应用各自通道的 WB 增益
-                            val rProc = processPixel(rRaw, rGain, lscGain)
-                            val gProc = processPixel((g1Raw + g2Raw) / 2, gGain, lscGain)
-                            val bProc = processPixel(bRaw, bGain, lscGain)
+                            val rRawProc = (rRaw - blackLevel).toFloat() * rGain * lscGain
+                            val gRawProc = ((g1Raw + g2Raw) / 2 - blackLevel).toFloat() * gGain * lscGain
+                            val bRawProc = (bRaw - blackLevel).toFloat() * bGain * lscGain
+
+                            // 应用 CCM (仅对彩色混合图)
+                            val rCcm = ccm[0] * rRawProc + ccm[1] * gRawProc + ccm[2] * bRawProc
+                            val gCcm = ccm[3] * rRawProc + ccm[4] * gRawProc + ccm[5] * bRawProc
+                            val bCcm = ccm[6] * rRawProc + ccm[7] * gRawProc + ccm[8] * bRawProc
+
+                            // 还原到 16位空间供 LUT 查找
+                            val rProc = (rCcm + blackLevel).toInt().coerceIn(0, 65535)
+                            val gProc = (gCcm + blackLevel).toInt().coerceIn(0, 65535)
+                            val bProc = (bCcm + blackLevel).toInt().coerceIn(0, 65535)
                             
                             val r8 = lut[rProc] and 0xFF
                             val g8 = lut[gProc] and 0xFF
                             val b8 = lut[bProc] and 0xFF
                             
                             pixMixed[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (g8 shl 8) or b8
-                            pixR[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (r8 shl 8) or r8
-                            pixG[baseIdx + x] = 0xFF000000.toInt() or (g8 shl 16) or (g8 shl 8) or g8
-                            pixB[baseIdx + x] = 0xFF000000.toInt() or (b8 shl 16) or (b8 shl 8) or b8
+                            
+                            // 灰度图保持原样（不加 CCM）以供对比
+                            val rGray = (rRawProc + blackLevel).toInt().coerceIn(0, 65535)
+                            val gGray = (gRawProc + blackLevel).toInt().coerceIn(0, 65535)
+                            val bGray = (bRawProc + blackLevel).toInt().coerceIn(0, 65535)
+
+                            pixR[baseIdx + x] = 0xFF000000.toInt() or (lut[rGray] and 0xFF shl 16) or (lut[rGray] and 0xFF shl 8) or (lut[rGray] and 0xFF)
+                            pixG[baseIdx + x] = 0xFF000000.toInt() or (lut[gGray] and 0xFF shl 16) or (lut[gGray] and 0xFF shl 8) or (lut[gGray] and 0xFF)
+                            pixB[baseIdx + x] = 0xFF000000.toInt() or (lut[bGray] and 0xFF shl 16) or (lut[bGray] and 0xFF shl 8) or (lut[bGray] and 0xFF)
                         }
                     }
                 } finally { latch.countDown() }

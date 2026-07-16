@@ -19,6 +19,7 @@ object DemosaicEngine {
         outputPixels: IntArray,
         algorithm: String,
         wbGainsArray: FloatArray,
+        ccmArray: FloatArray, // 新增 CCM 矩阵参数
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
@@ -29,6 +30,7 @@ object DemosaicEngine {
         image: Image,
         algorithm: String,
         wbGains: FloatArray,
+        ccm: FloatArray, // 新增
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
@@ -37,7 +39,7 @@ object DemosaicEngine {
         val plane = image.planes[0]
         return processFromBuffer(
             plane.buffer, image.width, image.height, plane.rowStride, plane.pixelStride,
-            algorithm, wbGains, bayerPattern, blackLevel, whiteLevel, lscStrength
+            algorithm, wbGains, ccm, bayerPattern, blackLevel, whiteLevel, lscStrength
         )
     }
 
@@ -49,12 +51,13 @@ object DemosaicEngine {
         pixelStride: Int,
         algorithm: String,
         wbGains: FloatArray,
+        ccm: FloatArray, // 新增
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
         lscStrength: Float = 0.0f
     ): Bitmap {
-        Log.d("DemosaicEngine", "Algo: $algorithm, WB: ${wbGains.joinToString()}, BL: $blackLevel, WL: $whiteLevel, LSC: $lscStrength")
+        Log.d("DemosaicEngine", "Algo: $algorithm, WB: ${wbGains.joinToString()}, CCM: ${ccm.joinToString()}, BL: $blackLevel, WL: $whiteLevel, LSC: $lscStrength")
         
         if (!buffer.isDirect) {
             throw IllegalArgumentException("Image buffer must be direct")
@@ -66,7 +69,7 @@ object DemosaicEngine {
         try {
             nativeProcess(
                 buffer, width, height, rowStride, pixelStride,
-                pixels, algorithm, wbGains, bayerPattern, blackLevel, whiteLevel,
+                pixels, algorithm, wbGains, ccm, bayerPattern, blackLevel, whiteLevel,
                 lscStrength
             )
         } catch (e: Exception) {

@@ -22,6 +22,7 @@ struct DemosaicParams {
     int rowStride;
     int pixelStride;
     float* wbGains;
+    float* ccm; // 新增 CCM 矩阵 (9 elements)
     int bayerPattern;
     int blackLevel;
     int whiteLevel;
@@ -154,43 +155,64 @@ inline float tonemap(float x) {
     return std::clamp(res, 0.0f, 1.0f);
 }
 
-inline uint32_t rgb_to_pixel(float r, float g, float b) {
-    // 1. 曝光补偿 (降低基础增益以匹配预览亮度，原本 1.45f 过亮)
-    float exposure = 1.10f;
+inline uint32_t rgb_to_pixel_impl(float r, float g, float b, const DemosaicParams& p) {
+    // 1. 基础曝光微调 (略微降低，防止高光过早溢出)
+    float exposure = 1.0f;
     r *= exposure; g *= exposure; b *= exposure;
 
-    // 2. 色彩校正矩阵 (CCM) - 整合了 -2% 的色调 (Hue) 旋转
-    float rr =  1.58f * r - 0.35f * g - 0.23f * b;
-    float gg = -0.32f * r + 1.49f * g - 0.17f * b;
-    float bb =  0.04f * r - 0.64f * g + 1.60f * b;
+    // 2. 核心色彩转换
+    float rr, gg, bb;
+    if (p.ccm != nullptr && (p.ccm[0] != 0.0f || p.ccm[4] != 0.0f)) {
+        // A. 转换到 CIE XYZ 空间 (应用硬件 ForwardMatrix)
+        float X = p.ccm[0] * r + p.ccm[1] * g + p.ccm[2] * b;
+        float Y = p.ccm[3] * r + p.ccm[4] * g + p.ccm[5] * b;
+        float Z = p.ccm[6] * r + p.ccm[7] * g + p.ccm[8] * b;
 
-    // 3. 应用 Tonemap (ACES Filmic)
+        // B. 从 CIE XYZ 转换到 Linear sRGB (标准 D65 转换矩阵)
+        rr =  3.2404542f * X - 1.5371385f * Y - 0.4985314f * Z;
+        gg = -0.9692660f * X + 1.8760108f * Y + 0.0415560f * Z;
+        bb =  0.0556434f * X - 0.2040259f * Y + 1.0572252f * Z;
+    } else {
+        // 兜底：如果没有矩阵，使用简单的经验矩阵 (Sensor-to-sRGB 直接转换)
+        rr =  1.60f * r - 0.50f * g - 0.10f * b;
+        gg = -0.20f * r + 1.50f * g - 0.30f * b;
+        bb = -0.10f * r - 0.60f * g + 1.70f * b;
+    }
+
+    // 3. 饱和度初步控制 (防止硬件矩阵过冲)
+    rr = std::max(0.0f, rr); gg = std::max(0.0f, gg); bb = std::max(0.0f, bb);
+
+    // 4. 应用 Tonemap (ACES Filmic)
     rr = tonemap(rr);
     gg = tonemap(gg);
     bb = tonemap(bb);
 
-    // 4. 高光去色 (Highlight Desaturation) - 解决过曝区域偏粉/偏紫问题 (#FDE0FE)
-    // 当亮度接近饱和时，强行将颜色向白色（峰值）靠拢
+    // 5. 增强型高光保护与去色
     float peak = std::max({rr, gg, bb});
-    if (peak > 0.85f) {
-        float blend = std::min(1.0f, (peak - 0.85f) / 0.12f); // 0.85 -> 0.97 快速完成去色
-        rr = rr + (peak - rr) * blend;
-        gg = gg + (peak - gg) * blend;
-        bb = bb + (peak - bb) * blend;
+    if (peak > 0.70f) {
+        // 在接近高光时，强行降低饱和度并向中性色收敛
+        float blend = std::min(1.0f, (peak - 0.70f) / 0.28f);
+        float gray = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
+        rr = rr * (1.0f - blend) + gray * blend;
+        gg = gg * (1.0f - blend) + gray * blend;
+        bb = bb * (1.0f - blend) + gray * blend;
+        // 再次向峰值收敛以确保纯白
+        rr = rr + (peak - rr) * blend * 0.5f;
+        gg = gg + (peak - gg) * blend * 0.5f;
+        bb = bb + (peak - bb) * blend * 0.5f;
     }
 
-    // 5. 饱和度 - 适度增加饱和度，并对高光区域应用遮罩以保持纯白
+    // 6. 最终色彩微调 (1.05x 饱和度)
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.15f;
-    // 高光处线性降低饱和度增益，至峰值时增益归 1.0
-    float sat_mask = 1.0f - std::min(1.0f, std::max(0.0f, (peak - 0.80f) / 0.20f));
-    float effective_sat = 1.0f + (sat - 1.0f) * sat_mask;
-
-    rr = luma + effective_sat * (rr - luma);
-    gg = luma + effective_sat * (gg - luma);
-    bb = luma + effective_sat * (bb - luma);
+    float sat = 1.05f;
+    rr = luma + sat * (rr - luma);
+    gg = luma + sat * (gg - luma);
+    bb = luma + sat * (bb - luma);
 
     return 0xFF000000 | (to_srgb(rr) << 16) | (to_srgb(gg) << 8) | to_srgb(bb);
 }
+
+// Wrapper to match previous calls if any
+#define rgb_to_pixel(r,g,b) rgb_to_pixel_impl(r,g,b,p)
 
 #endif // WCAM_DEMOSAIC_COMMON_H

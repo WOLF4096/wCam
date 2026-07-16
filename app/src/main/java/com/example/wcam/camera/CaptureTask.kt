@@ -24,6 +24,7 @@ data class CaptureTask(
 data class CaptureMetadata(
     val iso: Int,
     val wbArray: FloatArray,
+    val ccm: FloatArray, // 新增 CCM 矩阵
     val bayerPattern: Int,
     val blackLevel: Int,
     val whiteLevel: Int,
