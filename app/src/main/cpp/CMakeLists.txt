@@ -10,6 +10,7 @@ find_package(OpenMP REQUIRED)
 
 add_library(wcam SHARED
         native-lib.cpp
+        histogram.cpp
         demosaic/demosaic_common.cpp
         demosaic/bilinear.cpp
         demosaic/ahd.cpp

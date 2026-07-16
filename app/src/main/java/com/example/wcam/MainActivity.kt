@@ -87,10 +87,27 @@ import com.example.wcam.camera.FlashMode
 import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
 import com.example.wcam.camera.RawMediaStore
+import com.example.wcam.camera.CaptureProcessor
+import com.example.wcam.camera.CaptureSessionManager
+import com.example.wcam.camera.CameraManager as WCameraManager
+import com.example.wcam.ui.CameraUiController
 import com.example.wcam.ui.FormatPanelController
+import com.example.wcam.ui.ManualParamController
+import com.example.wcam.ui.OverlayController
 import com.example.wcam.ui.HistogramView
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(),
+    ManualParamController.ParamChangeListener,
+    CameraUiController.UiEventListener,
+    WCameraManager.CameraListener,
+    CaptureSessionManager.SessionListener {
+
+    private lateinit var cameraManager: WCameraManager
+    private lateinit var sessionManager: CaptureSessionManager
+    private lateinit var captureProcessor: CaptureProcessor
+    private lateinit var uiController: CameraUiController
+    private lateinit var manualParamController: ManualParamController
+    private lateinit var overlayController: OverlayController
 
     private lateinit var textureView: TextureView
     private lateinit var btnShutter: View
@@ -151,9 +168,6 @@ class MainActivity : AppCompatActivity() {
     private var currentLogicalCameraId = "0"
     private var currentPhysicalCameraId: String? = "2"
     private var activeCameraCharacteristics: CameraCharacteristics? = null
-    private var rawImageReader: ImageReader? = null
-    private var jpegImageReader: ImageReader? = null
-    private var histogramImageReader: ImageReader? = null
     private val pendingRawImages = ConcurrentHashMap<Long, Image>()
     private val pendingCaptureResults = ConcurrentHashMap<Long, TotalCaptureResult>()
     private val captureStartTimeMap = ConcurrentHashMap<Long, Long>()
@@ -247,7 +261,7 @@ class MainActivity : AppCompatActivity() {
                         nativeCalculateHistogram(pixels, 160, 120, rHist, gHist, bHist)
                         
                         runOnUiThread { 
-                            viewHistogram.updateData(rHist, gHist, bHist) 
+                            overlayController.updateHistogram(rHist, gHist, bHist)
                         }
                         bitmap.recycle()
                     }
@@ -382,16 +396,14 @@ class MainActivity : AppCompatActivity() {
         set.setDimensionRatio(R.id.preview_container, "3:4")
         
         if (isPhotoMode) {
-            btnResolution.text = selectedPhotoRatioStr
-            btnResolution.setTextColor(if (selectedPhotoRatioStr != "4:3") Color.parseColor("#FFCC00") else Color.WHITE)
+            uiController.updateResolutionText(btnResolution, selectedPhotoRatioStr, selectedPhotoRatioStr != "4:3")
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
-            viewCropOverlay.visibility = View.VISIBLE
+            overlayController.setCropOverlayVisible(true)
             btnModeSwitch.text = "切换\n录像"
         } else {
-            btnResolution.text = selectedVideoRatioStr
-            btnResolution.setTextColor(Color.parseColor("#FFCC00")) // Video ratio is usually non-default
+            uiController.updateResolutionText(btnResolution, selectedVideoRatioStr, true)
             btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
-            viewCropOverlay.visibility = View.GONE
+            overlayController.setCropOverlayVisible(false)
             btnModeSwitch.text = "切换\n拍照"
         }
         set.applyTo(rootLayout)
@@ -554,8 +566,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         runOnUiThread {
-            tvPhysicalRes.text = resText
-            tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
+            overlayController.updatePhysicalResText(resText)
+            overlayController.setHistogramVisible(isHistogramVisible) // Updates visibility together with physicalRes
         }
 
         // Map to preview coordinates
@@ -580,7 +592,7 @@ class MainActivity : AppCompatActivity() {
         val relBottom = relTop + viewRelH
 
         runOnUiThread {
-            viewCropOverlay.setCropRect(relLeft, relTop, relRight, relBottom)
+            overlayController.updateCrop(relLeft, relTop, relRight, relBottom)
         }
     }
 
@@ -643,6 +655,17 @@ class MainActivity : AppCompatActivity() {
         tvValIso = findViewById(R.id.tv_val_iso)
         tvValS = findViewById(R.id.tv_val_s)
         tvValAf = findViewById(R.id.tv_val_af)
+
+        initControllers()
+    }
+
+    private fun initControllers() {
+        cameraManager = WCameraManager(this, this)
+        sessionManager = CaptureSessionManager(this)
+        captureProcessor = CaptureProcessor(contentResolver, rawMediaStore)
+        uiController = CameraUiController(this)
+        manualParamController = ManualParamController(this)
+        overlayController = OverlayController(viewGridLines, viewHistogram, viewCropOverlay, tvPhysicalRes)
     }
 
     private fun setupListeners() {
@@ -664,69 +687,38 @@ class MainActivity : AppCompatActivity() {
                     "常亮" -> FlashMode.TORCH
                     else -> FlashMode.OFF
                 }
-                currentFlashMode = if (requestedMode != FlashMode.OFF && !currentFlashSupported) {
+                val mode = if (requestedMode != FlashMode.OFF && !currentFlashSupported) {
                     showToast("当前设备不支持闪光灯")
                     FlashMode.OFF
                 } else {
                     requestedMode
                 }
-                btnFlash.text = currentFlashMode.label
-                btnFlash.setTextColor(currentFlashMode.textColor)
-                applyPhotoParamsToPreview()
+                onFlashModeChanged(mode)
             }
         }
 
         btnHistogram.setOnClickListener {
-            isHistogramVisible = !isHistogramVisible
-            android.util.Log.i("HistogramDebug", "Button clicked, isVisible: $isHistogramVisible")
-            viewHistogram.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
-            tvPhysicalRes.visibility = if (isHistogramVisible) View.VISIBLE else View.GONE
-            btnHistogram.setTextColor(if (isHistogramVisible) Color.parseColor("#FFCC00") else Color.WHITE)
-            preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isHistogramVisible)
-            updateCropOverlayUI()
+            onHistogramToggle()
         }
 
         btnGridLines.setOnClickListener {
-            isGridVisible = !isGridVisible
-            viewGridLines.visibility = if (isGridVisible) View.VISIBLE else View.GONE
-            btnGridLines.setTextColor(if (isGridVisible) Color.parseColor("#FFCC00") else Color.WHITE)
-            preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, isGridVisible)
+            onGridToggle()
         }
 
         btnResolution.setOnClickListener { view ->
-            if (isPhotoMode) {
-                showRatioPopup(view)
-            } else {
-                showVideoParamsPopup(view)
-            }
+            onResolutionClick(view)
         }
 
         btnFormat.setOnClickListener {
-            isFormatPanelOpen = !isFormatPanelOpen
-            if (isFormatPanelOpen) {
-                updateFormatPanelUI()
-                panelFormatSettings.visibility = View.VISIBLE
-                btnFormat.setTextColor(Color.parseColor("#FFCC00"))
-            } else {
-                panelFormatSettings.visibility = View.GONE
-                btnFormat.setTextColor(Color.WHITE)
-            }
+            onFormatPanelToggle()
         }
 
         btnModeSwitch.setOnClickListener {
-            isPhotoMode = !isPhotoMode
-            updateModeUI()
-            preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, isPhotoMode)
-            closeCamera()
-            openCamera()
+            onModeSwitch()
         }
 
         btnModeSwitch.setOnLongClickListener {
-            preferenceManager.clear()
-            showToast("设置已重置")
-            loadSettings()
-            closeCamera()
-            openCamera()
+            onModeReset()
             true
         }
 
@@ -753,7 +745,7 @@ class MainActivity : AppCompatActivity() {
         refreshParamViews()
     }
 
-    private fun onParamManualStep(key: ParamKey, selectedLabel: String) {
+    override fun onParamManualStep(key: ParamKey, selectedLabel: String) {
         android.util.Log.d("MainActivity", "onParamManualStep: key=$key, label=$selectedLabel")
         photoParamState = PhotoParamMapper.createManualStateForLabel(
             key = key,
@@ -766,7 +758,7 @@ class MainActivity : AppCompatActivity() {
         applyPhotoParamsToPreview()
     }
 
-    private fun onParamAutoReset(key: ParamKey) {
+    override fun onParamAutoReset(key: ParamKey) {
         if (key == ParamKey.EV) {
             // EV从手动恢复自动时还原为0
             onParamManualStep(ParamKey.EV, "+0.0")
@@ -803,178 +795,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshParamViews() {
-        val evDisplay = if (photoParamState.ev.isAuto) {
-            previewAutoCompensation?.let { compensation ->
-                val step = cameraCapabilities.aeCompensationStep ?: 0f
-                PhotoParamMapper.formatEvDisplay(compensation, step)
-            } ?: photoParamState.ev.displayValue
-        } else {
-            photoParamState.ev.displayValue
-        }
-        setParamText(tvValEv, evDisplay, photoParamState.ev.isAuto)
-
-        val wbDisplay = if (photoParamState.wb.isAuto) {
-            previewAutoKelvinLabel ?: photoParamState.wb.displayValue
-        } else {
-            photoParamState.wb.displayValue
-        }
-        setParamText(tvValWb, wbDisplay, photoParamState.wb.isAuto)
-
-        val isoDisplay = if (photoParamState.iso.isAuto) {
-            previewAutoIso?.let { iso ->
-                if (iso >= 1000) {
-                    val kValue = iso / 1000.0
-                    if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dK", kValue.toInt())
-                    else String.format(java.util.Locale.US, "%.1fK", kValue)
-                } else iso.toString()
-            } ?: photoParamState.iso.displayValue
-        } else {
-            photoParamState.iso.displayValue
-        }
-        setParamText(tvValIso, isoDisplay, photoParamState.iso.isAuto)
-
-        val shutterDisplay = if (photoParamState.shutter.isAuto) {
-            previewAutoShutterNanos?.let(PhotoParamMapper::formatShutterDisplay) ?: photoParamState.shutter.displayValue
-        } else {
-            photoParamState.shutter.displayValue
-        }
-        setParamText(tvValS, shutterDisplay, photoParamState.shutter.isAuto)
-
-        val afDisplay = if (photoParamState.af.isAuto) {
-            previewAutoFocusDistance?.let(PhotoParamMapper::formatFocusDistanceDisplay) ?: photoParamState.af.displayValue
-        } else {
-            photoParamState.af.displayValue
-        }
-        setParamText(tvValAf, afDisplay, photoParamState.af.isAuto)
-    }
-
-    private fun setParamText(view: TextView, text: String, isAuto: Boolean) {
-        view.text = text
-        view.setTextColor(Color.parseColor(if (isAuto) PARAM_TEXT_AUTO_COLOR else PARAM_TEXT_MANUAL_COLOR))
-    }
-
-    private fun findClosestIndex(target: String, values: List<String>): Int {
-        val targetNum = extractNumber(target) ?: return 0
-        var minDiff = Float.MAX_VALUE
-        var bestIdx = 0
-        for (i in values.indices) {
-            val valNum = extractNumber(values[i]) ?: continue
-            val diff = abs(targetNum - valNum)
-            if (diff < minDiff) {
-                minDiff = diff
-                bestIdx = i
-            }
-        }
-        return bestIdx
-    }
-
-    private fun extractNumber(s: String): Float? {
-        return try {
-            val upper = s.uppercase(java.util.Locale.US)
-            if (upper.contains("/")) {
-                val parts = upper.replace(Regex("[^0-9./K]"), "").split("/")
-                if (parts.size == 2) {
-                    val num = parsePart(parts[0])
-                    val den = parsePart(parts[1])
-                    num / den
-                } else parsePart(parts[0])
-            } else {
-                parsePart(upper.replace(Regex("[^0-9.-K]"), ""))
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun parsePart(p: String): Float {
-        val clean = p.trim()
-        if (clean.isEmpty() || clean == "K") return 0f
-        return if (clean.endsWith("K")) {
-            clean.removeSuffix("K").toFloatOrNull()?.let { it * 1000f } ?: 0f
-        } else {
-            clean.toFloatOrNull() ?: 0f
-        }
-    }
-
-    private fun gcd(a: Int, b: Int): Int {
-        return if (b == 0) a else gcd(b, a % b)
-    }
-
-    inner class ParamController(
-        private val layoutId: Int,
-        private val tvValue: TextView,
-        private val values: List<String>,
-        private var currentIndex: Int,
-        private val key: ParamKey,
-    ) {
-        @SuppressLint("ClickableViewAccessibility")
-        fun setup() {
-            val layout = findViewById<LinearLayout>(layoutId)
-            var startY = 0f
-            val scrollSensitivity = 30f
-
-            val gestureDetector = android.view.GestureDetector(layout.context, object : android.view.GestureDetector.SimpleOnGestureListener() {
-                override fun onDoubleTap(e: MotionEvent): Boolean {
-                    onParamAutoReset(key)
-                    return true
-                }
-            })
-
-            layout.setOnTouchListener { _, event ->
-                gestureDetector.onTouchEvent(event)
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        startY = event.y
-                        val paramVal = when(key) {
-                            ParamKey.EV -> photoParamState.ev
-                            ParamKey.WB -> photoParamState.wb
-                            ParamKey.ISO -> photoParamState.iso
-                            ParamKey.SHUTTER -> photoParamState.shutter
-                            ParamKey.AF -> photoParamState.af
-                        }
-                        if (paramVal.isAuto) {
-                            val currentDisplay = when(key) {
-                                ParamKey.EV -> previewAutoCompensation?.let { compensation ->
-                                    val step = cameraCapabilities.aeCompensationStep ?: 0f
-                                    PhotoParamMapper.formatEvDisplay(compensation, step)
-                                }
-                                ParamKey.WB -> previewAutoKelvinLabel
-                                ParamKey.ISO -> previewAutoIso?.let { iso ->
-                                    if (iso >= 1000) {
-                                        val kValue = iso / 1000.0
-                                        if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dK", kValue.toInt())
-                                        else String.format(java.util.Locale.US, "%.1fK", kValue)
-                                    } else iso.toString()
-                                }
-                                ParamKey.SHUTTER -> previewAutoShutterNanos?.let(PhotoParamMapper::formatShutterDisplay)
-                                ParamKey.AF -> previewAutoFocusDistance?.let(PhotoParamMapper::formatFocusDistanceDisplay)
-                            } ?: paramVal.displayValue
-                            
-                            currentIndex = findClosestIndex(currentDisplay, values)
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val deltaY = event.y - startY
-                        if (abs(deltaY) > scrollSensitivity) {
-                            // Slide UP (deltaY < 0) increments index.
-                            // For WB/ISO/S/EV (sorted small to large), this increases value.
-                            // For AF (sorted 50 to 0), this decreases value.
-                            // This matches the requirement: AF slide up decreases, others increase.
-                            currentIndex = if (deltaY < 0) {
-                                (currentIndex + 1).coerceAtMost(values.size - 1)
-                            } else {
-                                (currentIndex - 1).coerceAtLeast(0)
-                            }
-                            onParamManualStep(key, values[currentIndex])
-                            startY = event.y
-                        }
-                        true
-                    }
-                    else -> true
-                }
-            }
-        }
+        manualParamController.refreshViews(
+            tvValEv, tvValWb, tvValIso, tvValS, tvValAf,
+            photoParamState,
+            getPreviewAutoValues()
+        )
     }
 
     private fun setupLensSelector() {
@@ -1201,34 +1026,19 @@ class MainActivity : AppCompatActivity() {
         try {
             refreshActiveCameraCharacteristics()
             refreshCameraCapabilities()
-            if (!configureImageReaders()) {
+            val characteristics = activeCameraCharacteristics ?: return
+            val handler = backgroundHandler ?: return
+
+            if (!cameraManager.configureImageReaders(characteristics, handler)) {
                 showToast("当前镜头不支持预览")
                 return
             }
-            cameraManager().openCamera(currentLogicalCameraId, stateCallback, backgroundHandler)
-        } catch (e: CameraAccessException) {
+            cameraManager.openCamera(currentLogicalCameraId, handler)
+        } catch (e: Exception) {
             showToast("打开相机失败")
         }
     }
 
-    private val stateCallback = object : CameraDevice.StateCallback() {
-        override fun onOpened(camera: CameraDevice) {
-            cameraDevice = camera
-            createCameraPreviewSession()
-        }
-
-        override fun onDisconnected(camera: CameraDevice) {
-            camera.close()
-            cameraDevice = null
-        }
-
-        override fun onError(camera: CameraDevice, error: Int) {
-            camera.close()
-            cameraDevice = null
-            showToast("相机连接失败")
-            finish()
-        }
-    }
 
     private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(
@@ -1274,15 +1084,16 @@ class MainActivity : AppCompatActivity() {
                 isStream = true
             )
             currentFlashMode.applyToRequest(builder, isStillCapture = false)
-            applyZoomToRequest(builder)
+            sessionManager.applyZoom(builder, currentZoomRatio, activeCameraCharacteristics)
         }
         resumePreview()
     }
 
     private fun createCameraPreviewSession() {
         val camera = cameraDevice ?: return
-        val rawReader = rawImageReader ?: return
-        val jpegReader = jpegImageReader ?: return
+        val rawReader = cameraManager.rawImageReader ?: return
+        val jpegReader = cameraManager.jpegImageReader ?: return
+        val handler = backgroundHandler ?: return
 
         try {
             captureSession?.close()
@@ -1324,59 +1135,23 @@ class MainActivity : AppCompatActivity() {
             previewSurface = Surface(texture)
             val surface = previewSurface ?: return
 
-            // 1. 创建带有 Session Parameters 的请求模板 (回归到 TEMPLATE_PREVIEW 以保证稳定性)
             val sessionTemplate = CameraDevice.TEMPLATE_PREVIEW
             previewRequestBuilder = camera.createCaptureRequest(sessionTemplate).apply {
                 addTarget(surface)
                 PhotoParamMapper.applyPhotoParamsToRequest(this, photoParamState, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, isStream = true)
                 currentFlashMode.applyToRequest(this, isStillCapture = false)
-                applyZoomToRequest(this)
+                sessionManager.applyZoom(this, currentZoomRatio, activeCameraCharacteristics)
             }
 
-            val previewStateCallback = object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) {
-                    if (cameraDevice == null) return
-                    captureSession = session
-                    resumePreview()
-                }
-                override fun onConfigureFailed(session: CameraCaptureSession) {
-                    android.util.Log.e("HighResAttack", "Session 配置失败！尺寸或模式可能不受支持。")
-                    showToast("高像素模式启动失败，尝试回退...")
-                }
-            }
-
-            val outputSurfaces = mutableListOf(surface, rawReader.surface, jpegReader.surface)
-            val outputConfigs = outputSurfaces.map { s ->
-                OutputConfiguration(s).apply { 
-                    currentPhysicalCameraId?.let { setPhysicalCameraId(it) }
-                    // 尝试注入 Stream Use Case 为 STILL_CAPTURE (2)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && s == rawReader.surface) {
-                        try {
-                            streamUseCase = CameraMetadata.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
-                            android.util.Log.i("HighResAttack", "成功设置 StreamUseCase = STILL_CAPTURE")
-                        } catch (e: Exception) {
-                            android.util.Log.w("HighResAttack", "设置 StreamUseCase 失败")
-                        }
-                    }
-                }
-            }
-
-            // 2. 盲测 Session 模式：使用标准模式
-            val sessionMode = SessionConfiguration.SESSION_REGULAR
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val sessionConfig = SessionConfiguration(
-                    sessionMode,
-                    outputConfigs,
-                    Executor { command -> backgroundHandler?.post(command) },
-                    previewStateCallback
-                )
-                // 3. 将注入了 Key 的请求设为 Session Parameters (部分 MTK 设备必须这样)
-                sessionConfig.sessionParameters = previewRequestBuilder!!.build()
-                camera.createCaptureSession(sessionConfig)
-            } else {
-                camera.createCaptureSession(outputSurfaces, previewStateCallback, backgroundHandler)
-            }
+            val surfaces = listOf(surface, rawReader.surface, jpegReader.surface)
+            sessionManager.createSession(
+                camera = camera,
+                surfaces = surfaces,
+                physicalCameraId = currentPhysicalCameraId,
+                initialRequest = previewRequestBuilder!!.build(),
+                backgroundHandler = handler,
+                rawSurface = rawReader.surface
+            )
         } catch (e: Exception) {
             android.util.Log.e("HighResAttack", "创建预览异常: ${e.message}")
         }
@@ -1396,7 +1171,7 @@ class MainActivity : AppCompatActivity() {
 
         val camera = cameraDevice
         val session = captureSession
-        val imageReader = rawImageReader
+        val imageReader = cameraManager.rawImageReader
         val surface = previewSurface
         if (camera == null || session == null || imageReader == null) {
             showToast("拍照尚未就绪")
@@ -1433,10 +1208,10 @@ class MainActivity : AppCompatActivity() {
         try {
             val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(targetSurface)
-                previewSurface?.let { addTarget(it) }
+                previewSurface?.let { addTarget(targetSurface) }
                 setTag(captureStartTime)
                 if (isJpgAndRaw() || (!isRawOnly() && !isPhotoMode)) { // Logic for JPG from RAW
-                     rawImageReader?.surface?.let { addTarget(it) }
+                     cameraManager.rawImageReader?.surface?.let { addTarget(it) }
                 }
                 
                 PhotoParamMapper.applyPhotoParamsToRequest(
@@ -1449,7 +1224,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 
                 currentFlashMode.applyToRequest(this, isStillCapture = true)
-                applyZoomToRequest(this)
+                sessionManager.applyZoom(this, currentZoomRatio, activeCameraCharacteristics)
                 
                 set(
                     CaptureRequest.JPEG_ORIENTATION,
@@ -1694,11 +1469,10 @@ class MainActivity : AppCompatActivity() {
                     task.cropRect, task.rotationDegrees
                 )
 
-                // 移除原有的 Kotlin 层裁剪逻辑，因为 JNI 已经处理了
                 val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                    savePngBitmap(bitmap, "", 0, task.captureStartTime) // 旋转已在 JNI 完成，传 0
+                    captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime)
                 } else {
-                    saveJpegBitmap(bitmap, 0, task.captureStartTime, captureResult) // 旋转已在 JNI 完成，传 0
+                    captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, seekbarJpgQuality.progress, characteristics, captureResult)
                 }
                 
                 updateRecentPhotoPreview(savedUri)
@@ -1767,221 +1541,15 @@ class MainActivity : AppCompatActivity() {
         val previewRequest = previewRequestBuilder?.build() ?: return
         try {
             session.setRepeatingRequest(previewRequest, previewCaptureCallback, backgroundHandler)
-        } catch (e: CameraAccessException) {
+        } catch (e: Exception) {
             showToast("恢复预览失败")
         }
     }
 
-    private fun configureImageReaders(): Boolean {
-        val characteristics = activeCameraCharacteristics ?: return false
-        val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?: return false
-        
-        // RAW - 回退到物理报告的最大尺寸，确保 Session 能够建立
-        val largestRawSize = streamMap.getOutputSizes(ImageFormat.RAW_SENSOR)
-            ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
-        
-        val rawWidth = largestRawSize?.width ?: 4080
-        val rawHeight = largestRawSize?.height ?: 3072
-
-        if (rawImageReader == null || rawImageReader!!.width != rawWidth || rawImageReader!!.height != rawHeight) {
-            rawImageReader?.close()
-            // 增加 maxImages 到 8 以支持连拍时后台保存 RAW 的压力
-            rawImageReader = ImageReader.newInstance(rawWidth, rawHeight, ImageFormat.RAW_SENSOR, 8)
-            android.util.Log.i("HighResAttack", "ImageReader 已恢复为标准尺寸: ${rawWidth}x${rawHeight}")
-        }
-        
-        rawImageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
-            android.util.Log.i("HighResAttack", "收到 RAW 图像: ts=${image.timestamp}, ${image.width}x${image.height}")
-            pendingRawImages[image.timestamp] = image
-            processPendingCaptures()
-        }, backgroundHandler)
-
-        // JPEG/YUV
-        val largestJpgSize = streamMap.getOutputSizes(ImageFormat.JPEG)
-            ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
-            ?: return false
-
-        if (jpegImageReader == null || jpegImageReader!!.width != largestJpgSize.width || jpegImageReader!!.height != largestJpgSize.height) {
-            jpegImageReader?.close()
-            jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2)
-        }
-        jpegImageReader?.setOnImageAvailableListener({ reader ->
-            reader.acquireLatestImage()?.close()
-        }, backgroundHandler)
-
-        return true
-    }
-
-    private fun saveJpegBitmap(bitmap: Bitmap, rotationDegrees: Int, timestamp: Long = System.currentTimeMillis(), captureResult: TotalCaptureResult? = null): Uri {
-        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        
-        val fileName = createPhotoDisplayName(timestamp, "jpg")
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
-            }
-        }
-
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("Failed to create MediaStore entry")
-
-        val quality = seekbarJpgQuality.progress
-        contentResolver.openOutputStream(uri)?.use { os ->
-            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
-        } ?: throw IOException("Failed to open output stream")
-        
-        // Write EXIF
-        try {
-            contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                val exif = ExifInterface(pfd.fileDescriptor)
-                writeExifMetadata(exif, rotationDegrees, captureResult)
-                exif.saveAttributes()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        
-        if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
-        return uri
-    }
-
-    private fun writeExifMetadata(exif: ExifInterface, rotation: Int, result: TotalCaptureResult?) {
-        if (result == null) return
-        val characteristics = activeCameraCharacteristics ?: return
-
-        // Basic settings
-        exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER)
-        exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL)
-        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "wCam 1.1")
-        
-        // Exposure settings
-        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) as? Int
-        val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) as? Long
-        val aperture = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
-        val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH) as? Float
-
-        iso?.let { exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString()) }
-        exposureTime?.let {
-            val exposureInSeconds = it / 1_000_000_000.0
-            exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureInSeconds.toString())
-        }
-        aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
-        focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
-        
-        // Advanced EXIF
-        val expMode = result.get(CaptureResult.CONTROL_AE_MODE) as? Int
-        val expProg = if (expMode == CaptureResult.CONTROL_AE_MODE_OFF) "1" else "2" // 1: Manual, 2: Normal
-        exif.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, expProg)
-        
-        val bias = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION) as? Int
-        val step = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
-        if (bias != null && step != null) {
-            exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, (bias * step.toFloat()).toString())
-        }
-        
-        val whiteBalance = result.get(CaptureResult.CONTROL_AWB_MODE) as? Int
-        val wbAttr = if (whiteBalance == CaptureResult.CONTROL_AWB_MODE_OFF) "1" else "0" // 1: Manual, 0: Auto
-        exif.setAttribute(ExifInterface.TAG_WHITE_BALANCE, wbAttr)
-        
-        val metering = result.get(CaptureResult.CONTROL_AE_REGIONS)
-        if (metering != null && (metering as? Array<*>)?.isNotEmpty() == true) {
-            exif.setAttribute(ExifInterface.TAG_METERING_MODE, "2") // 2: CenterWeighted (approximation)
-        } else {
-            exif.setAttribute(ExifInterface.TAG_METERING_MODE, "5") // 5: Pattern
-        }
-        
-        // Zoom and 35mm equivalent
-        val zoom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            (result.get(CaptureResult.CONTROL_ZOOM_RATIO) as? Float) ?: 1.0f
-        } else {
-            currentZoomRatio
-        }
-        exif.setAttribute(ExifInterface.TAG_DIGITAL_ZOOM_RATIO, zoom.toString())
-        
-        // Focal Length in 35mm film
-        val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-        if (sensorSize != null && focalLength != null) {
-            val diagSensor = Math.sqrt((sensorSize.width * sensorSize.width + sensorSize.height * sensorSize.height).toDouble())
-            val diag35mm = 43.27 // Diagonal of 35mm film
-            val focal35mm = (focalLength * (diag35mm / diagSensor)).toInt()
-            exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, focal35mm.toString())
-        }
-
-        // Date Time
-        val sdf = java.text.SimpleDateFormat("yyyy:MM:dd HH:mm:ss", java.util.Locale.US)
-        val now = java.util.Date()
-        exif.setAttribute(ExifInterface.TAG_DATETIME, sdf.format(now))
-        exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, sdf.format(now))
-        exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, sdf.format(now))
-        
-        // Flash
-        val flashState = result.get(CaptureResult.FLASH_STATE)
-        val flashFired = flashState == CaptureResult.FLASH_STATE_FIRED || flashState == CaptureResult.FLASH_STATE_PARTIAL
-        exif.setAttribute(ExifInterface.TAG_FLASH, if (flashFired) "1" else "0")
-        
-        // Location (if permitted)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            try {
-                val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                val loc = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) ?: 
-                          lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) ?:
-                          lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                loc?.let {
-                    exif.setLatLong(it.latitude, it.longitude)
-                    it.altitude.takeIf { alt -> alt != 0.0 }?.let { alt -> exif.setAltitude(alt) }
-                }
-            } catch (e: SecurityException) {
-                // Ignore
-            }
-        }
-    }
-
-    private fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int, timestamp: Long = System.currentTimeMillis()): Uri {
-        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        val rotatedBitmap = if (rotationDegrees != 0) {
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        } else {
-            bitmap
-        }
-        
-        val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date(timestamp))
-        val fileName = if (suffix.isEmpty()) "$ts.png" else "${ts}_$suffix.png"
-        
-        val values = android.content.ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
-            }
-        }
-
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("Failed to create MediaStore entry")
-
-        contentResolver.openOutputStream(uri)?.use { os ->
-            rotatedBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
-        } ?: throw IOException("Failed to open output stream")
-        
-        if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
-        return uri
-    }
-
-
-    private fun createPhotoDisplayName(timestampMillis: Long = System.currentTimeMillis(), extension: String): String {
-        val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US)
-        return "${formatter.format(java.util.Date(timestampMillis))}.$extension"
-    }
-
+    private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)
     private fun closeCamera() {
-        captureSession?.close()
-        captureSession = null
-        cameraDevice?.close()
-        cameraDevice = null
+        sessionManager.close()
+        cameraManager.closeCamera()
         previewSurface?.release()
         previewSurface = null
         isCaptureInProgress = false
@@ -1989,15 +1557,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun releaseImageResources() {
-        // To prevent crash when taking photo and switching modes/closing,
-        // we should ensure processing is finished before closing readers.
-        val rReader = rawImageReader
-        val jReader = jpegImageReader
-        val hReader = histogramImageReader
-        
-        rawImageReader = null
-        jpegImageReader = null
-        histogramImageReader = null
+        cameraManager.releaseReaders()
 
         captureExecutor.submit {
             pendingRawImages.values.forEach { it.close() }
@@ -2007,10 +1567,6 @@ class MainActivity : AppCompatActivity() {
             
             pendingJpegImage?.close()
             pendingJpegImage = null
-            
-            rReader?.close()
-            jReader?.close()
-            hReader?.close()
         }
     }
 
@@ -2312,7 +1868,7 @@ class MainActivity : AppCompatActivity() {
         captureStartTime = System.currentTimeMillis()
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
-        val rawReader = rawImageReader ?: return
+        val rawReader = cameraManager.rawImageReader ?: return
         val surface = previewSurface
 
         isCaptureInProgress = true
@@ -2346,7 +1902,7 @@ class MainActivity : AppCompatActivity() {
                     )
                     
                     currentFlashMode.applyToRequest(this, isStillCapture = true)
-                    applyZoomToRequest(this)
+                    sessionManager.applyZoom(this, currentZoomRatio, activeCameraCharacteristics)
                 }
 
                 session.stopRepeating()
@@ -2373,17 +1929,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun cameraManager(): CameraManager {
-        return getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    }
-
     private fun refreshActiveCameraCharacteristics() {
         activeCameraCharacteristics = try {
-            cameraManager().getCameraCharacteristics(activeMetadataCameraId()).also { characteristics ->
+            val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            manager.getCameraCharacteristics(activeMetadataCameraId()).also { characteristics ->
                 currentSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
                 currentLensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
             }
-        } catch (e: CameraAccessException) {
+        } catch (e: Exception) {
             null
         }
     }
@@ -2480,11 +2033,11 @@ class MainActivity : AppCompatActivity() {
         }.distinct().toMutableList()
         if (!afValues.contains("0")) afValues.add("0")
 
-        ParamController(R.id.layout_param_ev, tvValEv, evValues, findClosestIndex(photoParamState.ev.displayValue, evValues), ParamKey.EV).setup()
-        ParamController(R.id.layout_param_wb, tvValWb, wbValues, findClosestIndex(photoParamState.wb.displayValue, wbValues), ParamKey.WB).setup()
-        ParamController(R.id.layout_param_iso, tvValIso, isoValues, findClosestIndex(photoParamState.iso.displayValue, isoValues), ParamKey.ISO).setup()
-        ParamController(R.id.layout_param_s, tvValS, sValues, findClosestIndex(photoParamState.shutter.displayValue, sValues), ParamKey.SHUTTER).setup()
-        ParamController(R.id.layout_param_af, tvValAf, afValues, findClosestIndex(photoParamState.af.displayValue, afValues), ParamKey.AF).setup()
+        manualParamController.ParamGestureHandler(findViewById(R.id.layout_param_ev), ParamKey.EV, evValues).setup()
+        manualParamController.ParamGestureHandler(findViewById(R.id.layout_param_wb), ParamKey.WB, wbValues).setup()
+        manualParamController.ParamGestureHandler(findViewById(R.id.layout_param_iso), ParamKey.ISO, isoValues).setup()
+        manualParamController.ParamGestureHandler(findViewById(R.id.layout_param_s), ParamKey.SHUTTER, sValues).setup()
+        manualParamController.ParamGestureHandler(findViewById(R.id.layout_param_af), ParamKey.AF, afValues).setup()
     }
 
     private fun generateLogValues(min: Double, max: Double, steps: Int): List<Double> {
@@ -2494,26 +2047,9 @@ class MainActivity : AppCompatActivity() {
         return (0 until steps).map { Math.exp(logMin + it * delta) }
     }
 
-    private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)
-
-    private fun applyZoomToRequest(builder: CaptureRequest.Builder) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, currentZoomRatio)
-        } else {
-            val characteristics = activeCameraCharacteristics
-            val arrayRect = characteristics?.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-            if (arrayRect != null) {
-                val cropW = (arrayRect.width() / currentZoomRatio).toInt()
-                val cropH = (arrayRect.height() / currentZoomRatio).toInt()
-                val left = (arrayRect.width() - cropW) / 2
-                val top = (arrayRect.height() - cropH) / 2
-                builder.set(CaptureRequest.SCALER_CROP_REGION, android.graphics.Rect(left, top, left + cropW, top + cropH))
-            }
-        }
-    }
 
     private fun logAllCameraStreams() {
-        val manager = cameraManager()
+        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
         val physicalIds = listOf("2", "4", "3", "1")
         
         android.util.Log.i("CameraVideoLog", "--- 开始获取四个物理摄像头视频能力 ---")
@@ -2553,7 +2089,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun verifyHighResRawSupport() {
-        val manager = cameraManager()
+        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
         android.util.Log.i("HighResCheck", "--- 开始验证 2 亿像素 RAW 支持情况 (全量探测) ---")
         try {
             val allIds = manager.cameraIdList.toMutableList()
@@ -2611,7 +2147,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dumpVendorKeys() {
-        val manager = cameraManager()
+        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
         android.util.Log.i("VendorDeepDive", "--- 开始深度探测 Vivo/MTK 厂商私有键 (全量探测) ---")
         try {
             val allIds = manager.cameraIdList.toMutableList()
@@ -2690,6 +2226,105 @@ class MainActivity : AppCompatActivity() {
         
         matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
         textureView.setTransform(matrix)
+    }
+
+    override fun getPhotoParamState(): PhotoParamState = photoParamState
+
+    override fun getPreviewAutoValues(): ManualParamController.PreviewAutoValues {
+        return ManualParamController.PreviewAutoValues(
+            evCompensation = previewAutoCompensation,
+            evStep = cameraCapabilities.aeCompensationStep ?: 0f,
+            wbKelvin = previewAutoKelvinLabel,
+            iso = previewAutoIso,
+            shutterNanos = previewAutoShutterNanos,
+            afDistance = previewAutoFocusDistance
+        )
+    }
+
+    override fun onFlashModeChanged(mode: FlashMode) {
+        currentFlashMode = mode
+        uiController.updateFlashUi(btnFlash, currentFlashMode)
+        applyPhotoParamsToPreview()
+    }
+
+    override fun onHistogramToggle() {
+        isHistogramVisible = !isHistogramVisible
+        overlayController.setHistogramVisible(isHistogramVisible)
+        uiController.updateHistogramUi(btnHistogram, isHistogramVisible)
+        preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isHistogramVisible)
+        updateCropOverlayUI()
+    }
+
+    override fun onGridToggle() {
+        isGridVisible = !isGridVisible
+        overlayController.setGridVisible(isGridVisible)
+        uiController.updateGridUi(btnGridLines, isGridVisible)
+        preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, isGridVisible)
+    }
+
+    override fun onResolutionClick(view: View) {
+        if (isPhotoMode) {
+            showRatioPopup(view)
+        } else {
+            showVideoParamsPopup(view)
+        }
+    }
+
+    override fun onFormatPanelToggle() {
+        isFormatPanelOpen = !isFormatPanelOpen
+        if (isFormatPanelOpen) {
+            updateFormatPanelUI()
+            panelFormatSettings.visibility = View.VISIBLE
+        } else {
+            panelFormatSettings.visibility = View.GONE
+        }
+        uiController.updateFormatButtonUi(btnFormat, isFormatPanelOpen)
+    }
+
+    override fun onModeSwitch() {
+        isPhotoMode = !isPhotoMode
+        updateModeUI()
+        preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, isPhotoMode)
+        closeCamera()
+        openCamera()
+    }
+
+    override fun onModeReset() {
+        preferenceManager.clear()
+        showToast("设置已重置")
+        loadSettings()
+        closeCamera()
+        openCamera()
+    }
+
+    override fun onCameraOpened(camera: CameraDevice) {
+        cameraDevice = camera
+        createCameraPreviewSession()
+    }
+
+    override fun onCameraDisconnected() {
+        cameraDevice = null
+    }
+
+    override fun onCameraError(error: Int) {
+        cameraDevice = null
+        showToast("相机连接失败")
+        finish()
+    }
+
+    override fun onRawImageAvailable(image: Image) {
+        android.util.Log.i("HighResAttack", "收到 RAW 图像: ts=${image.timestamp}, ${image.width}x${image.height}")
+        pendingRawImages[image.timestamp] = image
+        processPendingCaptures()
+    }
+
+    override fun onSessionConfigured(session: CameraCaptureSession) {
+        captureSession = session
+        resumePreview()
+    }
+
+    override fun onSessionConfigureFailed() {
+        showToast("Session 配置失败")
     }
 
     private fun showToast(message: String) {
