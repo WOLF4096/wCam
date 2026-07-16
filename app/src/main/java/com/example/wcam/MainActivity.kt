@@ -1688,10 +1688,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                // 对于“RGB通道”模式，强制忽略旋转角度以固定 2x2 布局
+                val rotationToApply = if (task.algoKey == "RgbCh") 0 else task.rotationDegrees
+
                 val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                    savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
+                    savePngBitmap(bitmap, "", rotationToApply, task.captureStartTime)
                 } else {
-                    saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, captureResult)
+                    saveJpegBitmap(bitmap, rotationToApply, task.captureStartTime, captureResult)
                 }
                 
                 updateRecentPhotoPreview(savedUri)

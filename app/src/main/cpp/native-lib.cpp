@@ -69,8 +69,9 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
 
     try {
         if (algo == "RgbCh") {
-            // 实现 2x2 排列的高速 C++ 版 RGB 通道预览
-            // 布局：[Mixed | G] / [R | B]
+            // 目标呈现布局 (固定且不受旋转影响)：
+            // [ Mixed | G Gray ]
+            // [ R Gray | B Gray ]
             int halfW = width / 2;
             int halfH = height / 2;
 
@@ -87,7 +88,6 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                     float v11 = get_raw(p, sx + 1, sy + 1);
 
                     float rLin, gLin, bLin;
-                    // 根据拜耳阵列分配颜色 (应用 WB)
                     if (p.bayerPattern == RGGB) {
                         rLin = v00 * wb[0]; gLin = (v01 * wb[1] + v10 * wb[2]) * 0.5f; bLin = v11 * wb[3];
                     } else if (p.bayerPattern == GRBG) {
@@ -98,11 +98,9 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                         bLin = v00 * wb[3]; gLin = (v01 * wb[2] + v10 * wb[1]) * 0.5f; rLin = v11 * wb[0];
                     }
 
-                    // 2. 转换与映射 (应用 CCM, Adaptation, Tonemap)
+                    // 2. 核心色彩映射
                     uint32_t mixed = rgb_to_pixel(rLin, gLin, bLin);
 
-                    // 获取分量灰度值 (基于已完成转换的颜色)
-                    // 注意：rgb_to_pixel 返回的是 0xFFrrggbb
                     int r8 = (mixed >> 16) & 0xFF;
                     int g8 = (mixed >> 8) & 0xFF;
                     int b8 = mixed & 0xFF;
@@ -111,14 +109,14 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                     uint32_t gGray = 0xFF000000 | (g8 << 16) | (g8 << 8) | g8;
                     uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
 
-                    // 3. 填充到 2x2 结果位图
+                    // 3. 填充像素 (严格按照指定的坐标布局)
                     // 左上: Mixed
                     pixels[y * width + x] = mixed;
-                    // 右上: G
+                    // 右上: G Gray
                     pixels[y * width + (x + halfW)] = gGray;
-                    // 左下: R
+                    // 左下: R Gray
                     pixels[(y + halfH) * width + x] = rGray;
-                    // 右下: B
+                    // 右下: B Gray
                     pixels[(y + halfH) * width + (x + halfW)] = bGray;
                 }
             }
