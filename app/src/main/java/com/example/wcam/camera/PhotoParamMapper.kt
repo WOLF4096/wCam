@@ -9,6 +9,8 @@ import kotlin.math.roundToInt
 
 object PhotoParamMapper {
 
+    val SUPPORTED_KELVIN_VALUES = listOf(3200, 4000, 5200, 6000, 7000)
+
     fun formatShutterDisplay(exposureTimeNanos: Long): String {
         if (exposureTimeNanos <= 0L) return "0"
         val seconds = exposureTimeNanos / 1_000_000_000.0

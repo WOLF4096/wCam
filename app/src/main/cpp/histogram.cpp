@@ -2,7 +2,7 @@
 #include <vector>
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wcam_MainActivity_nativeCalculateHistogram(
+Java_com_example_wcam_camera_CameraStreamMonitor_nativeCalculateHistogram(
         JNIEnv* env, jobject thiz, jintArray pixelsArray, jint width, jint height,
         jintArray rHist, jintArray gHist, jintArray bHist) {
 

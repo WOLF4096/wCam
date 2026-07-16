@@ -87,6 +87,9 @@ import com.example.wcam.camera.FlashMode
 import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
 import com.example.wcam.camera.RawMediaStore
+import com.example.wcam.camera.CameraDebugger
+import com.example.wcam.camera.CameraStreamMonitor
+import com.example.wcam.camera.VideoSizeInfo
 import com.example.wcam.camera.CaptureProcessor
 import com.example.wcam.camera.CaptureSessionManager
 import com.example.wcam.camera.CameraManager as WCameraManager
@@ -100,7 +103,8 @@ class MainActivity : AppCompatActivity(),
     ManualParamController.ParamChangeListener,
     CameraUiController.UiEventListener,
     WCameraManager.CameraListener,
-    CaptureSessionManager.SessionListener {
+    CaptureSessionManager.SessionListener,
+    CameraStreamMonitor.MonitorListener {
 
     private lateinit var cameraManager: WCameraManager
     private lateinit var sessionManager: CaptureSessionManager
@@ -108,6 +112,7 @@ class MainActivity : AppCompatActivity(),
     private lateinit var uiController: CameraUiController
     private lateinit var manualParamController: ManualParamController
     private lateinit var overlayController: OverlayController
+    private lateinit var streamMonitor: CameraStreamMonitor
 
     private lateinit var textureView: TextureView
     private lateinit var btnShutter: View
@@ -223,75 +228,8 @@ class MainActivity : AppCompatActivity(),
     private var maxZoomRatio = 10.0f
     private lateinit var scaleGestureDetector: ScaleGestureDetector
 
-    private external fun nativeCalculateHistogram(
-        pixels: IntArray,
-        width: Int,
-        height: Int,
-        rHistogram: IntArray,
-        gHistogram: IntArray,
-        bHistogram: IntArray
-    )
-
-    data class VideoSizeInfo(val width: Int, val height: Int, val maxFps: Int, val isHighSpeed: Boolean = false) {
-        val ratio: Float get() = width.toFloat() / height
-        val ratioStr: String get() {
-            val common = gcd(width, height)
-            return "${height / common}:${width / common}"
-        }
-        
-        private fun gcd(a: Int, b: Int): Int {
-            return if (b == 0) a else gcd(b, a % b)
-        }
-    }
-
-    private val histogramTask = object : Runnable {
-        override fun run() {
-            if (isHistogramVisible && textureView.isAvailable) {
-                try {
-                    // Sample a small version of the preview for performance
-                    val bitmap = textureView.getBitmap(160, 120)
-                    if (bitmap != null) {
-                        val pixels = IntArray(160 * 120)
-                        bitmap.getPixels(pixels, 0, 160, 0, 0, 160, 120)
-                        
-                        val rHist = IntArray(256)
-                        val gHist = IntArray(256)
-                        val bHist = IntArray(256)
-                        
-                        nativeCalculateHistogram(pixels, 160, 120, rHist, gHist, bHist)
-                        
-                        runOnUiThread { 
-                            overlayController.updateHistogram(rHist, gHist, bHist)
-                        }
-                        bitmap.recycle()
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("HistogramDebug", "Failed to sample preview", e)
-                }
-            }
-            backgroundHandler?.postDelayed(this, 100)
-        }
-    }
 
     private var lastPreviewFrameTime = 0L
-    private val freezeWatchdog = object : Runnable {
-        override fun run() {
-            if (cameraDevice != null && lastPreviewFrameTime > 0 && !isCaptureInProgress) {
-                val diff = System.currentTimeMillis() - lastPreviewFrameTime
-                if (diff > 2000) { // 2 seconds of no frames
-                    android.util.Log.w("CameraWatchdog", "Stream frozen for $diff ms, reconnecting...")
-                    runOnUiThread {
-                        closeCamera()
-                        backgroundHandler?.postDelayed({
-                            openCamera()
-                        }, 500)
-                    }
-                    lastPreviewFrameTime = System.currentTimeMillis() // Reset to avoid loop
-                }
-            }
-            backgroundHandler?.postDelayed(this, 1000)
-        }
-    }
 
     companion object {
         private const val REQUEST_CAMERA_PERMISSION = 1
@@ -306,9 +244,9 @@ class MainActivity : AppCompatActivity(),
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        logAllCameraStreams()
-        verifyHighResRawSupport()
-        dumpVendorKeys()
+        CameraDebugger.logAllCameraStreams(this, allVideoCapabilities)
+        CameraDebugger.verifyHighResRawSupport(this)
+        CameraDebugger.dumpVendorKeys(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode =
@@ -666,6 +604,9 @@ class MainActivity : AppCompatActivity(),
         uiController = CameraUiController(this)
         manualParamController = ManualParamController(this)
         overlayController = OverlayController(viewGridLines, viewHistogram, viewCropOverlay, tvPhysicalRes)
+        
+        // Initialized with a dummy handler, will be properly post-looper in onResume
+        streamMonitor = CameraStreamMonitor(Handler(mainLooper), this)
     }
 
     private fun setupListeners() {
@@ -962,8 +903,11 @@ class MainActivity : AppCompatActivity(),
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
-        backgroundHandler?.post(histogramTask)
-        backgroundHandler?.post(freezeWatchdog)
+        val handler = backgroundHandler!!
+        
+        streamMonitor = CameraStreamMonitor(handler, this)
+        streamMonitor.start()
+        
         deviceOrientationTracker.enable()
         rawMediaStore.findLatestRecentPhotoUri()?.let(::updateRecentPhotoPreview)
         
@@ -1045,15 +989,16 @@ class MainActivity : AppCompatActivity(),
             session: CameraCaptureSession,
             request: CaptureRequest,
             result: TotalCaptureResult,
-        ) {
-            lastPreviewFrameTime = System.currentTimeMillis()
-            aeState = result.get(CaptureResult.CONTROL_AE_STATE) ?: CameraMetadata.CONTROL_AE_STATE_INACTIVE
+    ) {
+        streamMonitor.notifyFrameReceived()
+        aeState = result.get(CaptureResult.CONTROL_AE_STATE) ?: CameraMetadata.CONTROL_AE_STATE_INACTIVE
             updateAutoValuesFromResult(result)
             runOnUiThread {
                 refreshParamViews()
             }
         }
     }
+
 
     private fun updateAutoValuesFromResult(result: CaptureResult) {
         result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)?.let {
@@ -1069,7 +1014,7 @@ class MainActivity : AppCompatActivity(),
             previewAutoFocusDistance = it
         }
         result.get(CaptureResult.COLOR_CORRECTION_GAINS)?.let { gains ->
-            previewAutoKelvinLabel = PhotoParamMapper.gainsToKelvinLabel(gains, supportedKelvinValues())
+            previewAutoKelvinLabel = PhotoParamMapper.gainsToKelvinLabel(gains, PhotoParamMapper.SUPPORTED_KELVIN_VALUES)
         }
     }
 
@@ -1546,7 +1491,6 @@ class MainActivity : AppCompatActivity(),
         }
     }
 
-    private fun supportedKelvinValues(): List<Int> = listOf(3200, 4000, 5200, 6000, 7000)
     private fun closeCamera() {
         sessionManager.close()
         cameraManager.closeCamera()
@@ -2048,152 +1992,6 @@ class MainActivity : AppCompatActivity(),
     }
 
 
-    private fun logAllCameraStreams() {
-        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-        val physicalIds = listOf("2", "4", "3", "1")
-        
-        android.util.Log.i("CameraVideoLog", "--- 开始获取四个物理摄像头视频能力 ---")
-        
-        for (id in physicalIds) {
-            try {
-                val chars = manager.getCameraCharacteristics(id)
-                val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                if (map == null) continue
-
-                val capabilities = mutableListOf<VideoSizeInfo>()
-
-                // Regular video sizes
-                val videoSizes = map.getOutputSizes(android.graphics.SurfaceTexture::class.java)
-                videoSizes?.forEach { size ->
-                    val minDuration = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, size)
-                    val maxFps = if (minDuration > 0) (1_000_000_000L / minDuration).toInt() else 0
-                    capabilities.add(VideoSizeInfo(size.width, size.height, maxFps))
-                }
-
-                // High speed video sizes
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    map.highSpeedVideoSizes?.forEach { hsSize ->
-                        val hsFpsRanges = map.getHighSpeedVideoFpsRangesFor(hsSize)
-                        val maxHsFps = hsFpsRanges.maxOfOrNull { it.upper } ?: 0
-                        capabilities.add(VideoSizeInfo(hsSize.width, hsSize.height, maxHsFps, isHighSpeed = true))
-                    }
-                }
-                
-                allVideoCapabilities[id] = capabilities
-
-            } catch (e: Exception) {
-                android.util.Log.e("CameraVideoLog", "无法读取摄像头 $id 的信息: ${e.message}")
-            }
-        }
-        android.util.Log.i("CameraVideoLog", "--- 摄像头能力获取完毕 ---")
-    }
-
-    private fun verifyHighResRawSupport() {
-        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-        android.util.Log.i("HighResCheck", "--- 开始验证 2 亿像素 RAW 支持情况 (全量探测) ---")
-        try {
-            val allIds = manager.cameraIdList.toMutableList()
-            // 尝试添加用户提到的物理 ID
-            listOf("2", "3", "4", "5").forEach { if (!allIds.contains(it)) allIds.add(it) }
-
-            for (id in allIds) {
-                val chars = try {
-                    manager.getCameraCharacteristics(id)
-                } catch (e: Exception) {
-                    android.util.Log.w("HighResCheck", "无法访问摄像头 ID: $id (${e.message})")
-                    continue
-                }
-                
-                val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
-                val isUltraHighResSupported = capabilities.any { it == 16 }
-                
-                android.util.Log.i("HighResCheck", "摄像头 ID: $id")
-                android.util.Log.i("HighResCheck", "  支持等级: ${chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)}")
-                android.util.Log.i("HighResCheck", "  超高分辨率能力 (16): $isUltraHighResSupported")
-                
-                val pixelArray = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
-                android.util.Log.i("HighResCheck", "  物理像素数组尺寸 (pixelArraySize): ${pixelArray?.width} x ${pixelArray?.height}")
-
-                // 检查 Maximum Resolution Map
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val maxResMap = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP_MAXIMUM_RESOLUTION)
-                    if (maxResMap != null) {
-                        val rawSizes = maxResMap.getOutputSizes(ImageFormat.RAW_SENSOR)
-                        if (rawSizes != null && rawSizes.isNotEmpty()) {
-                            android.util.Log.i("HighResCheck", "  [MAX_RES] RAW_SENSOR 尺寸:")
-                            for (size in rawSizes) {
-                                val mp = (size.width.toLong() * size.height) / 1_000_000.0
-                                android.util.Log.i("HighResCheck", "    - ${size.width} x ${size.height} (~${String.format(java.util.Locale.US, "%.1f", mp)} MP)")
-                            }
-                        }
-                    }
-                }
-                
-                // 检查标准 Map
-                val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                val normalRawSizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR)
-                if (normalRawSizes != null && normalRawSizes.isNotEmpty()) {
-                    android.util.Log.i("HighResCheck", "  [NORMAL_RES] RAW_SENSOR 尺寸:")
-                    for (size in normalRawSizes) {
-                        val mp = (size.width.toLong() * size.height) / 1_000_000.0
-                        android.util.Log.i("HighResCheck", "    - ${size.width} x ${size.height} (~${String.format(java.util.Locale.US, "%.1f", mp)} MP)")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("HighResCheck", "验证失败: ${e.message}")
-        }
-        android.util.Log.i("HighResCheck", "--- 验证结束 ---")
-    }
-
-    private fun dumpVendorKeys() {
-        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-        android.util.Log.i("VendorDeepDive", "--- 开始深度探测 Vivo/MTK 厂商私有键 (全量探测) ---")
-        try {
-            val allIds = manager.cameraIdList.toMutableList()
-            listOf("2", "3", "4", "5").forEach { if (!allIds.contains(it)) allIds.add(it) }
-
-            for (id in allIds) {
-                val chars = try { manager.getCameraCharacteristics(id) } catch (e: Exception) { continue }
-                android.util.Log.i("VendorDeepDive", "摄像头 ID: $id")
-                
-                // 打印所有包含有趣词汇的 Characteristics 键
-                chars.keys.forEach { key ->
-                    val name = key.name
-                    if (name.contains("remosaic", true) || name.contains("highres", true) || name.contains("raw", true) || name.contains("pixel", true)) {
-                        try {
-                            val value = chars.get(key)
-                            android.util.Log.i("VendorDeepDive", "  [Char Key] $name = ${formatValue(value)}")
-                        } catch (e: Exception) {}
-                    }
-                }
-
-                // 打印所有可用的 CaptureRequest 键（包含厂商键）
-                chars.availableCaptureRequestKeys.forEach { key ->
-                    val name = key.name
-                    if (name.contains("remosaic", true) || name.contains("highres", true) || name.contains("ultra", true)) {
-                        android.util.Log.i("VendorDeepDive", "  [Request Key Found] $name")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("VendorDeepDive", "探测失败: ${e.message}")
-        }
-        android.util.Log.i("VendorDeepDive", "--- 深度探测结束 ---")
-    }
-
-    private fun formatValue(value: Any?): String {
-        return when (value) {
-            is IntArray -> value.joinToString(", ")
-            is FloatArray -> value.joinToString(", ")
-            is LongArray -> value.joinToString(", ")
-            is Array<*> -> value.joinToString(", ")
-            is android.util.Size -> "${value.width}x${value.height}"
-            is android.graphics.Rect -> "${value.left},${value.top},${value.right},${value.bottom}"
-            else -> value.toString()
-        }
-    }
-
     private fun configureTransform(viewWidth: Int, viewHeight: Int) {
         val matrix = android.graphics.Matrix()
         val viewW = textureView.width.toFloat()
@@ -2325,6 +2123,23 @@ class MainActivity : AppCompatActivity(),
 
     override fun onSessionConfigureFailed() {
         showToast("Session 配置失败")
+    }
+
+    override fun isCaptureInProgress(): Boolean = isCaptureInProgress
+    override fun isHistogramVisible(): Boolean = isHistogramVisible
+    override fun getPreviewTexture(): TextureView = textureView
+
+    override fun onStreamFrozen() {
+        runOnUiThread {
+            closeCamera()
+            backgroundHandler?.postDelayed({
+                openCamera()
+            }, 500)
+        }
+    }
+
+    override fun onHistogramUpdate(r: IntArray, g: IntArray, b: IntArray) {
+        overlayController.updateHistogram(r, g, b)
     }
 
     private fun showToast(message: String) {
