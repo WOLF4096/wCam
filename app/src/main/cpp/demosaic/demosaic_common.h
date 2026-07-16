@@ -23,11 +23,14 @@ struct DemosaicParams {
     int pixelStride;
     float* wbGains;
     float* ccm; // 新增 CCM 矩阵 (9 elements)
+    float* shadingMap; // 新增 Lens Shading Map
+    int smWidth;
+    int smHeight;
     int bayerPattern;
     int blackLevel;
     int whiteLevel;
     float normFactor;
-    // LSC Parameters
+    // LSC Parameters (旧多项式参数保留，用于兜底)
     float lscStrength;
     float opticalCenterX;
     float opticalCenterY;
@@ -50,53 +53,6 @@ inline int to_srgb(float v) {
     return (int)(gamma_lut[idx] * 255.0f);
 }
 
-inline float get_raw(const DemosaicParams& p, int x, int y) {
-    // Fast path for in-bounds
-    if (__builtin_expect(x >= 0 && x < p.width && y >= 0 && y < p.height, 1)) {
-        uint64_t offset = (uint64_t)y * (uint64_t)p.rowStride + (uint64_t)x * (uint64_t)p.pixelStride;
-        const uint8_t* ptr = p.rawData + offset;
-        uint16_t val;
-        std::memcpy(&val, ptr, 2);
-        float val_f = std::max(0.0f, (float)val - p.blackLevel);
-
-        // Apply Lens Shading Correction (LSC)
-        if (p.lscStrength > 0.0f) {
-            float dx = (float)x - p.opticalCenterX;
-            float dy = (float)y - p.opticalCenterY;
-            float distSq = dx * dx + dy * dy;
-            float r2 = distSq / p.maxDistSq;
-            float r4 = r2 * r2;
-            float r6 = r4 * r2;
-            float lscGain = 1.0f + p.lscStrength * (r2 + r4 + r6);
-            val_f *= lscGain;
-        }
-        return val_f * p.normFactor;
-    } else {
-        // Slow path for out-of-bounds
-        if (p.width <= 0 || p.height <= 0) return 0.0f;
-        int cur_x = std::clamp(x, 0, p.width - 1);
-        int cur_y = std::clamp(y, 0, p.height - 1);
-
-        uint64_t offset = (uint64_t)cur_y * (uint64_t)p.rowStride + (uint64_t)cur_x * (uint64_t)p.pixelStride;
-        const uint8_t* ptr = p.rawData + offset;
-        uint16_t val;
-        std::memcpy(&val, ptr, 2);
-        float val_f = std::max(0.0f, (float)val - p.blackLevel);
-
-        if (p.lscStrength > 0.0f) {
-            float dx = (float)cur_x - p.opticalCenterX;
-            float dy = (float)cur_y - p.opticalCenterY;
-            float distSq = dx * dx + dy * dy;
-            float r2 = distSq / p.maxDistSq;
-            float r4 = r2 * r2;
-            float r6 = r4 * r2;
-            float lscGain = 1.0f + p.lscStrength * (r2 + r4 + r6);
-            val_f *= lscGain;
-        }
-        return val_f * p.normFactor;
-    }
-}
-
 inline int get_channel_type(int x, int y, int bayerPattern) {
     // Ensure x and y are treated as positive for bitwise ops
     // 0:R, 1:Gr, 2:Gb, 3:B
@@ -109,6 +65,71 @@ inline int get_channel_type(int x, int y, int bayerPattern) {
         case BGGR: return iy ? (ix ? 0 : 1) : (ix ? 2 : 3);
         default: return (iy << 1) | ix;
     }
+}
+
+inline float get_raw(const DemosaicParams& p, int x, int y) {
+    // Fast path for in-bounds
+    int cur_x = std::clamp(x, 0, p.width - 1);
+    int cur_y = std::clamp(y, 0, p.height - 1);
+
+    uint64_t offset = (uint64_t)cur_y * (uint64_t)p.rowStride + (uint64_t)cur_x * (uint64_t)p.pixelStride;
+    const uint8_t* ptr = p.rawData + offset;
+    uint16_t val;
+    std::memcpy(&val, ptr, 2);
+    float val_f = std::max(0.0f, (float)val - p.blackLevel);
+
+    // --- 新版 LSC: 硬件 LensShadingMap 双线性插值 ---
+    if (p.shadingMap != nullptr && p.smWidth > 1 && p.smHeight > 1) {
+        // 计算在网格中的相对位置 (0.0 到 smWidth-1.0)
+        float gx = ((float)cur_x / (p.width - 1)) * (p.smWidth - 1);
+        float gy = ((float)cur_y / (p.height - 1)) * (p.smHeight - 1);
+
+        int x0 = (int)gx;
+        int y0 = (int)gy;
+        int x1 = std::min(x0 + 1, p.smWidth - 1);
+        int y1 = std::min(y0 + 1, p.smHeight - 1);
+
+        float dx = gx - x0;
+        float dy = gy - y0;
+
+        // 获取当前像素的 Bayer 通道类型 (0:R, 1:Gr, 2:Gb, 3:B)
+        int c = get_channel_type(cur_x, cur_y, p.bayerPattern);
+
+        // 从 4通道网格中提取对应通道的四个角点增益
+        auto get_gain = [&](int grid_x, int grid_y) {
+            return p.shadingMap[(grid_y * p.smWidth + grid_x) * 4 + c];
+        };
+
+        float g00 = get_gain(x0, y0);
+        float g10 = get_gain(x1, y0);
+        float g01 = get_gain(x0, y1);
+        float g11 = get_gain(x1, y1);
+
+        // 双线性插值
+        float raw_gain = (1.0f - dx) * (1.0f - dy) * g00 +
+                         dx * (1.0f - dy) * g10 +
+                         (1.0f - dx) * dy * g01 +
+                         dx * dy * g11;
+
+        // 应用用户强度系数: 1.0 + (gain - 1.0) * strength
+        // 这允许用户在 UI 上微调硬件去暗角的力度
+        float gain = 1.0f + (raw_gain - 1.0f) * p.lscStrength;
+        val_f *= gain;
+    }
+
+    // --- 兜底 LSC: 旧版多项式模型 ---
+    else if (p.lscStrength > 0.0f) {
+        float dx = (float)cur_x - p.opticalCenterX;
+        float dy = (float)cur_y - p.opticalCenterY;
+        float distSq = dx * dx + dy * dy;
+        float r2 = distSq / p.maxDistSq;
+        float r4 = r2 * r2;
+        float r6 = r4 * r2;
+        float lscGain = 1.0f + p.lscStrength * (r2 + r4 + r6);
+        val_f *= lscGain;
+    }
+
+    return val_f * p.normFactor;
 }
 
 // Get raw value with Bayer consistency: returns the nearest pixel of the same channel

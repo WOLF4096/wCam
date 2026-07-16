@@ -325,5 +325,8 @@ object PhotoParamMapper {
         } else {
             builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
         }
+
+        // 启用 Lens Shading Map 获取统计信息，用于更精准的去暗角
+        builder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON)
     }
 }

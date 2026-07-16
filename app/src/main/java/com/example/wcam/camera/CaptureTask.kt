@@ -24,7 +24,9 @@ data class CaptureTask(
 data class CaptureMetadata(
     val iso: Int,
     val wbArray: FloatArray,
-    val ccm: FloatArray, // 新增 CCM 矩阵
+    val ccm: FloatArray, // CCM 矩阵
+    val shadingMap: FloatArray?, // 新增 LensShadingMap 数据
+    val shadingMapSize: android.util.Size?, // 新增 Map 尺寸
     val bayerPattern: Int,
     val blackLevel: Int,
     val whiteLevel: Int,

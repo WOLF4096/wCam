@@ -1619,6 +1619,17 @@ class MainActivity : AppCompatActivity() {
         val wbArray = if (wbGains != null) floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
                       else floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f)
 
+        // 提取硬件 Lens Shading Map
+        val shadingMapObj = result.get(CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP)
+        val shadingMapData = if (shadingMapObj != null) {
+            val data = FloatArray(shadingMapObj.rowCount * shadingMapObj.columnCount * 4)
+            shadingMapObj.copyGainFactors(data, 0)
+            data
+        } else null
+        val shadingMapSize = if (shadingMapObj != null) {
+            android.util.Size(shadingMapObj.columnCount, shadingMapObj.rowCount)
+        } else null
+
         // 提取硬件 CCM (Color Correction Matrix)
         // 优先使用 ForwardMatrix1 (白平衡后的 Sensor RGB -> XYZ)
         val cct = chars.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1) 
@@ -1647,7 +1658,7 @@ class MainActivity : AppCompatActivity() {
             rowStride = plane.rowStride,
             pixelStride = plane.pixelStride,
             captureStartTime = timestamp,
-            metadata = CaptureMetadata(iso, wbArray, ccm, bayerPattern, blackLevel, whiteLevel, currentLsc),
+            metadata = CaptureMetadata(iso, wbArray, ccm, shadingMapData, shadingMapSize, bayerPattern, blackLevel, whiteLevel, currentLsc),
             algoKey = algoKey,
             savedFormat = format,
             rotationDegrees = rotation.degrees,
@@ -1669,7 +1680,9 @@ class MainActivity : AppCompatActivity() {
                 // 所有算法（包括 RGB 通道模式）现在统一走 JNI 流程
                 var bitmap = DemosaicEngine.processFromBuffer(
                     task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                    task.algoKey, task.metadata.wbArray, task.metadata.ccm, task.metadata.bayerPattern, 
+                    task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
+                    task.metadata.shadingMap, task.metadata.shadingMapSize,
+                    task.metadata.bayerPattern,
                     task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
                 )
 

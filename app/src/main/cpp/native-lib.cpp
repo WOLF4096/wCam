@@ -14,6 +14,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
         JNIEnv* env, jobject thiz, jobject buffer, jint width, jint height,
         jint rowStride, jint pixelStride, jintArray outputPixels,
         jstring algorithm, jfloatArray wbGainsArray, jfloatArray ccmArray,
+        jfloatArray shadingMapArray, jint smWidth, jint smHeight,
         jint bayerPattern, jint blackLevel, jint whiteLevel, jfloat lscStrength) {
 
     init_lut();
@@ -23,11 +24,13 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     jint* pixels = env->GetIntArrayElements(outputPixels, NULL);
     jfloat* wb = env->GetFloatArrayElements(wbGainsArray, NULL);
     jfloat* ccm = env->GetFloatArrayElements(ccmArray, NULL);
+    jfloat* sm = shadingMapArray ? env->GetFloatArrayElements(shadingMapArray, NULL) : nullptr;
 
     if (rawData == nullptr || pixels == nullptr || wb == nullptr || ccm == nullptr) {
         LOGE("Error: JNI memory allocation failed!");
         if (wb) env->ReleaseFloatArrayElements(wbGainsArray, wb, JNI_ABORT);
         if (ccm) env->ReleaseFloatArrayElements(ccmArray, ccm, JNI_ABORT);
+        if (sm) env->ReleaseFloatArrayElements(shadingMapArray, sm, JNI_ABORT);
         if (pixels) env->ReleaseIntArrayElements(outputPixels, pixels, 0);
         return;
     }
@@ -46,6 +49,9 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     p.pixelStride = pixelStride;
     p.wbGains = wb;
     p.ccm = ccm;
+    p.shadingMap = sm;
+    p.smWidth = smWidth;
+    p.smHeight = smHeight;
     p.bayerPattern = bayerPattern;
     p.blackLevel = blackLevel;
     p.whiteLevel = whiteLevel;
@@ -63,6 +69,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
         LOGE("Error: rawData pointer is null!");
         env->ReleaseFloatArrayElements(wbGainsArray, wb, JNI_ABORT);
         env->ReleaseFloatArrayElements(ccmArray, ccm, JNI_ABORT);
+        if (sm) env->ReleaseFloatArrayElements(shadingMapArray, sm, JNI_ABORT);
         env->ReleaseIntArrayElements(outputPixels, pixels, 0);
         return;
     }
@@ -168,6 +175,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
 
     env->ReleaseFloatArrayElements(wbGainsArray, wb, JNI_ABORT);
     env->ReleaseFloatArrayElements(ccmArray, ccm, JNI_ABORT);
+    if (sm) env->ReleaseFloatArrayElements(shadingMapArray, sm, JNI_ABORT);
     env->ReleaseIntArrayElements(outputPixels, pixels, 0);
 }
 
