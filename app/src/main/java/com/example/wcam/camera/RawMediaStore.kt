@@ -84,7 +84,34 @@ class RawMediaStore(private val context: Context) {
     fun loadThumbnailBitmap(uri: Uri): Bitmap? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
+                // 加载稍大一点的缩略图以保证中心裁剪后的清晰度
+                val source = context.contentResolver.loadThumbnail(uri, Size(512, 512), null)
+                
+                source?.let {
+                    // 计算中心 1:1 区域
+                    val minDim = Math.min(it.width, it.height)
+                    val left = (it.width - minDim) / 2
+                    val top = (it.height - minDim) / 2
+                    
+                    // 裁剪中心 1:1 区域
+                    val cropped = Bitmap.createBitmap(it, left, top, minDim, minDim)
+                    
+                    // 如果裁剪产生了新 Bitmap，则回收原始图以节省内存
+                    if (cropped != it) {
+                        it.recycle()
+                    }
+                    
+                    // 压缩/缩放到预览按钮建议的尺寸 (256x256)
+                    if (cropped.width > 256) {
+                        val scaled = Bitmap.createScaledBitmap(cropped, 256, 256, true)
+                        if (scaled != cropped) {
+                            cropped.recycle()
+                        }
+                        scaled
+                    } else {
+                        cropped
+                    }
+                }
             } else {
                 null
             }
