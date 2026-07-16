@@ -1736,39 +1736,48 @@ class MainActivity : AppCompatActivity() {
         
         if (outW <= 0 || outH <= 0) return
 
-        // 核心修改：统一 Gamma 值，确保色彩平衡
-        val gammaCommon = 2.0
-        val brightness = 1.0f; // 亮度变量
-        val contrast = 1.2f; // 对比度变量
-        val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
-        
-        fun createGammaLut(gammaPower: Double): IntArray {
-            val lut = IntArray(65536)
-            val invGamma = 1.0 / gammaPower
-            for (i in 0..65535) {
-                // 这里的 norm 只是一个归一化基准
-                val norm = ((i - blackLevel).toFloat() / range).coerceIn(0f, 1f)
-                val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
-                val gray = (gamma * 255 * brightness).toInt()
-                val contrasted = (contrast * (gray - 128) + 128).toInt().coerceIn(0, 255)
-                lut[i] = 0xFF000000.toInt() or (contrasted shl 16) or (contrasted shl 8) or contrasted
-            }
-            return lut
+        // 1. 模拟 C++ 端的 Tonemap (ACES Filmic)
+        fun tonemap(x: Float): Float {
+            if (x <= 0.0f) return 0.0f
+            val a = 2.51f; val b = 0.03f; val c = 2.43f; val d = 0.59f; val e = 0.14f
+            return (x * (a * x + b) / (x * (c * x + d) + e)).coerceIn(0.0f, 1.0f)
         }
 
-        val lut = createGammaLut(gammaCommon)
-        
-        // 提取白平衡增益
+        // 2. 模拟 C++ 端的 sRGB Gamma 转换
+        fun toSrgb(v: Float): Int {
+            val res = if (v <= 0.0031308f) 12.92f * v else 1.055f * Math.pow(v.toDouble(), 1.0 / 2.4).toFloat() - 0.055f
+            return (res * 255f).toInt().coerceIn(0, 255)
+        }
+
+        // 3. 预计算综合色彩矩阵 (CCM -> Bradford D50 to D65 -> XYZ to sRGB)
+        // [M_xyz_to_sRGB]
+        val m11 = 3.2404542f;  val m12 = -1.5371385f; val m13 = -0.4985314f
+        val m21 = -0.9692660f; val m22 = 1.8760108f;  val m23 = 0.0415560f
+        val m31 = 0.0556434f;  val m32 = -0.2040259f; val m33 = 1.0572252f
+
+        // [M_bradford_D50_to_D65]
+        val b11 = 0.9555766f;  val b12 = -0.0230393f; val b13 = 0.0631636f
+        val b21 = -0.0282895f; val b22 = 1.0099416f;  val b23 = 0.0210077f
+        val b31 = 0.0122982f;  val b32 = -0.0204830f; val b33 = 1.3299098f
+
+        // 合并 M_xyz_to_sRGB * M_bradford
+        val c11 = m11 * b11 + m12 * b21 + m13 * b31; val c12 = m11 * b12 + m12 * b22 + m13 * b32; val c13 = m11 * b13 + m12 * b23 + m13 * b33
+        val c21 = m21 * b11 + m22 * b21 + m23 * b31; val c22 = m21 * b12 + m22 * b22 + m23 * b32; val c23 = m21 * b13 + m22 * b23 + m23 * b33
+        val c31 = m31 * b11 + m32 * b21 + m33 * b31; val c32 = m31 * b12 + m32 * b22 + m33 * b32; val c33 = m31 * b13 + m32 * b23 + m33 * b33
+
+        // 提取白平衡
         val rGain = wbArray[0]
         val gGain = (wbArray[1] + wbArray[2]) / 2.0f
         val bGain = wbArray[3]
-
+        
+        val normFactor = 1.0f / (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         val opticalCenterX = sensorW / 2.0f; val opticalCenterY = sensorH / 2.0f
         val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
 
         buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
         val fullShortBuffer = buffer.asShortBuffer()
         val strideInShorts = rowStride / 2; val psInShorts = pixelStride / 2
+        
         val pixMixed = IntArray(outW * outH)
         val pixR = IntArray(outW * outH); val pixG = IntArray(outW * outH); val pixB = IntArray(outW * outH)
 
@@ -1809,35 +1818,47 @@ class MainActivity : AppCompatActivity() {
                                 3 -> { bRaw = v00; g2Raw = v01; g1Raw = v10; rRaw = v11 }
                             }
                             
-                            // 分别应用各自通道的 WB 增益
-                            val rRawProc = (rRaw - blackLevel).toFloat() * rGain * lscGain
-                            val gRawProc = ((g1Raw + g2Raw) / 2 - blackLevel).toFloat() * gGain * lscGain
-                            val bRawProc = (bRaw - blackLevel).toFloat() * bGain * lscGain
+                            // A. 基础线性校正 (扣除黑电平 -> WB -> LSC -> 归一化)
+                            val exposureBoost = 1.06f
+                            val rLin = ((rRaw - blackLevel).toFloat() * rGain * lscGain * normFactor * exposureBoost).coerceAtLeast(0f)
+                            val gLin = (((g1Raw + g2Raw) / 2f - blackLevel) * gGain * lscGain * normFactor * exposureBoost).coerceAtLeast(0f)
+                            val bLin = ((bRaw - blackLevel).toFloat() * bGain * lscGain * normFactor * exposureBoost).coerceAtLeast(0f)
 
-                            // 应用 CCM (仅对彩色混合图)
-                            val rCcm = ccm[0] * rRawProc + ccm[1] * gRawProc + ccm[2] * bRawProc
-                            val gCcm = ccm[3] * rRawProc + ccm[4] * gRawProc + ccm[5] * bRawProc
-                            val bCcm = ccm[6] * rRawProc + ccm[7] * gRawProc + ccm[8] * bRawProc
+                            // B. 硬件 CCM 转换 (Sensor to XYZ D50)
+                            val X50 = ccm[0] * rLin + ccm[1] * gLin + ccm[2] * bLin
+                            val Y50 = ccm[3] * rLin + ccm[4] * gLin + ccm[5] * bLin
+                            val Z50 = ccm[6] * rLin + ccm[7] * gLin + ccm[8] * bLin
 
-                            // 还原到 16位空间供 LUT 查找
-                            val rProc = (rCcm + blackLevel).toInt().coerceIn(0, 65535)
-                            val gProc = (gCcm + blackLevel).toInt().coerceIn(0, 65535)
-                            val bProc = (bCcm + blackLevel).toInt().coerceIn(0, 65535)
+                            // C. 合并矩阵转换 (XYZ D50 to sRGB Linear)
+                            var rr = c11 * X50 + c12 * Y50 + c13 * Z50
+                            var gg = c21 * X50 + c22 * Y50 + c23 * Z50
+                            var bb = c31 * X50 + c32 * Y50 + c33 * Z50
                             
-                            val r8 = lut[rProc] and 0xFF
-                            val g8 = lut[gProc] and 0xFF
-                            val b8 = lut[bProc] and 0xFF
+                            // D. Tonemap & Highlight Protection
+                            rr = tonemap(rr); gg = tonemap(gg); bb = tonemap(bb)
                             
-                            pixMixed[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (g8 shl 8) or b8
-                            
-                            // 灰度图保持原样（不加 CCM）以供对比
-                            val rGray = (rRawProc + blackLevel).toInt().coerceIn(0, 65535)
-                            val gGray = (gRawProc + blackLevel).toInt().coerceIn(0, 65535)
-                            val bGray = (bRawProc + blackLevel).toInt().coerceIn(0, 65535)
+                            val peak = maxOf(rr, maxOf(gg, bb))
+                            if (peak > 0.88f) {
+                                val blend = ((peak - 0.88f) / 0.12f).coerceAtMost(1.0f)
+                                val gray = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb
+                                rr = rr * (1f - blend) + gray * blend + (peak - rr) * blend * 0.8f
+                                gg = gg * (1f - blend) + gray * blend + (peak - gg) * blend * 0.8f
+                                bb = bb * (1f - blend) + gray * blend + (peak - bb) * blend * 0.8f
+                            }
 
-                            pixR[baseIdx + x] = 0xFF000000.toInt() or (lut[rGray] and 0xFF shl 16) or (lut[rGray] and 0xFF shl 8) or (lut[rGray] and 0xFF)
-                            pixG[baseIdx + x] = 0xFF000000.toInt() or (lut[gGray] and 0xFF shl 16) or (lut[gGray] and 0xFF shl 8) or (lut[gGray] and 0xFF)
-                            pixB[baseIdx + x] = 0xFF000000.toInt() or (lut[bGray] and 0xFF shl 16) or (lut[bGray] and 0xFF shl 8) or (lut[bGray] and 0xFF)
+                            // E. Final Saturation & sRGB Mapping
+                            val luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb
+                            val sat = 1.12f
+                            rr = (luma + sat * (rr - luma)).coerceIn(0f, 1f)
+                            gg = (luma + sat * (gg - luma)).coerceIn(0f, 1f)
+                            bb = (luma + sat * (bb - luma)).coerceIn(0f, 1f)
+
+                            pixMixed[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(rr) shl 16) or (toSrgb(gg) shl 8) or toSrgb(bb)
+                            
+                            // 灰度图逻辑：映射为该通道在彩色图中的贡献感
+                            pixR[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(rr) shl 16) or (toSrgb(rr) shl 8) or toSrgb(rr)
+                            pixG[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(gg) shl 16) or (toSrgb(gg) shl 8) or toSrgb(gg)
+                            pixB[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(bb) shl 16) or (toSrgb(bb) shl 8) or toSrgb(bb)
                         }
                     }
                 } finally { latch.countDown() }
