@@ -1717,7 +1717,11 @@ class MainActivity : AppCompatActivity() {
         
         if (outW <= 0 || outH <= 0) return
 
-        val gammaR = 3.0; val gammaG = 2.4; val gammaB = 2.8
+        val gammaR = 2.7;
+        val gammaG = 2.0;
+        val gammaB = 2.8;
+        val brightness = 1.4f; // 亮度变量，1.0为原始值
+        val contrast = 1.2f; // 增加对比度变量，1.0为原始值
         val range = (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
         
         fun createGammaLut(gammaPower: Double): IntArray {
@@ -1726,8 +1730,10 @@ class MainActivity : AppCompatActivity() {
             for (i in 0..65535) {
                 val norm = (((i - blackLevel).toFloat() / range) * 0.5f).coerceIn(0f, 1f)
                 val gamma = if (norm <= 0.0031308f) 12.92f * norm else (1.055f * Math.pow(norm.toDouble(), invGamma) - 0.055f).toFloat()
-                val gray = (gamma * 255).toInt().coerceIn(0, 255)
-                lut[i] = 0xFF000000.toInt() or (gray shl 16) or (gray shl 8) or gray
+                val gray = (gamma * 255 * brightness).toInt()
+                // 应用对比度调整: f(x) = contrast * (x - 128) + 128
+                val contrasted = (contrast * (gray - 128) + 128).toInt().coerceIn(0, 255)
+                lut[i] = 0xFF000000.toInt() or (contrasted shl 16) or (contrasted shl 8) or contrasted
             }
             return lut
         }
@@ -1739,6 +1745,7 @@ class MainActivity : AppCompatActivity() {
         buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
         val fullShortBuffer = buffer.asShortBuffer()
         val strideInShorts = rowStride / 2; val psInShorts = pixelStride / 2
+        val pixMixed = IntArray(outW * outH)
         val pixR = IntArray(outW * outH); val pixG = IntArray(outW * outH); val pixB = IntArray(outW * outH)
 
         val numThreads = Runtime.getRuntime().availableProcessors().coerceAtMost(8)
@@ -1779,9 +1786,15 @@ class MainActivity : AppCompatActivity() {
                                 2 -> { gbVal = v00; bVal = v01; rVal = v10; grVal = v11 }
                                 3 -> { bVal = v00; gbVal = v01; grVal = v10; rVal = v11 }
                             }
-                            pixR[baseIdx + x] = lutR[rVal]
-                            pixG[baseIdx + x] = lutG[(grVal + gbVal) / 2]
-                            pixB[baseIdx + x] = lutB[bVal]
+                            
+                            val r8 = lutR[rVal] and 0xFF
+                            val g8 = lutG[(grVal + gbVal) / 2] and 0xFF
+                            val b8 = lutB[bVal] and 0xFF
+                            
+                            pixMixed[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (g8 shl 8) or b8
+                            pixR[baseIdx + x] = 0xFF000000.toInt() or (r8 shl 16) or (r8 shl 8) or r8
+                            pixG[baseIdx + x] = 0xFF000000.toInt() or (g8 shl 16) or (g8 shl 8) or g8
+                            pixB[baseIdx + x] = 0xFF000000.toInt() or (b8 shl 16) or (b8 shl 8) or b8
                         }
                     }
                 } finally { latch.countDown() }
@@ -1789,25 +1802,31 @@ class MainActivity : AppCompatActivity() {
         }
         latch.await(); executor.shutdown()
 
+        val bmpMixed = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixMixed, 0, outW, 0, 0, outW, outH) }
         val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
         val bmpG = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixG, 0, outW, 0, 0, outW, outH) }
         val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
 
         val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val rMixed = Bitmap.createBitmap(bmpMixed, 0, 0, outW, outH, matrix, true)
         val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
         val rG = Bitmap.createBitmap(bmpG, 0, 0, outW, outH, matrix, true)
         val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
-        bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
+        bmpMixed.recycle(); bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
         
-        val combinedBitmap = Bitmap.createBitmap(rR.width * 3, rR.height, Bitmap.Config.ARGB_8888)
+        val rw = rMixed.width; val rh = rMixed.height
+        val combinedBitmap = Bitmap.createBitmap(rw * 2, rh * 2, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(combinedBitmap)
-        canvas.drawBitmap(rR, 0f, 0f, null); canvas.drawBitmap(rG, rR.width.toFloat(), 0f, null); canvas.drawBitmap(rB, (rR.width * 2).toFloat(), 0f, null)
+        canvas.drawBitmap(rMixed, 0f, 0f, null)
+        canvas.drawBitmap(rG, rw.toFloat(), 0f, null)
+        canvas.drawBitmap(rR, 0f, rh.toFloat(), null)
+        canvas.drawBitmap(rB, rw.toFloat(), rh.toFloat(), null)
 
         // Note: For RgbCh, we don't pass captureResult currently to simplify, 
         // as it doesn't support full EXIF anyway
         val uri = saveJpegBitmap(combinedBitmap, 0, timestamp, null) 
         updateRecentPhotoPreview(uri)
-        rR.recycle(); rG.recycle(); rB.recycle(); combinedBitmap.recycle()
+        rMixed.recycle(); rR.recycle(); rG.recycle(); rB.recycle(); combinedBitmap.recycle()
     }
 
     private fun finishCaptureWithError(message: String) {
