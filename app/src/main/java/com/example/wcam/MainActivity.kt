@@ -1666,20 +1666,14 @@ class MainActivity : AppCompatActivity() {
         android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - task.captureStartTime}ms")
         try {
             if (task.savedFormat != "RAW") {
-                if (task.algoKey == "RgbCh") {
-                    saveRgbChannelsFromBuffer(
-                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                        task.metadata.wbArray, task.metadata.ccm,
-                        task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, 
-                        task.rotationDegrees, task.metadata.lscStrength, task.captureStartTime
-                    )
-                } else {
-                    var bitmap = DemosaicEngine.processFromBuffer(
-                        task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                        task.algoKey, task.metadata.wbArray, task.metadata.ccm, task.metadata.bayerPattern,
-                        task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
-                    )
+                // 所有算法（包括 RGB 通道模式）现在统一走 JNI 流程
+                var bitmap = DemosaicEngine.processFromBuffer(
+                    task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                    task.algoKey, task.metadata.wbArray, task.metadata.ccm, task.metadata.bayerPattern, 
+                    task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
+                )
 
+                if (task.algoKey != "RgbCh") {
                     task.cropRect?.let { rect ->
                         val left = rect.left.coerceIn(0, bitmap.width - 1)
                         val top = rect.top.coerceIn(0, bitmap.height - 1)
@@ -1692,205 +1686,22 @@ class MainActivity : AppCompatActivity() {
                             bitmap = cropped
                         }
                     }
-
-                    val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                        savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
-                    } else {
-                        saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, captureResult)
-                    }
-                    
-                    updateRecentPhotoPreview(savedUri)
-                    bitmap.recycle()
                 }
+
+                val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
+                    savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
+                } else {
+                    saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, captureResult)
+                }
+                
+                updateRecentPhotoPreview(savedUri)
+                bitmap.recycle()
             }
 
             android.util.Log.i("CapturePerformance", "--- Task Finished Flow: ${System.currentTimeMillis() - startProcess}ms ---")
         } catch (e: Exception) {
             android.util.Log.e("CapturePerformance", "Task failed", e)
         }
-    }
-
-    private fun saveRgbChannelsFromBuffer(
-        buffer: ByteBuffer,
-        sensorW: Int,
-        sensorH: Int,
-        rowStride: Int,
-        pixelStride: Int,
-        wbArray: FloatArray,
-        ccm: FloatArray,
-        bayerPattern: Int,
-        blackLevel: Int,
-        whiteLevel: Int,
-        rotationDegrees: Int,
-        lscStrength: Float,
-        timestamp: Long
-    ) {
-        val rect = currentCropRectInSensor ?: android.graphics.Rect(0, 0, sensorW, sensorH)
-        val left = (rect.left.coerceIn(0, sensorW - 2) / 2) * 2
-        val top = (rect.top.coerceIn(0, sensorH - 2) / 2) * 2
-        val cropW = (rect.width().coerceAtMost(sensorW - left) / 2) * 2
-        val cropH = (rect.height().coerceAtMost(sensorH - top) / 2) * 2
-        
-        val outW = cropW / 2
-        val outH = cropH / 2
-        
-        if (outW <= 0 || outH <= 0) return
-
-        // 1. 模拟 C++ 端的 Tonemap (ACES Filmic)
-        fun tonemap(x: Float): Float {
-            if (x <= 0.0f) return 0.0f
-            val a = 2.51f; val b = 0.03f; val c = 2.43f; val d = 0.59f; val e = 0.14f
-            return (x * (a * x + b) / (x * (c * x + d) + e)).coerceIn(0.0f, 1.0f)
-        }
-
-        // 2. 模拟 C++ 端的 sRGB Gamma 转换
-        fun toSrgb(v: Float): Int {
-            val res = if (v <= 0.0031308f) 12.92f * v else 1.055f * Math.pow(v.toDouble(), 1.0 / 2.4).toFloat() - 0.055f
-            return (res * 255f).toInt().coerceIn(0, 255)
-        }
-
-        // 3. 预计算综合色彩矩阵 (CCM -> Bradford D50 to D65 -> XYZ to sRGB)
-        // [M_xyz_to_sRGB]
-        val m11 = 3.2404542f;  val m12 = -1.5371385f; val m13 = -0.4985314f
-        val m21 = -0.9692660f; val m22 = 1.8760108f;  val m23 = 0.0415560f
-        val m31 = 0.0556434f;  val m32 = -0.2040259f; val m33 = 1.0572252f
-
-        // [M_bradford_D50_to_D65]
-        val b11 = 0.9555766f;  val b12 = -0.0230393f; val b13 = 0.0631636f
-        val b21 = -0.0282895f; val b22 = 1.0099416f;  val b23 = 0.0210077f
-        val b31 = 0.0122982f;  val b32 = -0.0204830f; val b33 = 1.3299098f
-
-        // 合并 M_xyz_to_sRGB * M_bradford
-        val c11 = m11 * b11 + m12 * b21 + m13 * b31; val c12 = m11 * b12 + m12 * b22 + m13 * b32; val c13 = m11 * b13 + m12 * b23 + m13 * b33
-        val c21 = m21 * b11 + m22 * b21 + m23 * b31; val c22 = m21 * b12 + m22 * b22 + m23 * b32; val c23 = m21 * b13 + m22 * b23 + m23 * b33
-        val c31 = m31 * b11 + m32 * b21 + m33 * b31; val c32 = m31 * b12 + m32 * b22 + m33 * b32; val c33 = m31 * b13 + m32 * b23 + m33 * b33
-
-        // 提取白平衡
-        val rGain = wbArray[0]
-        val gGain = (wbArray[1] + wbArray[2]) / 2.0f
-        val bGain = wbArray[3]
-        
-        val normFactor = 1.0f / (whiteLevel - blackLevel).coerceAtLeast(1).toFloat()
-        val opticalCenterX = sensorW / 2.0f; val opticalCenterY = sensorH / 2.0f
-        val maxDistSq = opticalCenterX * opticalCenterX + opticalCenterY * opticalCenterY
-
-        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        val fullShortBuffer = buffer.asShortBuffer()
-        val strideInShorts = rowStride / 2; val psInShorts = pixelStride / 2
-        
-        val pixMixed = IntArray(outW * outH)
-        val pixR = IntArray(outW * outH); val pixG = IntArray(outW * outH); val pixB = IntArray(outW * outH)
-
-        val numThreads = Runtime.getRuntime().availableProcessors().coerceAtMost(8)
-        val executor = java.util.concurrent.Executors.newFixedThreadPool(numThreads)
-        val latch = java.util.concurrent.CountDownLatch(numThreads)
-        val rowsPerChunk = outH / numThreads
-
-        for (t in 0 until numThreads) {
-            val startY = t * rowsPerChunk
-            val endY = if (t == numThreads - 1) outH else (t + 1) * rowsPerChunk
-            executor.execute {
-                try {
-                    val threadBuffer = fullShortBuffer.duplicate()
-                    val row0 = ShortArray(strideInShorts); val row1 = ShortArray(strideInShorts)
-                    for (y in startY until endY) {
-                        val sensorY = top + y * 2
-                        val rO0 = sensorY * strideInShorts; val rO1 = (sensorY + 1) * strideInShorts
-                        threadBuffer.position(rO0); threadBuffer.get(row0)
-                        threadBuffer.position(rO1); threadBuffer.get(row1)
-                        val dy = sensorY - opticalCenterY; val dySq = dy * dy; val baseIdx = y * outW
-                        for (x in 0 until outW) {
-                            val sensorX = left + x * 2
-                            val dx = sensorX - opticalCenterX; val distSq = dx * dx + dySq
-                            val r2 = distSq / maxDistSq; val r4 = r2 * r2; val r6 = r4 * r2
-                            val lscGain = 1.0f + lscStrength * (r2 + r4 + r6)
-                            
-                            val v00 = row0[sensorX * psInShorts].toInt() and 0xFFFF
-                            val v01 = row0[(sensorX + 1) * psInShorts].toInt() and 0xFFFF
-                            val v10 = row1[sensorX * psInShorts].toInt() and 0xFFFF
-                            val v11 = row1[(sensorX + 1) * psInShorts].toInt() and 0xFFFF
-
-                            var rRaw = 0; var g1Raw = 0; var g2Raw = 0; var bRaw = 0
-                            when (bayerPattern) {
-                                0 -> { rRaw = v00; g1Raw = v01; g2Raw = v10; bRaw = v11 }
-                                1 -> { g1Raw = v00; rRaw = v01; bRaw = v10; g2Raw = v11 }
-                                2 -> { g1Raw = v00; bRaw = v01; rRaw = v10; g2Raw = v11 }
-                                3 -> { bRaw = v00; g2Raw = v01; g1Raw = v10; rRaw = v11 }
-                            }
-                            
-                            // A. 基础线性校正 (扣除黑电平 -> WB -> LSC -> 归一化)
-                            val exposureBoost = 1.06f
-                            val rLin = ((rRaw - blackLevel).toFloat() * rGain * lscGain * normFactor * exposureBoost).coerceAtLeast(0f)
-                            val gLin = (((g1Raw + g2Raw) / 2f - blackLevel) * gGain * lscGain * normFactor * exposureBoost).coerceAtLeast(0f)
-                            val bLin = ((bRaw - blackLevel).toFloat() * bGain * lscGain * normFactor * exposureBoost).coerceAtLeast(0f)
-
-                            // B. 硬件 CCM 转换 (Sensor to XYZ D50)
-                            val X50 = ccm[0] * rLin + ccm[1] * gLin + ccm[2] * bLin
-                            val Y50 = ccm[3] * rLin + ccm[4] * gLin + ccm[5] * bLin
-                            val Z50 = ccm[6] * rLin + ccm[7] * gLin + ccm[8] * bLin
-
-                            // C. 合并矩阵转换 (XYZ D50 to sRGB Linear)
-                            var rr = c11 * X50 + c12 * Y50 + c13 * Z50
-                            var gg = c21 * X50 + c22 * Y50 + c23 * Z50
-                            var bb = c31 * X50 + c32 * Y50 + c33 * Z50
-                            
-                            // D. Tonemap & Highlight Protection
-                            rr = tonemap(rr); gg = tonemap(gg); bb = tonemap(bb)
-                            
-                            val peak = maxOf(rr, maxOf(gg, bb))
-                            if (peak > 0.88f) {
-                                val blend = ((peak - 0.88f) / 0.12f).coerceAtMost(1.0f)
-                                val gray = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb
-                                rr = rr * (1f - blend) + gray * blend + (peak - rr) * blend * 0.8f
-                                gg = gg * (1f - blend) + gray * blend + (peak - gg) * blend * 0.8f
-                                bb = bb * (1f - blend) + gray * blend + (peak - bb) * blend * 0.8f
-                            }
-
-                            // E. Final Saturation & sRGB Mapping
-                            val luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb
-                            val sat = 1.12f
-                            rr = (luma + sat * (rr - luma)).coerceIn(0f, 1f)
-                            gg = (luma + sat * (gg - luma)).coerceIn(0f, 1f)
-                            bb = (luma + sat * (bb - luma)).coerceIn(0f, 1f)
-
-                            pixMixed[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(rr) shl 16) or (toSrgb(gg) shl 8) or toSrgb(bb)
-                            
-                            // 灰度图逻辑：映射为该通道在彩色图中的贡献感
-                            pixR[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(rr) shl 16) or (toSrgb(rr) shl 8) or toSrgb(rr)
-                            pixG[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(gg) shl 16) or (toSrgb(gg) shl 8) or toSrgb(gg)
-                            pixB[baseIdx + x] = 0xFF000000.toInt() or (toSrgb(bb) shl 16) or (toSrgb(bb) shl 8) or toSrgb(bb)
-                        }
-                    }
-                } finally { latch.countDown() }
-            }
-        }
-        latch.await(); executor.shutdown()
-
-        val bmpMixed = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixMixed, 0, outW, 0, 0, outW, outH) }
-        val bmpR = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixR, 0, outW, 0, 0, outW, outH) }
-        val bmpG = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixG, 0, outW, 0, 0, outW, outH) }
-        val bmpB = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply { setPixels(pixB, 0, outW, 0, 0, outW, outH) }
-
-        val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        val rMixed = Bitmap.createBitmap(bmpMixed, 0, 0, outW, outH, matrix, true)
-        val rR = Bitmap.createBitmap(bmpR, 0, 0, outW, outH, matrix, true)
-        val rG = Bitmap.createBitmap(bmpG, 0, 0, outW, outH, matrix, true)
-        val rB = Bitmap.createBitmap(bmpB, 0, 0, outW, outH, matrix, true)
-        bmpMixed.recycle(); bmpR.recycle(); bmpG.recycle(); bmpB.recycle()
-        
-        val rw = rMixed.width; val rh = rMixed.height
-        val combinedBitmap = Bitmap.createBitmap(rw * 2, rh * 2, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(combinedBitmap)
-        canvas.drawBitmap(rMixed, 0f, 0f, null)
-        canvas.drawBitmap(rG, rw.toFloat(), 0f, null)
-        canvas.drawBitmap(rR, 0f, rh.toFloat(), null)
-        canvas.drawBitmap(rB, rw.toFloat(), rh.toFloat(), null)
-
-        // Note: For RgbCh, we don't pass captureResult currently to simplify, 
-        // as it doesn't support full EXIF anyway
-        val uri = saveJpegBitmap(combinedBitmap, 0, timestamp, null) 
-        updateRecentPhotoPreview(uri)
-        rMixed.recycle(); rR.recycle(); rG.recycle(); rB.recycle(); combinedBitmap.recycle()
     }
 
     private fun finishCaptureWithError(message: String) {

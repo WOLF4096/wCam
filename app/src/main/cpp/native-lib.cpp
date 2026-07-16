@@ -68,7 +68,61 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     }
 
     try {
-        if (algo == "None") {
+        if (algo == "RgbCh") {
+            // 实现 2x2 排列的高速 C++ 版 RGB 通道预览
+            // 布局：[Mixed | G] / [R | B]
+            int halfW = width / 2;
+            int halfH = height / 2;
+
+            #pragma omp parallel for schedule(dynamic, 16)
+            for (int y = 0; y < halfH; ++y) {
+                for (int x = 0; x < halfW; ++x) {
+                    // 1. 获取 2x2 原始像素块
+                    int sx = x * 2;
+                    int sy = y * 2;
+
+                    float v00 = get_raw(p, sx, sy);
+                    float v01 = get_raw(p, sx + 1, sy);
+                    float v10 = get_raw(p, sx, sy + 1);
+                    float v11 = get_raw(p, sx + 1, sy + 1);
+
+                    float rLin, gLin, bLin;
+                    // 根据拜耳阵列分配颜色 (应用 WB)
+                    if (p.bayerPattern == RGGB) {
+                        rLin = v00 * wb[0]; gLin = (v01 * wb[1] + v10 * wb[2]) * 0.5f; bLin = v11 * wb[3];
+                    } else if (p.bayerPattern == GRBG) {
+                        gLin = (v00 * wb[1] + v11 * wb[2]) * 0.5f; rLin = v01 * wb[0]; bLin = v10 * wb[3];
+                    } else if (p.bayerPattern == GBRG) {
+                        gLin = (v00 * wb[2] + v11 * wb[1]) * 0.5f; bLin = v01 * wb[3]; rLin = v10 * wb[0];
+                    } else { // BGGR
+                        bLin = v00 * wb[3]; gLin = (v01 * wb[2] + v10 * wb[1]) * 0.5f; rLin = v11 * wb[0];
+                    }
+
+                    // 2. 转换与映射 (应用 CCM, Adaptation, Tonemap)
+                    uint32_t mixed = rgb_to_pixel(rLin, gLin, bLin);
+
+                    // 获取分量灰度值 (基于已完成转换的颜色)
+                    // 注意：rgb_to_pixel 返回的是 0xFFrrggbb
+                    int r8 = (mixed >> 16) & 0xFF;
+                    int g8 = (mixed >> 8) & 0xFF;
+                    int b8 = mixed & 0xFF;
+
+                    uint32_t rGray = 0xFF000000 | (r8 << 16) | (r8 << 8) | r8;
+                    uint32_t gGray = 0xFF000000 | (g8 << 16) | (g8 << 8) | g8;
+                    uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
+
+                    // 3. 填充到 2x2 结果位图
+                    // 左上: Mixed
+                    pixels[y * width + x] = mixed;
+                    // 右上: G
+                    pixels[y * width + (x + halfW)] = gGray;
+                    // 左下: R
+                    pixels[(y + halfH) * width + x] = rGray;
+                    // 右下: B
+                    pixels[(y + halfH) * width + (x + halfW)] = bGray;
+                }
+            }
+        } else if (algo == "None") {
             #pragma omp parallel for schedule(dynamic, 16)
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
