@@ -72,21 +72,23 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
 
     try {
         if (algo == "RgbCh") {
-            int gridW = rotW * 2;
+            int gridW = rotW;
+            int halfRotW = rotW / 2;
+            int halfRotH = rotH / 2;
+            int halfCropW = cropWidth / 2;
+            int halfCropH = cropHeight / 2;
+
             #pragma omp parallel for schedule(dynamic, 16)
-            for (int y = 0; y < cropHeight; ++y) {
-                for (int x = 0; x < cropWidth; ++x) {
+            for (int y = 0; y < cropHeight; y += 2) {
+                for (int x = 0; x < cropWidth; x += 2) {
                     int sx = cropLeft + x;
                     int sy = cropTop + y;
 
-                    // 核心采样 (对齐 2x2 块以获取 RGB)
-                    int bx = (sx / 2) * 2;
-                    int by = (sy / 2) * 2;
-
-                    float v00 = get_raw(p, bx, by);
-                    float v01 = get_raw(p, bx + 1, by);
-                    float v10 = get_raw(p, bx, by + 1);
-                    float v11 = get_raw(p, bx + 1, by + 1);
+                    // 直接采样 2x2 块以获取完整的 RGB 信息
+                    float v00 = get_raw(p, sx, sy);
+                    float v01 = get_raw(p, sx + 1, sy);
+                    float v10 = get_raw(p, sx, sy + 1);
+                    float v11 = get_raw(p, sx + 1, sy + 1);
 
                     float rLin, gLin, bLin;
                     if (p.bayerPattern == RGGB) {
@@ -106,12 +108,13 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                     uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
 
                     int tx, ty;
-                    get_rotated_idx(x, y, cropWidth, cropHeight, rotation, tx, ty);
+                    // 对降采样后的坐标 (x/2, y/2) 应用旋转
+                    get_rotated_idx(x / 2, y / 2, halfCropW, halfCropH, rotation, tx, ty);
 
                     pixels[ty * gridW + tx] = mixed;
-                    pixels[ty * gridW + (tx + rotW)] = gGray;
-                    pixels[(ty + rotH) * gridW + tx] = rGray;
-                    pixels[(ty + rotH) * gridW + (tx + rotW)] = bGray;
+                    pixels[ty * gridW + (tx + halfRotW)] = gGray;
+                    pixels[(ty + halfRotH) * gridW + tx] = rGray;
+                    pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;
                 }
             }
         } else {

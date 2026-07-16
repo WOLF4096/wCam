@@ -62,16 +62,8 @@ object DemosaicEngine {
         val resW: Int
         val resH: Int
         
-        if (algorithm == "RgbCh") {
-            // RGB通道模式：2x2 排列，每个格子的尺寸是旋转后的裁剪尺寸
-            val rotW = if (rotation % 180 == 0) cropW else cropH
-            val rotH = if (rotation % 180 == 0) cropH else cropW
-            resW = rotW * 2
-            resH = rotH * 2
-        } else {
-            resW = if (rotation % 180 == 0) cropW else cropH
-            resH = if (rotation % 180 == 0) cropH else cropW
-        }
+        resW = if (rotation % 180 == 0) cropW else cropH
+        resH = if (rotation % 180 == 0) cropH else cropW
         
         val bitmap = Bitmap.createBitmap(resW, resH, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(resW * resH)
