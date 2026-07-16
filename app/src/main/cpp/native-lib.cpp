@@ -15,12 +15,11 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
         jint rowStride, jint pixelStride, jintArray outputPixels,
         jstring algorithm, jfloatArray wbGainsArray, jfloatArray ccmArray,
         jfloatArray shadingMapArray, jint smWidth, jint smHeight,
-        jint bayerPattern, jint blackLevel, jint whiteLevel, jfloat lscStrength) {
+        jint bayerPattern, jint blackLevel, jint whiteLevel, jfloat lscStrength,
+        jint cropLeft, jint cropTop, jint cropWidth, jint cropHeight, jint rotation) {
 
     init_lut();
     uint8_t* rawData = (uint8_t*)env->GetDirectBufferAddress(buffer);
-    jlong rawDataSize = env->GetDirectBufferCapacity(buffer);
-
     jint* pixels = env->GetIntArrayElements(outputPixels, NULL);
     jfloat* wb = env->GetFloatArrayElements(wbGainsArray, NULL);
     jfloat* ccm = env->GetFloatArrayElements(ccmArray, NULL);
@@ -38,8 +37,6 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     const char* algo_str = env->GetStringUTFChars(algorithm, NULL);
     std::string algo(algo_str ? algo_str : "Fast");
     if (algo_str) env->ReleaseStringUTFChars(algorithm, algo_str);
-
-    LOGD("Native processing started with algorithm: %s, size: %lld", algo.c_str(), rawDataSize);
 
     DemosaicParams p;
     p.rawData = rawData;
@@ -63,36 +60,33 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     float diff = (float)(whiteLevel - blackLevel);
     p.normFactor = (diff > 0) ? (1.0f / diff) : 1.0f;
 
-    LOGD("Demosaic parameters: W=%d, H=%d, RS=%d, PS=%d, rawData=%p", width, height, rowStride, pixelStride, rawData);
+    auto get_rotated_idx = [&](int x, int y, int w, int h, int rot, int& outX, int& outY) {
+        if (rot == 90) { outX = h - 1 - y; outY = x; }
+        else if (rot == 180) { outX = w - 1 - x; outY = h - 1 - y; }
+        else if (rot == 270) { outX = y; outY = w - 1 - x; }
+        else { outX = x; outY = y; }
+    };
 
-    if (rawData == nullptr) {
-        LOGE("Error: rawData pointer is null!");
-        env->ReleaseFloatArrayElements(wbGainsArray, wb, JNI_ABORT);
-        env->ReleaseFloatArrayElements(ccmArray, ccm, JNI_ABORT);
-        if (sm) env->ReleaseFloatArrayElements(shadingMapArray, sm, JNI_ABORT);
-        env->ReleaseIntArrayElements(outputPixels, pixels, 0);
-        return;
-    }
+    int rotW = (rotation % 180 == 0) ? cropWidth : cropHeight;
+    int rotH = (rotation % 180 == 0) ? cropHeight : cropWidth;
 
     try {
         if (algo == "RgbCh") {
-            // 目标呈现布局 (固定且不受旋转影响)：
-            // [ Mixed | G Gray ]
-            // [ R Gray | B Gray ]
-            int halfW = width / 2;
-            int halfH = height / 2;
-
+            int gridW = rotW * 2;
             #pragma omp parallel for schedule(dynamic, 16)
-            for (int y = 0; y < halfH; ++y) {
-                for (int x = 0; x < halfW; ++x) {
-                    // 1. 获取 2x2 原始像素块
-                    int sx = x * 2;
-                    int sy = y * 2;
+            for (int y = 0; y < cropHeight; ++y) {
+                for (int x = 0; x < cropWidth; ++x) {
+                    int sx = cropLeft + x;
+                    int sy = cropTop + y;
 
-                    float v00 = get_raw(p, sx, sy);
-                    float v01 = get_raw(p, sx + 1, sy);
-                    float v10 = get_raw(p, sx, sy + 1);
-                    float v11 = get_raw(p, sx + 1, sy + 1);
+                    // 核心采样 (对齐 2x2 块以获取 RGB)
+                    int bx = (sx / 2) * 2;
+                    int by = (sy / 2) * 2;
+
+                    float v00 = get_raw(p, bx, by);
+                    float v01 = get_raw(p, bx + 1, by);
+                    float v10 = get_raw(p, bx, by + 1);
+                    float v11 = get_raw(p, bx + 1, by + 1);
 
                     float rLin, gLin, bLin;
                     if (p.bayerPattern == RGGB) {
@@ -105,73 +99,66 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                         bLin = v00 * wb[3]; gLin = (v01 * wb[2] + v10 * wb[1]) * 0.5f; rLin = v11 * wb[0];
                     }
 
-                    // 2. 核心色彩映射
                     uint32_t mixed = rgb_to_pixel(rLin, gLin, bLin);
-
-                    int r8 = (mixed >> 16) & 0xFF;
-                    int g8 = (mixed >> 8) & 0xFF;
-                    int b8 = mixed & 0xFF;
-
+                    int r8 = (mixed >> 16) & 0xFF, g8 = (mixed >> 8) & 0xFF, b8 = mixed & 0xFF;
                     uint32_t rGray = 0xFF000000 | (r8 << 16) | (r8 << 8) | r8;
                     uint32_t gGray = 0xFF000000 | (g8 << 16) | (g8 << 8) | g8;
                     uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
 
-                    // 3. 填充像素 (严格按照指定的坐标布局)
-                    // 左上: Mixed
-                    pixels[y * width + x] = mixed;
-                    // 右上: G Gray
-                    pixels[y * width + (x + halfW)] = gGray;
-                    // 左下: R Gray
-                    pixels[(y + halfH) * width + x] = rGray;
-                    // 右下: B Gray
-                    pixels[(y + halfH) * width + (x + halfW)] = bGray;
+                    int tx, ty;
+                    get_rotated_idx(x, y, cropWidth, cropHeight, rotation, tx, ty);
+
+                    pixels[ty * gridW + tx] = mixed;
+                    pixels[ty * gridW + (tx + rotW)] = gGray;
+                    pixels[(ty + rotH) * gridW + tx] = rGray;
+                    pixels[(ty + rotH) * gridW + (tx + rotW)] = bGray;
                 }
             }
-        } else if (algo == "None") {
-            #pragma omp parallel for schedule(dynamic, 16)
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    float val = get_raw(p, x, y);
-                    int v = to_srgb(val);
-                    int channel = get_channel_type(x, y, bayerPattern);
-                    if (channel == 0) pixels[y * width + x] = 0xFF000000 | (v << 16);
-                    else if (channel == 1 || channel == 2) pixels[y * width + x] = 0xFF000000 | (v << 8);
-                    else pixels[y * width + x] = 0xFF000000 | v;
-                }
-            }
-        } else if (algo == "Mono") {
-            #pragma omp parallel for schedule(dynamic, 16)
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    float val = get_raw(p, x, y);
-                    int v = to_srgb(val);
-                    pixels[y * width + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
-                }
-            }
-        } else if (algo == "Fast") {
-            demosaic_bilinear(p, pixels);
-        } else if (algo == "AHD" || algo == "EAHD" || algo == "HPHD") {
-            demosaic_ahd(p, pixels);
-        } else if (algo == "VNG4") {
-            demosaic_vng(p, pixels);
-        } else if (algo == "RCD") {
-            demosaic_rcd(p, pixels);
-        } else if (algo == "AMaZE") {
-            demosaic_amaze(p, pixels);
-        } else if (algo == "LMMSE") {
-            demosaic_lmmse(p, pixels);
-        } else if (algo == "DCB") {
-            demosaic_dcb(p, pixels);
-        } else if (algo == "IGV") {
-            demosaic_ahd(p, pixels);
         } else {
-            demosaic_bilinear(p, pixels); // Default fallback
+            // 对其他算法，先执行完整解拜耳到临时缓冲区，再进行裁剪旋转
+            // 这种方式能保证边缘质量
+            std::vector<uint32_t> temp(width * height);
+            if (algo == "None") {
+                #pragma omp parallel for schedule(dynamic, 16)
+                for (int y = 0; y < height; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        float val = get_raw(p, x, y);
+                        int v = to_srgb(val);
+                        int channel = get_channel_type(x, y, bayerPattern);
+                        if (channel == 0) temp[y * width + x] = 0xFF000000 | (v << 16);
+                        else if (channel == 1 || channel == 2) temp[y * width + x] = 0xFF000000 | (v << 8);
+                        else temp[y * width + x] = 0xFF000000 | v;
+                    }
+                }
+            } else if (algo == "Mono") {
+                #pragma omp parallel for schedule(dynamic, 16)
+                for (int y = 0; y < height; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        float val = get_raw(p, x, y);
+                        int v = to_srgb(val);
+                        temp[y * width + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
+                    }
+                }
+            } else if (algo == "Fast") { demosaic_bilinear(p, (int*)temp.data()); }
+            else if (algo == "AHD" || algo == "EAHD" || algo == "HPHD") { demosaic_ahd(p, (int*)temp.data()); }
+            else if (algo == "VNG4") { demosaic_vng(p, (int*)temp.data()); }
+            else if (algo == "RCD") { demosaic_rcd(p, (int*)temp.data()); }
+            else if (algo == "AMaZE") { demosaic_amaze(p, (int*)temp.data()); }
+            else if (algo == "LMMSE") { demosaic_lmmse(p, (int*)temp.data()); }
+            else if (algo == "DCB") { demosaic_dcb(p, (int*)temp.data()); }
+            else { demosaic_bilinear(p, (int*)temp.data()); }
+
+            // 裁剪旋转到输出
+            #pragma omp parallel for schedule(dynamic, 16)
+            for (int y = 0; y < cropHeight; ++y) {
+                for (int x = 0; x < cropWidth; ++x) {
+                    int tx, ty;
+                    get_rotated_idx(x, y, cropWidth, cropHeight, rotation, tx, ty);
+                    pixels[ty * rotW + tx] = temp[(cropTop + y) * width + (cropLeft + x)];
+                }
+            }
         }
-    } catch (const std::exception& e) {
-        LOGE("Native exception: %s", e.what());
-    } catch (...) {
-        LOGE("Unknown native exception occurred!");
-    }
+    } catch (...) { LOGE("Unknown native exception!"); }
 
     env->ReleaseFloatArrayElements(wbGainsArray, wb, JNI_ABORT);
     env->ReleaseFloatArrayElements(ccmArray, ccm, JNI_ABORT);

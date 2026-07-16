@@ -1677,37 +1677,21 @@ class MainActivity : AppCompatActivity() {
         android.util.Log.d("CapturePerformance", "Processing Thread Start: ${System.currentTimeMillis() - task.captureStartTime}ms")
         try {
             if (task.savedFormat != "RAW") {
-                // 所有算法（包括 RGB 通道模式）现在统一走 JNI 流程
+                // 所有算法现在统一走 JNI 流程，包含裁剪和旋转
                 var bitmap = DemosaicEngine.processFromBuffer(
                     task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
                     task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
                     task.metadata.shadingMap, task.metadata.shadingMapSize,
                     task.metadata.bayerPattern,
-                    task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength
+                    task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
+                    task.cropRect, task.rotationDegrees
                 )
 
-                if (task.algoKey != "RgbCh") {
-                    task.cropRect?.let { rect ->
-                        val left = rect.left.coerceIn(0, bitmap.width - 1)
-                        val top = rect.top.coerceIn(0, bitmap.height - 1)
-                        val width = rect.width().coerceAtMost(bitmap.width - left)
-                        val height = rect.height().coerceAtMost(bitmap.height - top)
-                        
-                        if (width > 0 && height > 0) {
-                            val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
-                            bitmap.recycle()
-                            bitmap = cropped
-                        }
-                    }
-                }
-
-                // 对于“RGB通道”模式，强制忽略旋转角度以固定 2x2 布局
-                val rotationToApply = if (task.algoKey == "RgbCh") 0 else task.rotationDegrees
-
+                // 移除原有的 Kotlin 层裁剪逻辑，因为 JNI 已经处理了
                 val savedUri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                    savePngBitmap(bitmap, "", rotationToApply, task.captureStartTime)
+                    savePngBitmap(bitmap, "", 0, task.captureStartTime) // 旋转已在 JNI 完成，传 0
                 } else {
-                    saveJpegBitmap(bitmap, rotationToApply, task.captureStartTime, captureResult)
+                    saveJpegBitmap(bitmap, 0, task.captureStartTime, captureResult) // 旋转已在 JNI 完成，传 0
                 }
                 
                 updateRecentPhotoPreview(savedUri)

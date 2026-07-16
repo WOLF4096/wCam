@@ -20,33 +20,19 @@ object DemosaicEngine {
         algorithm: String,
         wbGainsArray: FloatArray,
         ccmArray: FloatArray,
-        shadingMap: FloatArray?, // 新增
-        shadingMapWidth: Int,     // 新增
-        shadingMapHeight: Int,    // 新增
-        bayerPattern: Int,
-        blackLevel: Int,
-        whiteLevel: Int,
-        lscStrength: Float
-    )
-
-    fun process(
-        image: Image,
-        algorithm: String,
-        wbGains: FloatArray,
-        ccm: FloatArray,
         shadingMap: FloatArray?,
-        shadingMapSize: android.util.Size?,
+        smWidth: Int,
+        smHeight: Int,
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
-        lscStrength: Float = 0.0f
-    ): Bitmap {
-        val plane = image.planes[0]
-        return processFromBuffer(
-            plane.buffer, image.width, image.height, plane.rowStride, plane.pixelStride,
-            algorithm, wbGains, ccm, shadingMap, shadingMapSize, bayerPattern, blackLevel, whiteLevel, lscStrength
-        )
-    }
+        lscStrength: Float,
+        cropLeft: Int,      // 新增
+        cropTop: Int,       // 新增
+        cropWidth: Int,     // 新增
+        cropHeight: Int,    // 新增
+        rotation: Int       // 新增
+    )
 
     fun processFromBuffer(
         buffer: ByteBuffer,
@@ -62,16 +48,33 @@ object DemosaicEngine {
         bayerPattern: Int,
         blackLevel: Int,
         whiteLevel: Int,
-        lscStrength: Float = 0.0f
+        lscStrength: Float = 0.0f,
+        cropRect: android.graphics.Rect? = null, // 新增
+        rotation: Int = 0 // 新增
     ): Bitmap {
-        Log.d("DemosaicEngine", "Algo: $algorithm, WB: ${wbGains.joinToString()}, BL: $blackLevel, WL: $whiteLevel, LSC: $lscStrength, Map: ${shadingMapSize?.width}x${shadingMapSize?.height}")
+        val cRect = cropRect ?: android.graphics.Rect(0, 0, width, height)
+        // 确保坐标在范围内并对齐 2x2
+        val left = (cRect.left.coerceIn(0, width - 2) / 2) * 2
+        val top = (cRect.top.coerceIn(0, height - 2) / 2) * 2
+        val cropW = (cRect.width().coerceAtMost(width - left) / 2) * 2
+        val cropH = (cRect.height().coerceAtMost(height - top) / 2) * 2
         
-        if (!buffer.isDirect) {
-            throw IllegalArgumentException("Image buffer must be direct")
+        val resW: Int
+        val resH: Int
+        
+        if (algorithm == "RgbCh") {
+            // RGB通道模式：2x2 排列，每个格子的尺寸是旋转后的裁剪尺寸
+            val rotW = if (rotation % 180 == 0) cropW else cropH
+            val rotH = if (rotation % 180 == 0) cropH else cropW
+            resW = rotW * 2
+            resH = rotH * 2
+        } else {
+            resW = if (rotation % 180 == 0) cropW else cropH
+            resH = if (rotation % 180 == 0) cropH else cropW
         }
         
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(width * height)
+        val bitmap = Bitmap.createBitmap(resW, resH, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(resW * resH)
         
         try {
             nativeProcess(
@@ -79,14 +82,15 @@ object DemosaicEngine {
                 pixels, algorithm, wbGains, ccm, 
                 shadingMap, shadingMapSize?.width ?: 0, shadingMapSize?.height ?: 0,
                 bayerPattern, blackLevel, whiteLevel,
-                lscStrength
+                lscStrength,
+                left, top, cropW, cropH, rotation
             )
         } catch (e: Exception) {
             Log.e("DemosaicEngine", "Native process failed", e)
             throw e
         }
         
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+        bitmap.setPixels(pixels, 0, resW, 0, 0, resW, resH)
         return bitmap
     }
 }
