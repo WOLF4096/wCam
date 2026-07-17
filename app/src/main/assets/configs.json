@@ -21,6 +21,7 @@
       "default_max_diopter": 50.0,
       "default_logical_camera_id": "0",
       "default_physical_camera_id": "2",
+      "lens_order": ["前置", "广角", "主摄", "长焦"],
       "cameras": [
         {
           "id": "2",

@@ -245,8 +245,9 @@ class MainActivity : AppCompatActivity(),
 
         streamMonitor = CameraStreamMonitor(android.os.Handler(mainLooper), config, this)
         gestureManager = GestureManager(this, this)
-        lensController = LensController(LensController.LensButtons(binding.lensSelector.btnLensFront, binding.lensSelector.btnLensWide, binding.lensSelector.btnLensMain, binding.lensSelector.btnLensTele), this)
-        lensController.setupLenses(config.getCameras())
+        
+        lensController = LensController(binding.lensSelector.lensSelectorContainer, this)
+        lensController.setupLenses(config.getCameras(), config.getStringList("lens_order"))
 
         aspectController = AspectRatioController(this, preferenceManager, overlayController, this)
         galleryController = GalleryController(this, binding.bottomActionBar.btnGallery, rawMediaStore, java.util.concurrent.Executors.newSingleThreadExecutor()) { runnable -> runOnUiThread(runnable) }

@@ -68,6 +68,17 @@ class ConfigManager(context: Context) {
         return list
     }
 
+    fun getStringList(key: String): List<String> {
+        val list = mutableListOf<String>()
+        val array = currentDeviceConfig?.optJSONArray(key) ?: defaultConfig?.optJSONArray(key)
+        if (array != null) {
+            for (i in 0 until array.length()) {
+                list.add(array.getString(i))
+            }
+        }
+        return list
+    }
+
     fun getCameras(): List<CameraConfig> {
         val list = mutableListOf<CameraConfig>()
         val array = currentDeviceConfig?.optJSONArray("cameras")
