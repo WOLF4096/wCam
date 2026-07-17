@@ -20,13 +20,29 @@ import kotlin.math.roundToInt
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 
+import android.content.Context
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+
 /**
  * Handles image processing, metadata writing, and saving to MediaStore.
  */
 class CaptureProcessor(
-    private val contentResolver: ContentResolver,
+    private val context: Context,
     private val rawMediaStore: RawMediaStore
 ) {
+    private val contentResolver = context.contentResolver
+    private var softwareName: String = "wCam"
+
+    init {
+        try {
+            val pInfo: PackageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val appName = context.applicationInfo.loadLabel(context.packageManager).toString()
+            softwareName = "$appName ${pInfo.versionName}"
+        } catch (e: Exception) {
+            Log.e("CaptureProcessor", "Failed to get version info", e)
+        }
+    }
 
     fun saveRawImage(image: Image, chars: CameraCharacteristics, result: TotalCaptureResult, exifOrientation: Int, location: android.location.Location?, wallTime: Long): Uri {
         return rawMediaStore.saveRawImage(image, chars, result, exifOrientation, location, wallTime)
@@ -118,14 +134,15 @@ class CaptureProcessor(
 
         exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER)
         exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL)
-        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "wCam 1.1")
+        exif.setAttribute(ExifInterface.TAG_SOFTWARE, softwareName)
         
         val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
         val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
         val aperture = result.get(CaptureResult.LENS_APERTURE) ?: characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
-        val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH)
+        val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH) ?: characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
         val evIndex = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)
         val evStep = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat()
+        val flashState = result.get(CaptureResult.FLASH_STATE)
 
         iso?.let {
             val isoStr = it.toString()
@@ -137,13 +154,8 @@ class CaptureProcessor(
         exposureTime?.let {
             if (it > 0) {
                 val exposureInSeconds = it / 1_000_000_000.0
-                // Use a more compatible rational string format for exposure time
-                if (exposureInSeconds < 1.0) {
-                    val denominator = (1.0 / exposureInSeconds).roundToInt()
-                    exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, "1/$denominator")
-                } else {
-                    exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.format(Locale.US, "%.1f", exposureInSeconds))
-                }
+                // Use decimal format for better compatibility (e.g., 0.008)
+                exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.format(Locale.US, "%.6f", exposureInSeconds))
             }
         }
         
@@ -154,6 +166,15 @@ class CaptureProcessor(
             val ev = evIndex * evStep
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, String.format(Locale.US, "%.1f", ev))
         }
+
+        // Flash fired check: 0=off, 1=fired
+        val flashFired = if (flashState != null) {
+            flashState == CaptureResult.FLASH_STATE_FIRED || flashState == CaptureResult.FLASH_STATE_PARTIAL
+        } else {
+            // Fallback: check request if result missing
+            false
+        }
+        exif.setAttribute(ExifInterface.TAG_FLASH, if (flashFired) "1" else "0")
         
         // Date Time
         val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)

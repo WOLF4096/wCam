@@ -238,7 +238,7 @@ class MainActivity : AppCompatActivity(),
     private fun initControllers() {
         cameraManager = WCameraManager(this, this)
         sessionManager = CaptureSessionManager(this)
-        captureProcessor = CaptureProcessor(contentResolver, rawMediaStore)
+        captureProcessor = CaptureProcessor(this, rawMediaStore)
         uiController = CameraUiController(this, this)
         manualParamController = ManualParamController(this)
         overlayController = OverlayController(binding.viewGridLines, binding.viewHistogram, binding.viewCropOverlay, binding.tvPhysicalRes)

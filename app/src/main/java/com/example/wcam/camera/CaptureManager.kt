@@ -253,18 +253,19 @@ class CaptureManager(
 
     private fun executeCaptureTask(task: CaptureTask, chars: CameraCharacteristics, result: TotalCaptureResult) {
         try {
+            // Produce a non-rotated bitmap from the engine, then rotate in Java for better compatibility
             val bitmap = DemosaicEngine.processFromBuffer(
                 task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
                 task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
                 task.metadata.shadingMap, task.metadata.shadingMapSize,
                 task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
-                task.cropRect, task.rotationDegrees
+                task.cropRect, 0 // No rotation in engine
             )
 
             val uri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime)
+                captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
             } else {
-                captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
+                captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
             }
             
             listener.onCaptureCompleted(uri)
