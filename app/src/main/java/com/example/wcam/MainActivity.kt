@@ -522,6 +522,7 @@ class MainActivity : AppCompatActivity(),
     }
     override fun onZoomChanged(scale: Float) { 
         aspectController.setCropScale(scale)
+        viewModel.setZoomRatio(aspectController.getZoomRatio())
         updateCropOverlayUI() 
     }
     override fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) { uiController.showStyledPopup(anchor, options, onSelected) }
@@ -540,18 +541,8 @@ class MainActivity : AppCompatActivity(),
     }
 
     override fun onLensSelected(logicalId: String, physicalId: String?) {
-        if (currentLogicalCameraId == logicalId && currentPhysicalCameraId == physicalId) {
-            // Same lens clicked, toggle zoom between 1.0x and 2.0x
-            val newZoom = if (viewModel.zoomRatio.value == 1.0f) 2.0f else 1.0f
-            coordinator.setZoom(newZoom)
-            viewModel.setZoomRatio(newZoom)
-            applyPhotoParamsToPreview()
-            showToast("Zoom: ${newZoom}x")
-        } else {
-            // New lens selected, reset zoom to 1.0x
+        if (currentLogicalCameraId != logicalId || currentPhysicalCameraId != physicalId) {
             currentLogicalCameraId = logicalId; currentPhysicalCameraId = physicalId
-            viewModel.setZoomRatio(1.0f)
-            coordinator.setZoom(1.0f)
 
             saveCurrentLensSettings(); lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
             if (!viewModel.isPhotoMode.value) updateVideoParamsForNewLens()
