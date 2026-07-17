@@ -33,7 +33,7 @@ class AspectRatioController(
     private var customRatioH = 3
 
     fun setCropScale(scale: Float) {
-        cropScale = scale
+        cropScale = (cropScale * scale).coerceIn(0.1f, 1.0f)
     }
 
     fun updateCropUI(isPhotoMode: Boolean, activeChars: CameraCharacteristics?, selectedVideoSize: String, selectedVideoFps: Int): Rect? {

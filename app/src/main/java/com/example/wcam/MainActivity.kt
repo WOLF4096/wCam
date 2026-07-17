@@ -345,7 +345,15 @@ class MainActivity : AppCompatActivity(),
         } catch (e: Exception) { showToast(getString(R.string.toast_camera_open_failed)) }
     }
 
-    private fun closeCamera() { sessionManager.close(); cameraManager.closeCamera(); previewSurface?.release(); previewSurface = null; releaseImageResources() }
+    private fun closeCamera() { 
+        sessionManager.close()
+        cameraManager.closeCamera()
+        previewSurface?.release()
+        previewSurface = null
+        captureSession = null
+        previewRequestBuilder = null
+        releaseImageResources() 
+    }
 
     private fun releaseImageResources() { cameraManager.releaseReaders(); captureManager.release() }
 
@@ -442,9 +450,9 @@ class MainActivity : AppCompatActivity(),
     override fun onStreamFrozen() { runOnUiThread { closeCamera(); backgroundHandler?.postDelayed({ openCamera() }, 500) } }
     override fun onHistogramUpdate(r: IntArray, g: IntArray, b: IntArray) { overlayController.updateHistogram(r, g, b) }
     override fun onCaptureStarted(shutterNanos: Long) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = false; uiController.startShutterCountdown(shutterNanos, binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown) } }
-    override fun onCaptureCompleted(uri: Uri?) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); uri?.let { galleryController.updateRecentPhotoPreview(it) } } }
+    override fun onCaptureCompleted(uri: Uri?) { runOnUiThread { uri?.let { galleryController.updateRecentPhotoPreview(it) } } }
     override fun onCaptureFailed(message: String) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); showToast(message) } }
-    override fun onReadyToResumePreview() { runOnUiThread { resumePreview() } }
+    override fun onReadyToResumePreview() { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); resumePreview() } }
     override fun onSingleTap(x: Float, y: Float) { binding.viewFocusRing.x = x - binding.viewFocusRing.width / 2; binding.viewFocusRing.y = y - binding.viewFocusRing.height / 2 + binding.cameraPreview.top; binding.viewFocusRing.visibility = View.VISIBLE; binding.viewFocusRing.alpha = 1f; binding.viewFocusRing.scaleX = 1.2f; binding.viewFocusRing.scaleY = 1.2f; binding.viewFocusRing.animate().scaleX(1f).scaleY(1f).alpha(0.5f).setDuration(300).withEndAction { binding.viewFocusRing.postDelayed({ binding.viewFocusRing.visibility = View.GONE }, 1000) }.start(); sessionManager.triggerFocusAndMetering(x, y, binding.cameraPreview, activeCameraCharacteristics, previewRequestBuilder, backgroundHandler, previewCaptureCallback); resumePreview() }
     override fun onLongPress() { isAeAfLocked = !isAeAfLocked; sessionManager.toggleAeAfLock(isAeAfLocked, previewRequestBuilder); showToast(if (isAeAfLocked) getString(R.string.ae_af_locked) else getString(R.string.ae_af_unlocked)); applyPhotoParamsToPreview() }
     override fun onZoomChanged(scale: Float) { aspectController.setCropScale(scale); updateCropOverlayUI() }
