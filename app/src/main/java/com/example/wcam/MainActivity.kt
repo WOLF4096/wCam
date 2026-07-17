@@ -1,8 +1,6 @@
 ﻿package com.example.wcam
 
-import android.Manifest
 import android.annotation.SuppressLint
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
@@ -10,27 +8,20 @@ import android.hardware.camera2.*
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.media.Image
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 import android.view.MotionEvent
-import android.view.Surface
 import android.view.TextureView
 import android.view.View
-import android.view.ViewGroup
 import android.widget.*
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -38,35 +29,28 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.wcam.camera.*
-import com.example.wcam.camera.CameraManager as WCameraManager
 import com.example.wcam.databinding.ActivityMainBinding
 import com.example.wcam.ui.*
-import com.example.wcam.util.PermissionManager
+import com.example.wcam.util.PermissionHelper
 import com.example.wcam.viewmodel.CameraViewModel
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity(),
     ManualParamController.ParamChangeListener,
     CameraUiController.UiEventListener,
-    WCameraManager.CameraListener,
-    CaptureSessionManager.SessionListener,
     CameraStreamMonitor.MonitorListener,
-    CaptureManager.CaptureListener,
     GestureManager.GestureListener,
     LensController.LensListener,
     AspectRatioController.AspectRatioListener,
-    LocationListener {
+    LocationListener,
+    CameraCoordinator.CoordinatorListener {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: CameraViewModel by viewModels()
 
-    private lateinit var cameraManager: WCameraManager
-    private lateinit var sessionManager: CaptureSessionManager
-    private lateinit var captureManager: CaptureManager
-    private lateinit var captureProcessor: CaptureProcessor
+    private lateinit var coordinator: CameraCoordinator
+    private lateinit var permissionHelper: PermissionHelper
+    
     private lateinit var uiController: CameraUiController
     private lateinit var manualParamController: ManualParamController
     private lateinit var overlayController: OverlayController
@@ -79,15 +63,6 @@ class MainActivity : AppCompatActivity(),
     private var locationManager: LocationManager? = null
     private var lastLocation: Location? = null
 
-    private var cameraDevice: CameraDevice? = null
-    private var captureSession: CameraCaptureSession? = null
-    private var previewRequestBuilder: CaptureRequest.Builder? = null
-    private var previewSurface: Surface? = null
-
-    private var backgroundThread: HandlerThread? = null
-    private var backgroundHandler: Handler? = null
-    private lateinit var captureExecutor: ExecutorService
-
     private lateinit var formatPanelController: FormatPanelController
     private lateinit var rawMediaStore: RawMediaStore
     private lateinit var preferenceManager: PreferenceManager
@@ -95,7 +70,6 @@ class MainActivity : AppCompatActivity(),
 
     private var currentLogicalCameraId = "0"
     private var currentPhysicalCameraId: String? = "2"
-    private var activeCameraCharacteristics: CameraCharacteristics? = null
     private var previewAutoIso: Int? = null
     private var previewAutoShutterNanos: Long? = null
     private var previewAutoCompensation: Int? = null
@@ -111,14 +85,23 @@ class MainActivity : AppCompatActivity(),
     private var selectedVideoFps: Int = 30
     private var selectedVideoBitrate: Float = 20.0f
     private var allVideoCapabilities = mutableMapOf<String, List<VideoSizeInfo>>()
-    private var aeState = CameraMetadata.CONTROL_AE_STATE_INACTIVE
     private var isAeAfLocked = false
     private var cropRatio = 4f / 3f
     private var maxZoomRatio = 10.0f
     private var currentCropRectInSensor: Rect? = null
 
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        if (permissions.all { it.value }) {
+            initApp()
+            if (binding.cameraPreview.isAvailable) openCamera()
+            else binding.cameraPreview.surfaceTextureListener = surfaceTextureListener
+        } else {
+            showToast(getString(R.string.toast_camera_permission_required))
+            finish()
+        }
+    }
+
     companion object {
-        private const val REQUEST_CAMERA_PERMISSION = 1
         init { System.loadLibrary("wcam") }
     }
 
@@ -128,6 +111,16 @@ class MainActivity : AppCompatActivity(),
         setContentView(binding.root)
         enableEdgeToEdge()
 
+        permissionHelper = PermissionHelper(this)
+        
+        if (permissionHelper.hasAllPermissions()) {
+            initApp()
+        } else {
+            permissionHelper.requestPermissions(permissionLauncher)
+        }
+    }
+
+    private fun initApp() {
         CameraDebugger.logDetailedCameraInfo(this)
         CameraDebugger.logAllCameraStreams(this, allVideoCapabilities)
         CameraDebugger.verifyHighResRawSupport(this)
@@ -153,7 +146,7 @@ class MainActivity : AppCompatActivity(),
 
     @SuppressLint("MissingPermission")
     private fun startLocationUpdates() {
-        if (PermissionManager.hasAllRequiredPermissions(this)) {
+        if (permissionHelper.hasAllPermissions()) {
             try {
                 locationManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5000L, 10f, this)
                 locationManager?.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 5000L, 10f, this)
@@ -183,9 +176,9 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun handleOnResume() {
-        startBackgroundThread()
+        coordinator.start()
         startLocationUpdates()
-        streamMonitor = CameraStreamMonitor(backgroundHandler!!, this)
+        streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), this)
         streamMonitor.start()
         deviceOrientationTracker.enable()
         galleryController.getRecentUri() ?: rawMediaStore.findLatestRecentPhotoUri()?.let { galleryController.updateRecentPhotoPreview(it) }
@@ -200,8 +193,7 @@ class MainActivity : AppCompatActivity(),
     private fun handleOnPause() {
         deviceOrientationTracker.disable()
         stopLocationUpdates()
-        closeCamera()
-        stopBackgroundThread()
+        coordinator.stop()
     }
 
     private fun observeViewModel() {
@@ -237,22 +229,21 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun initControllers() {
-        cameraManager = WCameraManager(this, this)
-        sessionManager = CaptureSessionManager(this)
-        captureProcessor = CaptureProcessor(this, rawMediaStore)
+        val captureProcessor = CaptureProcessor(this, rawMediaStore)
+        coordinator = CameraCoordinator(this, viewModel, preferenceManager, captureProcessor, this)
+        
         uiController = CameraUiController(this, this)
         manualParamController = ManualParamController(this)
         overlayController = OverlayController(binding.viewGridLines, binding.viewHistogram, binding.viewCropOverlay, binding.tvPhysicalRes)
-        streamMonitor = CameraStreamMonitor(Handler(mainLooper), this)
-        captureManager = CaptureManager(cameraManager, captureProcessor, preferenceManager, Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()), Handler(mainLooper), this)
+        streamMonitor = CameraStreamMonitor(android.os.Handler(mainLooper), this)
         gestureManager = GestureManager(this, this)
         lensController = LensController(LensController.LensButtons(binding.lensSelector.btnLensFront, binding.lensSelector.btnLensWide, binding.lensSelector.btnLensMain, binding.lensSelector.btnLensTele), this)
         aspectController = AspectRatioController(this, preferenceManager, overlayController, this)
-        galleryController = GalleryController(this, binding.bottomActionBar.btnGallery, rawMediaStore, Executors.newSingleThreadExecutor()) { runnable -> runOnUiThread(runnable) }
+        galleryController = GalleryController(this, binding.bottomActionBar.btnGallery, rawMediaStore, java.util.concurrent.Executors.newSingleThreadExecutor()) { runnable -> runOnUiThread(runnable) }
     }
 
     private fun setupListeners() {
-        binding.bottomActionBar.btnShutter.setOnClickListener { capturePhoto() }
+        binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
         binding.topToolbar.btnFlash.setOnClickListener { view ->
             uiController.showStyledPopup(view, listOf(getString(R.string.flash_off), getString(R.string.flash_on), getString(R.string.flash_torch))) { selected ->
                 val mode = when (selected) { getString(R.string.flash_on) -> FlashMode.SINGLE; getString(R.string.flash_torch) -> FlashMode.TORCH; else -> FlashMode.OFF }
@@ -360,7 +351,7 @@ class MainActivity : AppCompatActivity(),
                         selectedVideoSizeStr = res; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, res); changed = true
                     }
                     if (selectedVideoBitrate != bitrateMbps.toFloat()) { selectedVideoBitrate = bitrateMbps.toFloat(); preferenceManager.saveFloat(PreferenceManager.KEY_VIDEO_BITRATE, selectedVideoBitrate) }
-                    if (changed) { runOnUiThread { binding.topToolbar.btnResolution.text = selectedVideoRatioStr; updateFormatPanelUI() }; closeCamera(); openCamera() }
+                    if (changed) { runOnUiThread { binding.topToolbar.btnResolution.text = selectedVideoRatioStr; updateFormatPanelUI() }; openCamera() }
                 }
                 override fun getVideoCapabilities(): List<Any> = caps
                 override fun getCurrentRatio(): String = selectedVideoRatioStr
@@ -369,51 +360,37 @@ class MainActivity : AppCompatActivity(),
         }
     }
 
-    private fun capturePhoto() {
-        val cam = cameraDevice ?: return; val ses = captureSession ?: return; val surf = previewSurface ?: return
-        captureManager.capturePhoto(cam, ses, surf)
-    }
-
-    @SuppressLint("MissingPermission")
     private fun openCamera() {
-        if (!PermissionManager.hasAllRequiredPermissions(this)) { ActivityCompat.requestPermissions(this, PermissionManager.getRequiredPermissions(), REQUEST_CAMERA_PERMISSION); return }
-        try {
-            refreshActiveCameraCharacteristics(); refreshCameraCapabilities()
-            val chars = activeCameraCharacteristics ?: return; val handler = backgroundHandler ?: return
-            if (!cameraManager.configureImageReaders(chars, handler)) { showToast(getString(R.string.toast_preview_not_supported)); return }
-            cameraManager.openCamera(currentLogicalCameraId, handler)
-        } catch (e: Exception) { showToast(getString(R.string.toast_camera_open_failed)) }
+        if (!permissionHelper.hasAllPermissions()) {
+            permissionHelper.requestPermissions(permissionLauncher)
+            return
+        }
+        coordinator.openCamera(currentLogicalCameraId, currentPhysicalCameraId)
     }
 
-    private fun closeCamera() { 
-        sessionManager.close()
-        cameraManager.closeCamera()
-        previewSurface?.release()
-        previewSurface = null
-        captureSession = null
-        previewRequestBuilder = null
-        releaseImageResources() 
+    private fun applyPhotoParamsToPreview() {
+        coordinator.getPreviewRequestBuilder()?.let {
+            PhotoParamMapper.applyPhotoParamsToRequest(it, viewModel.photoParamState.value, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, true)
+            viewModel.currentFlashMode.value.applyToRequest(it, false)
+            // Zoom logic would go here if needed in coordinator
+        }
+        resumePreview()
     }
-
-    private fun releaseImageResources() { cameraManager.releaseReaders(); captureManager.release() }
 
     private fun resumePreview() {
-        val ses = captureSession ?: return; val req = previewRequestBuilder?.build() ?: return
-        try { ses.setRepeatingRequest(req, previewCaptureCallback, backgroundHandler) } catch (e: Exception) { showToast(getString(R.string.toast_preview_resume_failed)) }
+        coordinator.resumePreview(previewCaptureCallback)
     }
 
-    private fun updateCropOverlayUI() { currentCropRectInSensor = aspectController.updateCropUI(viewModel.isPhotoMode.value, activeCameraCharacteristics, selectedVideoSizeStr, selectedVideoFps) }
+    private fun updateCropOverlayUI() { currentCropRectInSensor = aspectController.updateCropUI(viewModel.isPhotoMode.value, coordinator.getActiveCharacteristics(), selectedVideoSizeStr, selectedVideoFps) }
 
-    private fun refreshActiveCameraCharacteristics() {
-        activeCameraCharacteristics = try { (getSystemService(CAMERA_SERVICE) as CameraManager).getCameraCharacteristics(activeMetadataCameraId()).also { currentSensorOrientation = it.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0; currentLensFacing = it.get(CameraCharacteristics.LENS_FACING) } } catch (e: Exception) { null }
-    }
-
-    private fun refreshCameraCapabilities() {
-        val chars = activeCameraCharacteristics ?: run { cameraCapabilities = CameraCapabilities.EMPTY; return }
-        val caps = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toSet().orEmpty()
-        cameraCapabilities = CameraCapabilities(chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE), chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat(), chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE), chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE), chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE), caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR), chars.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)?.toSet().orEmpty().contains(CameraMetadata.CONTROL_AWB_MODE_OFF), chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList())
-        currentFlashSupported = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
-        maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 10f else chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 10f
+    private fun refreshCameraCapabilities(characteristics: CameraCharacteristics) {
+        val caps = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toSet().orEmpty()
+        cameraCapabilities = CameraCapabilities(characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE), characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat(), characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE), characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE), characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE), caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR), characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)?.toSet().orEmpty().contains(CameraMetadata.CONTROL_AWB_MODE_OFF), characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList())
+        currentFlashSupported = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
+        maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 10f else characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 10f
+        currentSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        currentLensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+        
         runOnUiThread { reapplyRestoredManualValues(); setupDynamicParamGestures(); updateCropOverlayUI() }
     }
 
@@ -475,31 +452,31 @@ class MainActivity : AppCompatActivity(),
     override fun onModeSwitch() {
         viewModel.setPhotoMode(!viewModel.isPhotoMode.value)
         preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, viewModel.isPhotoMode.value)
-        closeCamera(); openCamera()
+        coordinator.closeCamera(); openCamera()
     }
-    override fun onModeReset() { preferenceManager.clear(); showToast(getString(R.string.toast_settings_reset)); loadSettings(); closeCamera(); openCamera() }
-    override fun onCameraOpened(camera: CameraDevice) { cameraDevice = camera; createCameraPreviewSession() }
-    override fun onCameraDisconnected() { cameraDevice = null }
-    override fun onCameraError(error: Int) { cameraDevice = null; showToast(getString(R.string.toast_camera_connection_failed)); finish() }
-    override fun onRawImageAvailable(image: Image) { captureManager.onRawImageAvailable(image) }
-    override fun onSessionConfigured(session: CameraCaptureSession) { captureSession = session; resumePreview() }
-    override fun onSessionConfigureFailed() { showToast(getString(R.string.toast_session_config_failed)) }
-    override fun isCaptureInProgress(): Boolean = captureManager.isCaptureInProgress
-    override fun isHistogramVisible(): Boolean = viewModel.isHistogramVisible.value
-    override fun getPreviewTexture(): TextureView = binding.cameraPreview
-    override fun onStreamFrozen() { runOnUiThread { closeCamera(); backgroundHandler?.postDelayed({ openCamera() }, 500) } }
-    override fun onHistogramUpdate(r: IntArray, g: IntArray, b: IntArray) { overlayController.updateHistogram(r, g, b) }
+    override fun onModeReset() { preferenceManager.clear(); showToast(getString(R.string.toast_settings_reset)); loadSettings(); coordinator.closeCamera(); openCamera() }
+    
+    // CoordinatorListener implementation
+    override fun onCameraOpened(characteristics: CameraCharacteristics) {
+        refreshCameraCapabilities(characteristics)
+    }
+
+    override fun onSessionConfigured() {
+        resumePreview()
+    }
+
+    override fun onPreviewReady(size: Size) {
+        runOnUiThread { configureTransform(size.width, size.height) }
+    }
+
     override fun onCaptureStarted(shutterNanos: Long) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = false; uiController.startShutterCountdown(shutterNanos, binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown) } }
     override fun onCaptureCompleted(uri: Uri?) { runOnUiThread { uri?.let { galleryController.updateRecentPhotoPreview(it) } } }
     override fun onCaptureFailed(message: String) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); showToast(message) } }
     override fun onReadyToResumePreview() { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); resumePreview() } }
-    override fun onSingleTap(x: Float, y: Float) { binding.viewFocusRing.x = x - binding.viewFocusRing.width / 2; binding.viewFocusRing.y = y - binding.viewFocusRing.height / 2 + binding.cameraPreview.top; binding.viewFocusRing.visibility = View.VISIBLE; binding.viewFocusRing.alpha = 1f; binding.viewFocusRing.scaleX = 1.2f; binding.viewFocusRing.scaleY = 1.2f; binding.viewFocusRing.animate().scaleX(1f).scaleY(1f).alpha(0.5f).setDuration(300).withEndAction { binding.viewFocusRing.postDelayed({ binding.viewFocusRing.visibility = View.GONE }, 1000) }.start(); sessionManager.triggerFocusAndMetering(x, y, binding.cameraPreview, activeCameraCharacteristics, previewRequestBuilder, backgroundHandler, previewCaptureCallback); resumePreview() }
-    override fun onLongPress() { isAeAfLocked = !isAeAfLocked; sessionManager.toggleAeAfLock(isAeAfLocked, previewRequestBuilder); showToast(if (isAeAfLocked) getString(R.string.ae_af_locked) else getString(R.string.ae_af_unlocked)); applyPhotoParamsToPreview() }
-    override fun onZoomChanged(scale: Float) { aspectController.setCropScale(scale); updateCropOverlayUI() }
-    override fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) { uiController.showStyledPopup(anchor, options, onSelected) }
-    override fun getActiveCameraCharacteristics(): CameraCharacteristics? = activeCameraCharacteristics
-    override fun getFlashMode(): FlashMode = viewModel.currentFlashMode.value
-    override fun getZoomRatio(): Float = viewModel.zoomRatio.value
+    override fun onError(message: String) { showToast(message) }
+    override fun getPreviewTexture(): TextureView = binding.cameraPreview
+
+    // State getters for Coordinator
     override fun getDeviceRotationDegrees(): Int = deviceOrientationTracker.deviceRotationDegrees
     override fun getSensorOrientation(): Int = currentSensorOrientation
     override fun getLensFacing(): Int? = currentLensFacing
@@ -508,8 +485,28 @@ class MainActivity : AppCompatActivity(),
     override fun getCameraCapabilities(): CameraCapabilities = cameraCapabilities
     override fun getLocation(): Location? = lastLocation
 
+    override fun onStreamFrozen() { runOnUiThread { coordinator.closeCamera(); android.os.Handler(mainLooper).postDelayed({ openCamera() }, 500) } }
+    override fun onHistogramUpdate(r: IntArray, g: IntArray, b: IntArray) { overlayController.updateHistogram(r, g, b) }
+    override fun isHistogramVisible(): Boolean = viewModel.isHistogramVisible.value
+    override fun isCaptureInProgress(): Boolean = coordinator.isCaptureInProgress()
+
+    override fun onSingleTap(x: Float, y: Float) { 
+        binding.viewFocusRing.x = x - binding.viewFocusRing.width / 2; binding.viewFocusRing.y = y - binding.viewFocusRing.height / 2 + binding.cameraPreview.top; binding.viewFocusRing.visibility = View.VISIBLE; binding.viewFocusRing.alpha = 1f; binding.viewFocusRing.scaleX = 1.2f; binding.viewFocusRing.scaleY = 1.2f; binding.viewFocusRing.animate().scaleX(1f).scaleY(1f).alpha(0.5f).setDuration(300).withEndAction { binding.viewFocusRing.postDelayed({ binding.viewFocusRing.visibility = View.GONE }, 1000) }.start()
+        coordinator.triggerFocus(x, y, binding.cameraPreview, previewCaptureCallback)
+        resumePreview()
+    }
+    
+    override fun onLongPress() { 
+        isAeAfLocked = !isAeAfLocked
+        coordinator.toggleAeAfLock(isAeAfLocked)
+        showToast(if (isAeAfLocked) getString(R.string.ae_af_locked) else getString(R.string.ae_af_unlocked))
+        applyPhotoParamsToPreview() 
+    }
+    override fun onZoomChanged(scale: Float) { aspectController.setCropScale(scale); updateCropOverlayUI() }
+    override fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) { uiController.showStyledPopup(anchor, options, onSelected) }
+
     private fun updateVideoParamsForNewLens() {
-        val newId = currentPhysicalCameraId ?: currentLogicalCameraId
+        val newId = activeMetadataCameraId()
         val caps = allVideoCapabilities[newId] ?: emptyList()
         val supported = caps.find { "${it.width}x${it.height}" == selectedVideoSizeStr && it.maxFps >= selectedVideoFps }
         if (supported == null) {
@@ -526,7 +523,7 @@ class MainActivity : AppCompatActivity(),
             currentLogicalCameraId = logicalId; currentPhysicalCameraId = physicalId
             saveCurrentLensSettings(); lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
             if (!viewModel.isPhotoMode.value) updateVideoParamsForNewLens()
-            closeCamera(); if (viewModel.isFormatPanelOpen.value) updateFormatPanelUI()
+            coordinator.closeCamera(); if (viewModel.isFormatPanelOpen.value) updateFormatPanelUI()
             if (binding.cameraPreview.isAvailable) openCamera()
         }
     }
@@ -541,11 +538,9 @@ class MainActivity : AppCompatActivity(),
 
     override fun onVideoParamsChanged() { /* Handled via FormatPanelController */ }
 
-    private fun startBackgroundThread() { backgroundThread = HandlerThread("CameraBackground").also { it.start() }; backgroundHandler = Handler(backgroundThread!!.looper); val numCores = Runtime.getRuntime().availableProcessors(); captureExecutor = Executors.newFixedThreadPool(numCores) }
-    private fun stopBackgroundThread() { backgroundThread?.quitSafely(); try { backgroundThread?.join(); backgroundThread = null; backgroundHandler = null; captureExecutor.shutdown() } catch (e: InterruptedException) { showToast("后台线程停止失败") } }
     private fun activeMetadataCameraId(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) currentPhysicalCameraId ?: currentLogicalCameraId else currentLogicalCameraId
     private fun showToast(msg: String) { runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() } }
-    private fun applyPhotoParamsToPreview() { previewRequestBuilder?.let { PhotoParamMapper.applyPhotoParamsToRequest(it, viewModel.photoParamState.value, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, true); viewModel.currentFlashMode.value.applyToRequest(it, false); sessionManager.applyZoom(it, viewModel.zoomRatio.value, activeCameraCharacteristics) }; resumePreview() }
+    
     private fun saveParamState(key: ParamKey) {
         val state = viewModel.photoParamState.value
         when (key) {
@@ -559,7 +554,7 @@ class MainActivity : AppCompatActivity(),
     private fun saveCurrentLensSettings() { preferenceManager.saveString(PreferenceManager.KEY_LENS_ID, currentLogicalCameraId); currentPhysicalCameraId?.let { preferenceManager.saveString(PreferenceManager.KEY_PHYSICAL_LENS_ID, it) } }
 
     private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
-        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) { streamMonitor.notifyFrameReceived(); aeState = result.get(CaptureResult.CONTROL_AE_STATE) ?: CameraMetadata.CONTROL_AE_STATE_INACTIVE; updateAutoValuesFromResult(result); runOnUiThread { refreshParamViews(viewModel.photoParamState.value) } }
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) { streamMonitor.notifyFrameReceived(); updateAutoValuesFromResult(result); runOnUiThread { refreshParamViews(viewModel.photoParamState.value) } }
     }
 
     private fun updateAutoValuesFromResult(result: CaptureResult) {
@@ -570,27 +565,11 @@ class MainActivity : AppCompatActivity(),
         result.get(CaptureResult.COLOR_CORRECTION_GAINS)?.let { gains -> previewAutoKelvinLabel = PhotoParamMapper.gainsToKelvinLabel(gains, PhotoParamMapper.SUPPORTED_KELVIN_VALUES) }
     }
 
-    override fun onResume() { super.onResume() }
-    override fun onPause() { super.onPause() }
-
     private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(t: SurfaceTexture, w: Int, h: Int) { openCamera() }
         override fun onSurfaceTextureSizeChanged(t: SurfaceTexture, w: Int, h: Int) {}
         override fun onSurfaceTextureDestroyed(t: SurfaceTexture): Boolean = true
         override fun onSurfaceTextureUpdated(t: SurfaceTexture) {}
-    }
-
-    private fun createCameraPreviewSession() {
-        val cam = cameraDevice ?: return; val raw = cameraManager.rawImageReader ?: return; val jpg = cameraManager.jpegImageReader ?: return; val handler = backgroundHandler ?: return
-        try {
-            captureSession?.close(); val tex = binding.cameraPreview.surfaceTexture ?: return
-            val map = activeCameraCharacteristics?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val previewSize = if (viewModel.isPhotoMode.value) map?.getOutputSizes(SurfaceTexture::class.java)?.filter { Math.abs(it.width.toFloat()/it.height - 1.333f) < 0.1 }?.sortedByDescending { it.width * it.height }?.find { it.width <= 2500 } ?: Size(1440, 1080) else { val dims = selectedVideoSizeStr.split("x"); if (dims.size == 2) Size(dims[0].toInt(), dims[1].toInt()) else Size(1920, 1080) }
-            tex.setDefaultBufferSize(previewSize.width, previewSize.height); runOnUiThread { configureTransform(previewSize.width, previewSize.height) }
-            previewSurface = Surface(tex); val surf = previewSurface ?: return
-            previewRequestBuilder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(surf); PhotoParamMapper.applyPhotoParamsToRequest(this, viewModel.photoParamState.value, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, true); viewModel.currentFlashMode.value.applyToRequest(this, false); sessionManager.applyZoom(this, viewModel.zoomRatio.value, activeCameraCharacteristics) }
-            sessionManager.createSession(cam, listOf(surf, raw.surface, jpg.surface), currentPhysicalCameraId, previewRequestBuilder!!.build(), handler, raw.surface)
-        } catch (e: Exception) { Log.e("wCam", "Preview error: ${e.message}") }
     }
 
     private fun showVideoParamsPopup(view: View) {
@@ -601,7 +580,7 @@ class MainActivity : AppCompatActivity(),
             selectedVideoRatioStr = ratioStr; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
             val ratioCaps = caps.filter { it.ratioStr == ratioStr }; val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }.sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) }).firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
             if (bestFor30 != null) { selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"; selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr); preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps) }
-            binding.topToolbar.btnResolution.text = selectedVideoRatioStr; binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00")); updateFormatPanelUI(); closeCamera(); openCamera()
+            binding.topToolbar.btnResolution.text = selectedVideoRatioStr; binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00")); updateFormatPanelUI(); openCamera()
         }
     }
 }

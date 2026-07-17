@@ -26,6 +26,7 @@
     <string name="toast_camera_connection_failed">相机连接失败</string>
     <string name="toast_settings_reset">设置已重置</string>
     <string name="toast_video_caps_failed">无法获取视频能力</string>
+    <string name="toast_camera_permission_required">需要必要的权限才能运行</string>
     <string name="ae_af_locked">AE/AF 已锁定</string>
     <string name="ae_af_unlocked">AE/AF 已解锁</string>
     <string name="mode_photo">拍照</string>
