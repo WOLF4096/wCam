@@ -16,13 +16,9 @@ import java.util.Date
 import java.util.Locale
 import android.content.ContentResolver
 import android.hardware.camera2.CameraCharacteristics
-import kotlin.math.roundToInt
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
-
 import android.content.Context
-import android.content.pm.PackageInfo
-import android.content.pm.PackageManager
 
 /**
  * Handles image processing, metadata writing, and saving to MediaStore.
@@ -33,12 +29,12 @@ class CaptureProcessor(
     private val config: com.example.wcam.util.ConfigManager
 ) {
     private val contentResolver = context.contentResolver
-    private var softwareName: String = config.getString("exif_software_tag", "wCam 1.1")
+    private var softwareName: String = "wCam"
 
     init {
         try {
-            val pInfo: android.content.pm.PackageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val appName = context.applicationInfo.loadLabel(context.packageManager).toString()
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val appName = context.getString(context.applicationInfo.labelRes)
             softwareName = "$appName ${pInfo.versionName}"
         } catch (e: Exception) {
             Log.e("CaptureProcessor", "Failed to get version info", e)

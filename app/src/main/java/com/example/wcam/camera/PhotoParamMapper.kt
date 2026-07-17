@@ -6,6 +6,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import android.hardware.camera2.CameraMetadata
 
 object PhotoParamMapper {
 
@@ -72,55 +73,10 @@ object PhotoParamMapper {
         }
     }
 
-    fun parseIsoLabel(label: String): Int {
-        val clean = label.uppercase(Locale.US).trim()
-        return if (clean.endsWith("K")) {
-            (clean.removeSuffix("K").toFloat() * 1000).toInt()
-        } else {
-            clean.toIntOrNull() ?: 100
-        }
-    }
-
-    fun clampIso(value: Int, range: IntRange): Int = value.coerceIn(range)
-
-    fun clampExposureTime(value: Long, range: LongRange): Long = value.coerceIn(range)
-
-    fun mapAfProgressToDistance(progress: Float, minimumFocusDistance: Float): Float {
-        if (minimumFocusDistance <= 0f) return 0f
-        val clamped = progress.coerceIn(0f, 1f)
-        return minimumFocusDistance * (1f - clamped)
-    }
-
-    fun evLabelToCompensationIndex(label: String, step: Float, range: IntRange): Int {
-        if (step <= 0f) return 0
-        val ev = label.toFloat()
-        val rawIndex = (ev / step).roundToInt()
-        return rawIndex.coerceIn(range)
-    }
-
-    fun kelvinLabelToInt(label: String): Int {
-        return label.removeSuffix("K").toInt()
-    }
-
-    fun kelvinToRggb(kelvin: Int): RggbChannelVector {
-        val k = kelvin.coerceIn(2000, 8000).toFloat()
-        
-        // 改进的连续色温增益算法，避免出现平台期
-        // R gain: 在 2000K 时较高 (~3.0)，随色温升高而降低
-        val red = (1.0f + 2.0f * (1.0f - (k - 2000f) / 6000f).pow(1.5f))
-        
-        // B gain: 在 2000K 时较低 (~0.6)，随色温升高而升高
-        val blue = (0.6f + 2.4f * ((k - 2000f) / 6000f).pow(1.5f))
-
-        val green = 1.0f
-        return RggbChannelVector(red.coerceIn(0.5f, 4.0f), green, green, blue.coerceIn(0.5f, 4.0f))
-    }
-
     fun formatEvDisplay(compensationIndex: Int, step: Float): String {
         val value = compensationIndex * step
         return String.format(Locale.US, "%+.1f", value)
     }
-
 
     fun formatFocusDistanceDisplay(focusDistance: Float): String {
         return formatDiopterDisplay(focusDistance)
@@ -172,11 +128,13 @@ object PhotoParamMapper {
                 if (range == null || step == null || step <= 0f) {
                     currentState
                 } else {
+                    val ev = label.toFloat()
+                    val rawIndex = (ev / step).roundToInt()
                     currentState.copy(
                         ev = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = evLabelToCompensationIndex(label, step, range),
+                            manualValue = rawIndex.coerceIn(range),
                         ),
                     )
                 }
@@ -190,7 +148,7 @@ object PhotoParamMapper {
                         wb = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = kelvinLabelToInt(label),
+                            manualValue = label.removeSuffix("K").toInt(),
                         ),
                     )
                 }
@@ -198,18 +156,19 @@ object PhotoParamMapper {
 
             ParamKey.ISO -> {
                 val hardwareRange = capabilities.isoRange?.let { it.lower..it.upper }
-                android.util.Log.d("PhotoParamMapper", "Hardware ISO Range: $hardwareRange")
                 
                 if (!capabilities.supportsManualSensor || hardwareRange == null) {
                     currentState
                 } else {
-                    // Expand the upper bound to bypass hardware reported limit
                     val isoMax = config?.getInt("iso_max", 64000) ?: 64000
                     val extendedRange = hardwareRange.first..isoMax
-                    val parsedValue = parseIsoLabel(label)
-                    val clampedValue = clampIso(parsedValue, extendedRange)
-                    
-                    android.util.Log.d("PhotoParamMapper", "ISO Label: $label -> Parsed: $parsedValue -> Clamped: $clampedValue")
+                    val clean = label.uppercase(Locale.US).trim()
+                    val parsedValue = if (clean.endsWith("K")) {
+                        (clean.removeSuffix("K").toFloat() * 1000).toInt()
+                    } else {
+                        clean.toIntOrNull() ?: 100
+                    }
+                    val clampedValue = parsedValue.coerceIn(extendedRange)
                     
                     currentState.copy(
                         iso = ParamValue(
@@ -230,7 +189,7 @@ object PhotoParamMapper {
                         shutter = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = clampExposureTime(parseShutterLabel(label), range),
+                            manualValue = parseShutterLabel(label).coerceIn(range),
                         ),
                     )
                 }
@@ -255,11 +214,12 @@ object PhotoParamMapper {
                     } else {
                         label.toFloatOrNull() ?: 0f
                     }
+                    val diopterMax = config?.getFloat("default_max_diopter", 50.0f) ?: 50.0f
                     currentState.copy(
                         af = ParamValue(
                             isAuto = false,
                             displayValue = label,
-                            manualValue = diopter.coerceIn(0f, 50.0f),
+                            manualValue = diopter.coerceIn(0f, diopterMax),
                         ),
                     )
                 }
@@ -275,6 +235,14 @@ object PhotoParamMapper {
             ParamKey.SHUTTER -> currentState.copy(shutter = currentState.shutter.copy(isAuto = true, manualValue = null))
             ParamKey.AF -> currentState.copy(af = currentState.af.copy(isAuto = true, manualValue = null))
         }
+    }
+
+    fun kelvinToRggb(kelvin: Int): RggbChannelVector {
+        val k = kelvin.coerceIn(2000, 8000).toFloat()
+        val red = (1.0f + 2.0f * (1.0f - (k - 2000f) / 6000f).pow(1.5f))
+        val blue = (0.6f + 2.4f * ((k - 2000f) / 6000f).pow(1.5f))
+        val green = 1.0f
+        return RggbChannelVector(red.coerceIn(0.5f, 4.0f), green, green, blue.coerceIn(0.5f, 4.0f))
     }
 
     fun applyPhotoParamsToRequest(
@@ -294,30 +262,19 @@ object PhotoParamMapper {
             
             val shutterCap = config?.getLong("preview_shutter_cap_nanos", 200_000_000L) ?: 200_000_000L
             if (isStream && shutterValue != null && shutterValue > shutterCap) {
-                // Cap stream/video exposure to avoid freezing
                 shutterValue = shutterCap
             }
             
-            isoValue?.let { 
-                android.util.Log.d("PhotoParamMapper", "Applying manual ISO: $it")
-                builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) 
-            }
+            isoValue?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
             shutterValue?.let { 
                 builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
-                // 为长曝光设置帧间隔，确保硬件不会因为帧率不匹配而丢弃请求
                 builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
-
-                // 自动选择支持最低 FPS 的范围，以适配长曝光
                 capabilities.aeFpsRanges?.minByOrNull { it.lower }?.let { range ->
                     builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
                 }
             }
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            if (isStream) {
-                // For auto exposure in stream, we can't easily cap the shutter via API without manual control,
-                // but usually AE won't go below 1/5s unless in extreme dark.
-            }
         }
 
         if (!state.ev.isAuto) {
@@ -345,7 +302,6 @@ object PhotoParamMapper {
             builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
         }
 
-        // 启用 Lens Shading Map 获取统计信息，用于更精准的去暗角
         builder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON)
     }
 }

@@ -69,8 +69,8 @@ class MainActivity : AppCompatActivity(),
     private lateinit var preferenceManager: PreferenceManager
     private lateinit var deviceOrientationTracker: DeviceOrientationTracker
 
-    private var currentLogicalCameraId = "0"
-    private var currentPhysicalCameraId: String? = "2"
+    private var currentLogicalCameraId = ""
+    private var currentPhysicalCameraId: String? = null
     private var previewAutoIso: Int? = null
     private var previewAutoShutterNanos: Long? = null
     private var previewAutoCompensation: Int? = null
@@ -400,7 +400,10 @@ class MainActivity : AppCompatActivity(),
         val caps = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toSet().orEmpty()
         cameraCapabilities = CameraCapabilities(characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE), characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat(), characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE), characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE), characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE), caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR), characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)?.toSet().orEmpty().contains(CameraMetadata.CONTROL_AWB_MODE_OFF), characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList())
         currentFlashSupported = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
-        maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: 10f else characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 10f
+        
+        val defaultMaxZoom = config.getFloat("default_max_zoom", 10.0f)
+        maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: defaultMaxZoom else characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: defaultMaxZoom
+
         currentSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
         currentLensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
         

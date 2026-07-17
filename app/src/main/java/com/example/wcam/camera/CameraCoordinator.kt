@@ -68,7 +68,7 @@ class CameraCoordinator(
     private var captureExecutor: ExecutorService? = null
 
     private var activeCharacteristics: CameraCharacteristics? = null
-    private var currentLogicalId = "0"
+    private var currentLogicalId = ""
     private var currentPhysicalId: String? = null
 
     fun start() {
@@ -175,7 +175,6 @@ class CameraCoordinator(
     fun createPreviewSession() {
         val cam = cameraDevice ?: return
         val raw = cameraManager.rawImageReader ?: return
-        val jpg = cameraManager.jpegImageReader ?: return
         val handler = backgroundHandler ?: return
         val characteristics = activeCharacteristics ?: return
         val texture = listener.getPreviewTexture().surfaceTexture ?: return
@@ -216,8 +215,8 @@ class CameraCoordinator(
                 }
             }
 
-            texture.setDefaultBufferSize(previewSize!!.width, previewSize!!.height)
-            listener.onPreviewReady(previewSize!!)
+            texture.setDefaultBufferSize(previewSize.width, previewSize.height)
+            listener.onPreviewReady(previewSize)
 
             previewSurface = Surface(texture)
             val surf = previewSurface ?: return
@@ -244,7 +243,7 @@ class CameraCoordinator(
 
             sessionManager.createSession(
                 cam,
-                listOf(surf, raw.surface, jpg.surface),
+                listOf(surf, raw.surface),
                 effectivePhysicalId,
                 previewRequestBuilder!!.build(),
                 handler,

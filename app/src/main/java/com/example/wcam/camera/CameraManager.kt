@@ -32,8 +32,6 @@ class CameraManager(
     
     var rawImageReader: ImageReader? = null
         private set
-    var jpegImageReader: ImageReader? = null
-        private set
 
     @SuppressLint("MissingPermission")
     fun openCamera(logicalId: String, backgroundHandler: Handler) {
@@ -53,8 +51,6 @@ class CameraManager(
     fun releaseReaders() {
         rawImageReader?.close()
         rawImageReader = null
-        jpegImageReader?.close()
-        jpegImageReader = null
     }
 
     private val stateCallback = object : CameraDevice.StateCallback() {
@@ -94,18 +90,6 @@ class CameraManager(
         rawImageReader?.setOnImageAvailableListener({ reader ->
             val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
             listener.onRawImageAvailable(image)
-        }, backgroundHandler)
-
-        val largestJpgSize = streamMap.getOutputSizes(ImageFormat.JPEG)
-            ?.maxByOrNull { it.width.toLong() * it.height.toLong() }
-            ?: return false
-
-        if (jpegImageReader == null || jpegImageReader!!.width != largestJpgSize.width || jpegImageReader!!.height != largestJpgSize.height) {
-            jpegImageReader?.close()
-            jpegImageReader = ImageReader.newInstance(largestJpgSize.width, largestJpgSize.height, ImageFormat.JPEG, 2)
-        }
-        jpegImageReader?.setOnImageAvailableListener({ reader ->
-            reader.acquireLatestImage()?.close()
         }, backgroundHandler)
 
         return true
