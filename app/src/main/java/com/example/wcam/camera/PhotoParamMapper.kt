@@ -11,6 +11,14 @@ object PhotoParamMapper {
 
     val SUPPORTED_KELVIN_VALUES = listOf(3200, 4000, 5200, 6000, 7000)
 
+    fun formatIsoDisplay(iso: Int): String {
+        return if (iso >= 1000) {
+            val kValue = iso / 1000.0
+            if (kValue == kValue.toInt().toDouble()) String.format(java.util.Locale.US, "%dK", kValue.toInt())
+            else String.format(java.util.Locale.US, "%.1fK", kValue)
+        } else iso.toString()
+    }
+
     fun formatShutterDisplay(exposureTimeNanos: Long): String {
         if (exposureTimeNanos <= 0L) return "0"
         val seconds = exposureTimeNanos / 1_000_000_000.0

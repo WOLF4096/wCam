@@ -3,6 +3,7 @@ package com.example.wcam.camera
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.media.Image
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -25,6 +26,10 @@ class CaptureProcessor(
     private val contentResolver: ContentResolver,
     private val rawMediaStore: RawMediaStore
 ) {
+
+    fun saveRawImage(image: Image, chars: CameraCharacteristics, result: TotalCaptureResult, wallTime: Long): Uri {
+        return rawMediaStore.saveRawImage(image, chars, result, 0, wallTime)
+    }
 
     fun saveJpegBitmap(
         bitmap: Bitmap, 

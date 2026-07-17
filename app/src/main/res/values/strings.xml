@@ -15,4 +15,22 @@
     <string name="output_format_label">输出格式:</string>
     <string name="demosaic_label">去马赛克:</string>
     <string name="jpg_quality_label">JPG 质量: 95%</string>
+    <string name="flash_off">关闭</string>
+    <string name="flash_on">打开</string>
+    <string name="flash_torch">常亮</string>
+    <string name="toast_flash_not_supported">不支持闪光灯</string>
+    <string name="toast_preview_not_supported">不支持预览</string>
+    <string name="toast_camera_open_failed">打开相机失败</string>
+    <string name="toast_preview_resume_failed">恢复预览失败</string>
+    <string name="toast_session_config_failed">Session 配置失败</string>
+    <string name="toast_camera_connection_failed">相机连接失败</string>
+    <string name="toast_settings_reset">设置已重置</string>
+    <string name="toast_video_caps_failed">无法获取视频能力</string>
+    <string name="ae_af_locked">AE/AF 已锁定</string>
+    <string name="ae_af_unlocked">AE/AF 已解锁</string>
+    <string name="mode_photo">拍照</string>
+    <string name="mode_video">录像</string>
+    <string name="switch_to">切换\n</string>
+    <string name="jpg_quality_title">JPG 质量: %1$d%%</string>
+    <string name="video_bitrate_title">码率: %1$.1f Mbps</string>
 </resources>

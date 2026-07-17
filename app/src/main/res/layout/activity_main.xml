@@ -17,142 +17,34 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <LinearLayout
+    <include
         android:id="@+id/top_toolbar"
+        layout="@layout/layout_top_toolbar"
         android:layout_width="0dp"
         android:layout_height="48dp"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:paddingHorizontal="16dp"
         app:layout_constraintTop_toBottomOf="@id/top_safe_zone"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintEnd_toEndOf="parent" />
 
-        <TextView android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_flash" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_histogram" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_grid_lines" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_resolution" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_format" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_format" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-    </LinearLayout>
-
-    <androidx.constraintlayout.widget.ConstraintLayout
+    <include
         android:id="@+id/bottom_action_bar"
+        layout="@layout/layout_bottom_action_bar"
         android:layout_width="0dp"
         android:layout_height="120dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintEnd_toEndOf="parent" />
 
-        <TextView
-            android:id="@+id/btn_gallery"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:layout_marginStart="32dp"
-            android:background="@drawable/bg_gallery_modern"
-            android:text="@string/action_gallery"
-            android:textColor="#E0E0E0"
-            android:textSize="14sp"
-            android:gravity="center"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
-
-        <FrameLayout
-            android:id="@+id/shutter_container"
-            android:layout_width="96dp"
-            android:layout_height="96dp"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
-
-            <ProgressBar
-                android:id="@+id/pb_shutter_progress"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="88dp"
-                android:layout_height="88dp"
-                android:layout_gravity="center"
-                android:indeterminate="false"
-                android:max="1000"
-                android:progress="0"
-                android:progressDrawable="@drawable/circular_shutter_progress"
-                android:visibility="gone" />
-
-            <View
-                android:id="@+id/btn_shutter"
-                android:layout_width="76dp"
-                android:layout_height="76dp"
-                android:layout_gravity="center"
-                android:background="@drawable/bg_shutter_modern" />
-
-            <TextView
-                android:id="@+id/tv_shutter_countdown"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:visibility="gone"
-                android:elevation="4dp"
-                tools:text="2.0s" />
-        </FrameLayout>
-
-        <TextView
-            android:id="@+id/btn_mode_switch"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:layout_marginEnd="32dp"
-            android:background="@drawable/bg_gallery_modern"
-            android:text="切换\n录像"
-            android:textColor="#E0E0E0"
-            android:textSize="13sp"
-            android:lineSpacingMultiplier="0.9"
-            android:includeFontPadding="false"
-            android:gravity="center"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <LinearLayout
+    <include
         android:id="@+id/param_bar"
+        layout="@layout/layout_param_bar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="16dp"
         android:layout_marginBottom="16dp"
-        android:background="@drawable/bg_glass_panel"
-        android:paddingVertical="12dp"
-        android:orientation="horizontal"
         app:layout_constraintBottom_toTopOf="@id/bottom_action_bar"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <LinearLayout android:id="@+id/layout_param_ev" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="EV" android:textColor="#80FFFFFF" android:textSize="12sp" />
-            <TextView android:id="@+id/tv_val_ev" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0.0" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
-        </LinearLayout>
-
-        <LinearLayout android:id="@+id/layout_param_wb" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="WB" android:textColor="#80FFFFFF" android:textSize="12sp" />
-            <TextView android:id="@+id/tv_val_wb" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="5200K" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
-        </LinearLayout>
-
-        <LinearLayout android:id="@+id/layout_param_iso" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ISO" android:textColor="#80FFFFFF" android:textSize="12sp" />
-            <TextView android:id="@+id/tv_val_iso" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="100" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
-        </LinearLayout>
-
-        <LinearLayout android:id="@+id/layout_param_s" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="S" android:textColor="#80FFFFFF" android:textSize="12sp" />
-            <TextView android:id="@+id/tv_val_s" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="1/60" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
-        </LinearLayout>
-
-        <LinearLayout android:id="@+id/layout_param_af" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AF" android:textColor="#80FFFFFF" android:textSize="12sp" />
-            <TextView android:id="@+id/tv_val_af" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0.5" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" android:layout_marginTop="4dp"/>
-        </LinearLayout>
-    </LinearLayout>
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/preview_container"
@@ -224,22 +116,15 @@
             app:layout_constraintStart_toStartOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <LinearLayout
+    <include
         android:id="@+id/lens_selector"
+        layout="@layout/layout_lens_selector"
         android:layout_width="0dp"
         android:layout_height="48dp"
         android:layout_marginBottom="16dp"
-        android:orientation="horizontal"
-        android:gravity="center"
         app:layout_constraintBottom_toTopOf="@id/param_bar"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <TextView android:id="@+id/btn_lens_front" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_front" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_lens_wide"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_wide" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
-        <TextView android:id="@+id/btn_lens_main"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_main" android:textColor="#FFCC00" android:textSize="18sp" android:textStyle="bold" android:gravity="center" />
-        <TextView android:id="@+id/btn_lens_tele"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_tele" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
-    </LinearLayout>
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <LinearLayout
         android:id="@+id/panel_format_settings"

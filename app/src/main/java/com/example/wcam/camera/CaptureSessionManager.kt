@@ -79,6 +79,61 @@ class CaptureSessionManager(
         }
     }
 
+    fun triggerFocusAndMetering(
+        x: Float, y: Float,
+        textureView: android.view.TextureView,
+        characteristics: CameraCharacteristics?,
+        previewRequestBuilder: CaptureRequest.Builder?,
+        backgroundHandler: Handler?,
+        callback: CameraCaptureSession.CaptureCallback
+    ) {
+        val sensorArraySize = characteristics?.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+        
+        val viewW = textureView.width.toFloat()
+        val viewH = textureView.height.toFloat()
+        
+        val sensorX = (y / viewH * sensorArraySize.width()).toInt()
+        val sensorY = ((1.0f - x / viewW) * sensorArraySize.height()).toInt()
+        
+        val halfRectSize = 100
+        val focusRect = android.graphics.Rect(
+            (sensorX - halfRectSize).coerceIn(0, sensorArraySize.width()),
+            (sensorY - halfRectSize).coerceIn(0, sensorArraySize.height()),
+            (sensorX + halfRectSize).coerceIn(0, sensorArraySize.width()),
+            (sensorY + halfRectSize).coerceIn(0, sensorArraySize.height())
+        )
+        
+        val meteringRect = android.hardware.camera2.params.MeteringRectangle(focusRect, 1000)
+        
+        previewRequestBuilder?.apply {
+            set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(meteringRect))
+            set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(meteringRect))
+            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
+            set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START)
+        }
+        
+        try {
+            captureSession?.capture(previewRequestBuilder!!.build(), callback, backgroundHandler)
+            previewRequestBuilder?.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+            previewRequestBuilder?.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun toggleAeAfLock(locked: Boolean, previewRequestBuilder: CaptureRequest.Builder?) {
+        previewRequestBuilder?.apply {
+            if (locked) {
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_EDOF)
+                set(CaptureRequest.CONTROL_AE_LOCK, true)
+            } else {
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_LOCK, false)
+            }
+        }
+    }
+
     fun close() {
         captureSession?.close()
         captureSession = null

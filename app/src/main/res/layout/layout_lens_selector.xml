@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lens_selector"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center">
+
+    <TextView android:id="@+id/btn_lens_front" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_front" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
+    <TextView android:id="@+id/btn_lens_wide"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_wide" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
+    <TextView android:id="@+id/btn_lens_main"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_main" android:textColor="#FFCC00" android:textSize="18sp" android:textStyle="bold" android:gravity="center" />
+    <TextView android:id="@+id/btn_lens_tele"  android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/lens_tele" android:textColor="#B3FFFFFF" android:textSize="14sp" android:gravity="center" />
+</LinearLayout>
