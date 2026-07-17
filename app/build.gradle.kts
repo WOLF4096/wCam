@@ -4,16 +4,12 @@ plugins {
 
 android {
     namespace = "com.example.wcam"
-    compileSdk {
-        version = release(37) {
-//            minorApiLevel = 1
-        }
-    }
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.example.wcam"
-        minSdk = 36
-        targetSdk = 37
+        minSdk = 28
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
