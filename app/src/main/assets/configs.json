@@ -12,10 +12,9 @@
     "histogram_sample_height": 80,
     "stream_freeze_threshold_ms": 2000
   },
-  "device_configs": [
-    {
+  "device_configs": {
+    "V2509A": {
       "manufacturer": "vivo",
-      "model": "V2509A",
       "lsc_strength": 1.30,
       "default_max_zoom": 10.0,
       "default_max_diopter": 50.0,
@@ -52,5 +51,5 @@
         }
       ]
     }
-  ]
+  }
 }

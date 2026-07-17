@@ -238,6 +238,11 @@ class MainActivity : AppCompatActivity(),
         uiController = CameraUiController(this, this)
         manualParamController = ManualParamController(this)
         overlayController = OverlayController(binding.viewGridLines, binding.viewHistogram, binding.viewCropOverlay, binding.tvPhysicalRes)
+        
+        val histW = config.getInt("histogram_sample_width", 160)
+        val histH = config.getInt("histogram_sample_height", 80)
+        overlayController.setHistogramSize(histW, histH)
+
         streamMonitor = CameraStreamMonitor(android.os.Handler(mainLooper), config, this)
         gestureManager = GestureManager(this, this)
         lensController = LensController(LensController.LensButtons(binding.lensSelector.btnLensFront, binding.lensSelector.btnLensWide, binding.lensSelector.btnLensMain, binding.lensSelector.btnLensTele), this)

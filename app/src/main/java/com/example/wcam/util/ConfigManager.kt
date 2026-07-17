@@ -16,19 +16,12 @@ class ConfigManager(context: Context) {
             root = JSONObject(jsonString)
             defaultConfig = root?.optJSONObject("default_config")
             
-            val deviceConfigs = root?.optJSONArray("device_configs")
+            val deviceConfigs = root?.optJSONObject("device_configs")
             if (deviceConfigs != null) {
-                for (i in 0 until deviceConfigs.length()) {
-                    val config = deviceConfigs.getJSONObject(i)
-                    val manufacturer = config.optString("manufacturer", "")
-                    val model = config.optString("model", "")
-                    
-                    if (manufacturer.equals(Build.MANUFACTURER, ignoreCase = true) &&
-                        model.equals(Build.MODEL, ignoreCase = true)) {
-                        currentDeviceConfig = config
-                        Log.i("ConfigManager", "Matched device config for ${Build.MODEL}")
-                        break
-                    }
+                // Use model name as key
+                currentDeviceConfig = deviceConfigs.optJSONObject(Build.MODEL)
+                if (currentDeviceConfig != null) {
+                    Log.i("ConfigManager", "Matched device config for ${Build.MODEL}")
                 }
             }
         } catch (e: Exception) {

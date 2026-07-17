@@ -24,6 +24,14 @@ class OverlayController(
         physicalRes.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
+    fun setHistogramSize(widthDp: Int, heightDp: Int) {
+        val density = histogram.context.resources.displayMetrics.density
+        val params = histogram.layoutParams
+        params.width = (widthDp * density).toInt()
+        params.height = (heightDp * density).toInt()
+        histogram.layoutParams = params
+    }
+
     fun setCropOverlayVisible(visible: Boolean) {
         cropOverlay.visibility = if (visible) View.VISIBLE else View.GONE
     }

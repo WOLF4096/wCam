@@ -28,7 +28,7 @@ class CameraStreamMonitor(
         override fun run() {
             val textureView = listener.getPreviewTexture()
             val sampleW = config.getInt("histogram_sample_width", 160)
-            val sampleH = config.getInt("histogram_sample_height", 120)
+            val sampleH = config.getInt("histogram_sample_height", 80)
             
             if (listener.isHistogramVisible() && textureView?.isAvailable == true) {
                 try {
