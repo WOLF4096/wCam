@@ -17,11 +17,14 @@ object CameraDebugger {
 
     fun logAllCameraStreams(context: Context, outVideoCapabilities: MutableMap<String, List<VideoSizeInfo>>) {
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val physicalIds = listOf("2", "4", "3", "1")
         
-        Log.i(TAG, "--- Starting video capability detection ---")
+        Log.i(TAG, "--- Starting comprehensive video capability detection ---")
         
-        for (id in physicalIds) {
+        val allPossibleIds = mutableSetOf<String>()
+        allPossibleIds.addAll(manager.cameraIdList)
+        for (i in 0..30) allPossibleIds.add(i.toString())
+
+        for (id in allPossibleIds.sortedBy { it.toIntOrNull() ?: 999 }) {
             try {
                 val chars = manager.getCameraCharacteristics(id)
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: continue
@@ -38,16 +41,16 @@ object CameraDebugger {
                 // High speed video sizes
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     map.highSpeedVideoSizes?.forEach { hsSize ->
-                        val hsFpsRanges = map.getHighSpeedVideoFpsRangesFor(hsSize)
-                        val maxHsFps = hsFpsRanges.maxOfOrNull { it.upper } ?: 0
-                        capabilities.add(VideoSizeInfo(hsSize.width, hsSize.height, maxHsFps, isHighSpeed = true))
+                        val hsRanges = map.getHighSpeedVideoFpsRangesFor(hsSize)
+                        val maxHsFps = hsRanges.maxOfOrNull { it.upper } ?: 0
+                        capabilities.add(VideoSizeInfo(hsSize.width, hsSize.height, maxFps = maxHsFps, isHighSpeed = true))
                     }
                 }
                 
                 outVideoCapabilities[id] = capabilities
-                Log.i(TAG, "Camera ID: $id - Found ${capabilities.size} configurations")
+                Log.i(TAG, "Camera ID: $id - Detected ${capabilities.size} stream configurations")
             } catch (e: Exception) {
-                Log.e(TAG, "Could not read info for camera $id: ${e.message}")
+                // Not an accessible ID
             }
         }
     }
@@ -114,11 +117,22 @@ object CameraDebugger {
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         Log.i(TAG, "========================================================")
         Log.i(TAG, "DEVICE INFO: ${Build.MANUFACTURER} ${Build.MODEL} (API ${Build.VERSION.SDK_INT})")
-        Log.i(TAG, "--- Detailed Camera Parameter Dump ---")
+        Log.i(TAG, "--- Exhaustive Camera Parameter Dump ---")
 
         try {
-            val allIds = manager.cameraIdList
-            for (id in allIds) {
+            // Some vendors hide physical cameras from cameraIdList. 
+            // We'll probe a range of IDs and also check physical IDs of logical cameras.
+            val discoveredIds = mutableSetOf<String>()
+            discoveredIds.addAll(manager.cameraIdList)
+            for (i in 0..30) {
+                val idStr = i.toString()
+                try {
+                    manager.getCameraCharacteristics(idStr)
+                    discoveredIds.add(idStr)
+                } catch (e: Exception) { /* skip */ }
+            }
+
+            for (id in discoveredIds.sortedBy { it.toIntOrNull() ?: 999 }) {
                 val chars = manager.getCameraCharacteristics(id)
                 val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
                     CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
@@ -129,46 +143,54 @@ object CameraDebugger {
 
                 Log.i(TAG, "CAMERA ID: $id ($facing)")
 
-                // Physical IDs if this is a logical camera
+                // Logical vs Physical info
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     val physicalIds = chars.physicalCameraIds
                     if (physicalIds.isNotEmpty()) {
-                        Log.i(TAG, "  Physical Camera IDs: ${physicalIds.joinToString(", ")}")
+                        Log.i(TAG, "  Type: LOGICAL (Subs: ${physicalIds.joinToString(", ")})")
+                    } else {
+                        Log.i(TAG, "  Type: PHYSICAL")
                     }
                 }
 
-                // Focal Lengths
+                // Optics & Sensor
                 val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                Log.i(TAG, "  Focal Lengths: ${focalLengths?.joinToString(", ") ?: "N/A"} mm")
-
-                // Resolutions
+                val apertures = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
                 val pixelArray = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
-                val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-                Log.i(TAG, "  Sensor Pixel Array: ${pixelArray?.width}x${pixelArray?.height}")
-                Log.i(TAG, "  Sensor Active Array: ${activeArray?.width()}x${activeArray?.height()}")
+                Log.i(TAG, "  Focal Lengths: ${focalLengths?.joinToString(", ") ?: "N/A"} mm")
+                Log.i(TAG, "  Apertures: f/${apertures?.joinToString(", f/") ?: "N/A"}")
+                Log.i(TAG, "  Sensor Res: ${pixelArray?.width}x${pixelArray?.height}")
 
-                // RAW Support
+                // Capabilities
                 val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
                 val supportsRaw = capabilities.any { it == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_RAW }
-                Log.i(TAG, "  RAW Support: $supportsRaw")
+                val supportsManual = capabilities.any { it == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR }
+                Log.i(TAG, "  RAW: $supportsRaw, Manual: $supportsManual")
 
-                // Video/Stream Sizes
+                // FPS & Streams
+                val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                Log.i(TAG, "  AE FPS Ranges: ${fpsRanges?.joinToString { "[${it.lower}-${it.upper}]" }}")
+
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 if (map != null) {
-                    val streamSizes = map.getOutputSizes(android.graphics.SurfaceTexture::class.java)
-                    if (streamSizes != null) {
-                        Log.i(TAG, "  Supported Stream Sizes (SurfaceTexture):")
-                        streamSizes.sortedByDescending { it.width * it.height }.forEach { size ->
-                            val minDuration = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, size)
-                            val maxFps = if (minDuration > 0) (1_000_000_000L / minDuration).toInt() else 0
-                            Log.i(TAG, "    - ${size.width}x${size.height} (Max FPS: $maxFps)")
+                    Log.i(TAG, "  Supported Stream Sizes (SurfaceTexture):")
+                    map.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.sortedByDescending { it.width * it.height }?.take(15)?.forEach { size ->
+                        val minDuration = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, size)
+                        val maxFps = if (minDuration > 0) (1_000_000_000L / minDuration).toInt() else 0
+                        Log.i(TAG, "    - ${size.width}x${size.height} (Max FPS: $maxFps)")
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        map.highSpeedVideoSizes?.forEach { hsSize ->
+                            val hsRanges = map.getHighSpeedVideoFpsRangesFor(hsSize)
+                            Log.i(TAG, "  [High-Speed/Slow-Mo] ${hsSize.width}x${hsSize.height} FPS: ${hsRanges.joinToString { "[${it.lower}-${it.upper}]" }}")
                         }
                     }
                 }
                 Log.i(TAG, "--------------------------------------------------------")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to dump camera info: ${e.message}")
+            Log.e(TAG, "Dump failed: ${e.message}")
         }
         Log.i(TAG, "========================================================")
     }
