@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.os.Build
 import android.util.Log
 import java.util.Locale
@@ -107,6 +108,69 @@ object CameraDebugger {
         } catch (e: Exception) {
             Log.e(TAG, "Dump failed: ${e.message}")
         }
+    }
+
+    fun logDetailedCameraInfo(context: Context) {
+        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        Log.i(TAG, "========================================================")
+        Log.i(TAG, "DEVICE INFO: ${Build.MANUFACTURER} ${Build.MODEL} (API ${Build.VERSION.SDK_INT})")
+        Log.i(TAG, "--- Detailed Camera Parameter Dump ---")
+
+        try {
+            val allIds = manager.cameraIdList
+            for (id in allIds) {
+                val chars = manager.getCameraCharacteristics(id)
+                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                    CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
+                    else -> "UNKNOWN"
+                }
+
+                Log.i(TAG, "CAMERA ID: $id ($facing)")
+
+                // Physical IDs if this is a logical camera
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val physicalIds = chars.physicalCameraIds
+                    if (physicalIds.isNotEmpty()) {
+                        Log.i(TAG, "  Physical Camera IDs: ${physicalIds.joinToString(", ")}")
+                    }
+                }
+
+                // Focal Lengths
+                val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                Log.i(TAG, "  Focal Lengths: ${focalLengths?.joinToString(", ") ?: "N/A"} mm")
+
+                // Resolutions
+                val pixelArray = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                Log.i(TAG, "  Sensor Pixel Array: ${pixelArray?.width}x${pixelArray?.height}")
+                Log.i(TAG, "  Sensor Active Array: ${activeArray?.width()}x${activeArray?.height()}")
+
+                // RAW Support
+                val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                val supportsRaw = capabilities.any { it == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_RAW }
+                Log.i(TAG, "  RAW Support: $supportsRaw")
+
+                // Video/Stream Sizes
+                val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                if (map != null) {
+                    val streamSizes = map.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+                    if (streamSizes != null) {
+                        Log.i(TAG, "  Supported Stream Sizes (SurfaceTexture):")
+                        streamSizes.sortedByDescending { it.width * it.height }.forEach { size ->
+                            val minDuration = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, size)
+                            val maxFps = if (minDuration > 0) (1_000_000_000L / minDuration).toInt() else 0
+                            Log.i(TAG, "    - ${size.width}x${size.height} (Max FPS: $maxFps)")
+                        }
+                    }
+                }
+                Log.i(TAG, "--------------------------------------------------------")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dump camera info: ${e.message}")
+        }
+        Log.i(TAG, "========================================================")
     }
 
     private fun formatValue(value: Any?): String {

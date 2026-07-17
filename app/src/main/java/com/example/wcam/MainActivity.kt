@@ -128,6 +128,7 @@ class MainActivity : AppCompatActivity(),
         setContentView(binding.root)
         enableEdgeToEdge()
 
+        CameraDebugger.logDetailedCameraInfo(this)
         CameraDebugger.logAllCameraStreams(this, allVideoCapabilities)
         CameraDebugger.verifyHighResRawSupport(this)
         CameraDebugger.dumpVendorKeys(this)
