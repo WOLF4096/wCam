@@ -34,19 +34,22 @@
           "id": "3",
           "name": "长焦",
           "logical_id": "0",
-          "supports_raw": true
+          "supports_raw": true,
+          "preview_size": "1920x1440@30"
         },
         {
           "id": "4",
-          "name": "广角",
+          "name": "广东",
           "logical_id": "0",
-          "supports_raw": true
+          "supports_raw": true,
+          "preview_size": "1920x1440@30"
         },
         {
           "id": "1",
           "name": "前置",
           "logical_id": "1",
-          "supports_raw": false
+          "supports_raw": false,
+          "preview_size": "1920x1440@30"
         }
       ]
     }

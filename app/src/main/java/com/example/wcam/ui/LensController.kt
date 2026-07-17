@@ -4,6 +4,8 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.widget.TextView
 
+import com.example.wcam.util.ConfigManager
+
 /**
  * Manages lens selection UI and logic.
  */
@@ -23,11 +25,26 @@ class LensController(
         fun onLensSelected(logicalId: String, physicalId: String?)
     }
 
-    init {
-        buttons.front.setOnClickListener { listener.onLensSelected("1", null) }
-        buttons.wide.setOnClickListener { listener.onLensSelected("0", "4") }
-        buttons.main.setOnClickListener { listener.onLensSelected("0", "2") }
-        buttons.tele.setOnClickListener { listener.onLensSelected("0", "3") }
+    fun setupLenses(cameras: List<ConfigManager.CameraConfig>) {
+        // Reset all to GONE first
+        val allButtons = listOf(buttons.front, buttons.wide, buttons.main, buttons.tele)
+        allButtons.forEach { it.visibility = android.view.View.GONE }
+
+        cameras.forEach { camera ->
+            val btn = when {
+                camera.logicalId == "1" -> buttons.front
+                camera.id == "4" -> buttons.wide
+                camera.id == "2" -> buttons.main
+                camera.id == "3" -> buttons.tele
+                else -> null
+            }
+
+            btn?.apply {
+                visibility = android.view.View.VISIBLE
+                text = camera.name
+                setOnClickListener { listener.onLensSelected(camera.logicalId, camera.id) }
+            }
+        }
     }
 
     fun refreshUi(currentLogicalId: String, currentPhysicalId: String?) {
