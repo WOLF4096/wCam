@@ -62,11 +62,12 @@ class CaptureProcessor(
         }
         
         val fileName = createPhotoDisplayName(timestamp, "jpg")
+        val folderName = config.getString("default_storage_folder", "wCam")
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/$folderName")
             }
         }
 
@@ -107,11 +108,12 @@ class CaptureProcessor(
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(timestamp))
         val fileName = if (suffix.isEmpty()) "$ts.png" else "${ts}_$suffix.png"
         
+        val folderName = config.getString("default_storage_folder", "wCam")
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/wCam")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/$folderName")
             }
         }
 

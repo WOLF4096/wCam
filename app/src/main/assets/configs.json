@@ -8,9 +8,10 @@
     "supported_kelvin_values": [3200, 4000, 5200, 6000, 7000],
     "preview_max_width": 2500,
     "preferred_aspect_ratio": 1.333,
-    "histogram_sample_width": 160,
-    "histogram_sample_height": 80,
-    "stream_freeze_threshold_ms": 2000
+    "histogram_sample_width": 192,
+    "histogram_sample_height": 48,
+    "stream_freeze_threshold_ms": 2000,
+    "default_storage_folder": "wCam"
   },
   "device_configs": {
     "V2509A": {

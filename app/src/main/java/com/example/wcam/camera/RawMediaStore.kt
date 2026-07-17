@@ -17,9 +17,11 @@ import java.io.File
 import java.io.IOException
 
 const val RAW_MIME_TYPE = "image/x-adobe-dng"
-const val RAW_FOLDER_NAME = "wCam"
 
-class RawMediaStore(private val context: Context) {
+class RawMediaStore(
+    private val context: Context,
+    private val config: com.example.wcam.util.ConfigManager? = null
+) {
     fun saveRawImage(
         image: Image,
         characteristics: CameraCharacteristics,
@@ -32,17 +34,19 @@ class RawMediaStore(private val context: Context) {
         val fileName = createPhotoDisplayName(timestamp, "dng")
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         var outputPathForScan: String? = null
+        
+        val folderName = config?.getString("default_storage_folder", "wCam") ?: "wCam"
 
         val contentValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, RAW_MIME_TYPE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$RAW_FOLDER_NAME")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$folderName")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 val folder = File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                    RAW_FOLDER_NAME
+                    folderName
                 )
                 if (!folder.exists() && !folder.mkdirs()) {
                     throw IOException("Unable to create RAW output directory")

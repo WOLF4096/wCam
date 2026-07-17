@@ -113,8 +113,6 @@ class MainActivity : AppCompatActivity(),
         enableEdgeToEdge()
 
         permissionHelper = PermissionHelper(this)
-        config = com.example.wcam.util.ConfigManager(this)
-        PhotoParamMapper.init(config)
         
         if (permissionHelper.hasAllPermissions()) {
             initApp()
@@ -213,8 +211,10 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun initViews() {
-        rawMediaStore = RawMediaStore(this)
         preferenceManager = PreferenceManager(this)
+        config = com.example.wcam.util.ConfigManager(this)
+        PhotoParamMapper.init(config)
+        rawMediaStore = RawMediaStore(this, config)
         deviceOrientationTracker = DeviceOrientationTracker(this)
         formatPanelController = FormatPanelController(
             this,
