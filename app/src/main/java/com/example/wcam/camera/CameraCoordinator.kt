@@ -135,10 +135,14 @@ class CameraCoordinator(
     override fun onCameraOpened(camera: CameraDevice) {
         cameraDevice = camera
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-        val characteristics = manager.getCameraCharacteristics(camera.id)
+        
+        // Use currentPhysicalId if available for characteristics and readers
+        val charId = currentPhysicalId ?: currentLogicalId
+        val characteristics = manager.getCameraCharacteristics(charId)
         activeCharacteristics = characteristics
         
         val handler = backgroundHandler ?: return
+        // Re-configure readers to match the current lens's capabilities
         cameraManager.configureImageReaders(characteristics, handler)
         
         listener.onCameraOpened(characteristics)
@@ -179,33 +183,69 @@ class CameraCoordinator(
         try {
             captureSession?.close()
             
-            val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val maxWidth = config.getInt("preview_max_width", 2500)
-            val preferredRatio = config.getFloat("preferred_aspect_ratio", 1.333f)
+            // Try to get size and FPS from JSON config
+            val targetId = currentPhysicalId ?: currentLogicalId
+            val camConfig = config.getCameraConfig(targetId)
+            var previewSize: Size? = null
+            var targetFps: Int? = null
 
-            val previewSize = if (viewModel.isPhotoMode.value) {
-                map?.getOutputSizes(SurfaceTexture::class.java)
-                    ?.filter { Math.abs(it.width.toFloat() / it.height - preferredRatio) < 0.1 }
-                    ?.sortedByDescending { it.width * it.height }
-                    ?.find { it.width <= maxWidth } ?: Size(1440, 1080)
-            } else {
-                Size(1920, 1080)
+            camConfig?.previewSize?.let { sizeStr ->
+                try {
+                    val parts = sizeStr.split("@")
+                    val res = parts[0].split("x")
+                    previewSize = Size(res[0].toInt(), res[1].toInt())
+                    if (parts.size > 1) targetFps = parts[1].toInt()
+                } catch (e: Exception) {
+                    Log.e("CameraCoordinator", "Invalid preview_size format in JSON: $sizeStr")
+                }
             }
 
-            texture.setDefaultBufferSize(previewSize.width, previewSize.height)
-            listener.onPreviewReady(previewSize)
+            // Fallback to automatic finding if not in config
+            if (previewSize == null) {
+                val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                val maxWidth = config.getInt("preview_max_width", 2500)
+                val preferredRatio = config.getFloat("preferred_aspect_ratio", 1.333f)
+
+                previewSize = if (viewModel.isPhotoMode.value) {
+                    map?.getOutputSizes(SurfaceTexture::class.java)
+                        ?.filter { Math.abs(it.width.toFloat() / it.height - preferredRatio) < 0.1 }
+                        ?.sortedByDescending { it.width * it.height }
+                        ?.find { it.width <= maxWidth } ?: Size(1440, 1080)
+                } else {
+                    Size(1920, 1080)
+                }
+            }
+
+            texture.setDefaultBufferSize(previewSize!!.width, previewSize!!.height)
+            listener.onPreviewReady(previewSize!!)
 
             previewSurface = Surface(texture)
             val surf = previewSurface ?: return
 
             previewRequestBuilder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surf)
+                
+                // Apply target FPS if specified in JSON
+                targetFps?.let { fps ->
+                    val ranges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                    val bestRange = ranges?.find { it.upper == fps && it.lower == fps }
+                        ?: ranges?.find { it.upper == fps }
+                    bestRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+                }
+            }
+
+            // Determine if we really need to pass a physical ID.
+            // Only pass it if it's a sub-lens of a logical multi-camera (i.e., different from logical ID).
+            val effectivePhysicalId = if (currentPhysicalId != null && currentPhysicalId != currentLogicalId) {
+                currentPhysicalId
+            } else {
+                null
             }
 
             sessionManager.createSession(
                 cam,
                 listOf(surf, raw.surface, jpg.surface),
-                currentPhysicalId,
+                effectivePhysicalId,
                 previewRequestBuilder!!.build(),
                 handler,
                 raw.surface

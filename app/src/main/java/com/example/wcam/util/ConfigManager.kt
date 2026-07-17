@@ -93,6 +93,10 @@ class ConfigManager(context: Context) {
         return list
     }
 
+    fun getCameraConfig(id: String): CameraConfig? {
+        return getCameras().find { it.id == id }
+    }
+
     data class CameraConfig(
         val id: String,
         val name: String,

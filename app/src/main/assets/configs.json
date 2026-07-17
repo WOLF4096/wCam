@@ -48,7 +48,7 @@
           "id": "1",
           "name": "前置",
           "logical_id": "1",
-          "supports_raw": false,
+          "supports_raw": true,
           "preview_size": "1920x1440@30"
         }
       ]
