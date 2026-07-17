@@ -18,7 +18,8 @@ data class CaptureTask(
     val savedFormat: String,
     val rotationDegrees: Int,
     val exifOrientation: Int,
-    val cropRect: Rect?
+    val cropRect: Rect?,
+    val location: android.location.Location?
 )
 
 data class CaptureMetadata(

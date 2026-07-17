@@ -27,8 +27,8 @@ class CaptureProcessor(
     private val rawMediaStore: RawMediaStore
 ) {
 
-    fun saveRawImage(image: Image, chars: CameraCharacteristics, result: TotalCaptureResult, wallTime: Long): Uri {
-        return rawMediaStore.saveRawImage(image, chars, result, 0, wallTime)
+    fun saveRawImage(image: Image, chars: CameraCharacteristics, result: TotalCaptureResult, exifOrientation: Int, location: android.location.Location?, wallTime: Long): Uri {
+        return rawMediaStore.saveRawImage(image, chars, result, exifOrientation, location, wallTime)
     }
 
     fun saveJpegBitmap(
@@ -37,7 +37,8 @@ class CaptureProcessor(
         timestamp: Long, 
         quality: Int,
         characteristics: CameraCharacteristics?,
-        captureResult: TotalCaptureResult?
+        captureResult: TotalCaptureResult?,
+        location: android.location.Location? = null
     ): Uri {
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = if (rotationDegrees != 0) {
@@ -70,6 +71,7 @@ class CaptureProcessor(
                 writeExifMetadata(exif, characteristics, captureResult)
                 // Since the bitmap is already rotated, we set EXIF orientation to NORMAL
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+                location?.let { exif.setGpsInfo(it) }
                 exif.saveAttributes()
             }
         } catch (e: Exception) {
@@ -119,10 +121,16 @@ class CaptureProcessor(
         
         val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
         val exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
-        val aperture = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
+        val aperture = result.get(CaptureResult.LENS_APERTURE) ?: characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()
         val focalLength = result.get(CaptureResult.LENS_FOCAL_LENGTH)
+        val evIndex = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)
+        val evStep = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat()
 
-        iso?.let { exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString()) }
+        iso?.let {
+            exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString())
+            @Suppress("DEPRECATION")
+            exif.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, it.toString())
+        }
         exposureTime?.let {
             val exposureInSeconds = it / 1_000_000_000.0
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureInSeconds.toString())
@@ -130,12 +138,18 @@ class CaptureProcessor(
         aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
         focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
         
+        if (evIndex != null && evStep != null) {
+            val ev = evIndex * evStep
+            exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, ev.toString())
+        }
+        
         // Date Time
         val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
         val now = Date()
-        exif.setAttribute(ExifInterface.TAG_DATETIME, sdf.format(now))
-        exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, sdf.format(now))
-        exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, sdf.format(now))
+        val dateStr = sdf.format(now)
+        exif.setAttribute(ExifInterface.TAG_DATETIME, dateStr)
+        exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateStr)
+        exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, dateStr)
     }
 
     private fun createPhotoDisplayName(timestampMillis: Long, extension: String): String {

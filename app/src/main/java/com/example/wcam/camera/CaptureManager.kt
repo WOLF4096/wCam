@@ -41,6 +41,7 @@ class CaptureManager(
         fun getCurrentCropRect(): Rect?
         fun getJpgQuality(): Int
         fun getCameraCapabilities(): CameraCapabilities
+        fun getLocation(): android.location.Location?
     }
 
     private val pendingRawImages = ConcurrentHashMap<Long, Image>()
@@ -171,15 +172,16 @@ class CaptureManager(
         val format = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         isCaptureInProgress = false
         
+        val task = prepareCaptureTask(image, result, chars, format, wallTime)
+        
         captureExecutor.submit {
             try {
                 if (format == "RAW" || format == "JPG + RAW") {
-                    val uri = captureProcessor.saveRawImage(image, chars, result, wallTime) // Need to add this to processor or similar
+                    val uri = captureProcessor.saveRawImage(image, chars, result, task.exifOrientation, task.location, wallTime)
                     if (format == "RAW") listener.onCaptureCompleted(uri)
                 }
 
                 if (format == "JPG" || format == "JPG + RAW") {
-                    val task = prepareCaptureTask(image, result, chars, format, wallTime)
                     executeCaptureTask(task, chars, result)
                 }
             } finally {
@@ -244,7 +246,8 @@ class CaptureManager(
             metadata = CaptureMetadata(iso, wbArray, ccm, shadingMapData, shadingMapSize, bayerPattern, blackLevel, whiteLevel, currentLsc),
             algoKey = algoKey, savedFormat = format,
             rotationDegrees = rotation.degrees, exifOrientation = rotation.exifOrientation,
-            cropRect = listener.getCurrentCropRect()
+            cropRect = listener.getCurrentCropRect(),
+            location = listener.getLocation()
         )
     }
 
@@ -261,7 +264,7 @@ class CaptureManager(
             val uri = if (task.algoKey == "Mono" || task.algoKey == "None") {
                 captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
             } else {
-                captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result)
+                captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
             }
             
             listener.onCaptureCompleted(uri)

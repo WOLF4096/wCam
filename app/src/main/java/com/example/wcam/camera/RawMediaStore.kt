@@ -25,6 +25,7 @@ class RawMediaStore(private val context: Context) {
         characteristics: CameraCharacteristics,
         captureResult: TotalCaptureResult,
         exifOrientation: Int,
+        location: android.location.Location?,
         timestamp: Long = System.currentTimeMillis()
     ): Uri {
         val resolver = context.contentResolver
@@ -57,6 +58,7 @@ class RawMediaStore(private val context: Context) {
 
         val dngCreator = DngCreator(characteristics, captureResult).apply {
             setOrientation(exifOrientation)
+            location?.let { setLocation(it) }
         }
         try {
             resolver.openOutputStream(uri)?.use { outputStream ->

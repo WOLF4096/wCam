@@ -7,6 +7,9 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.media.Image
 import android.net.Uri
 import android.os.Build
@@ -27,6 +30,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -53,7 +57,8 @@ class MainActivity : AppCompatActivity(),
     CaptureManager.CaptureListener,
     GestureManager.GestureListener,
     LensController.LensListener,
-    AspectRatioController.AspectRatioListener {
+    AspectRatioController.AspectRatioListener,
+    LocationListener {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: CameraViewModel by viewModels()
@@ -70,6 +75,9 @@ class MainActivity : AppCompatActivity(),
     private lateinit var lensController: LensController
     private lateinit var aspectController: AspectRatioController
     private lateinit var galleryController: GalleryController
+
+    private var locationManager: LocationManager? = null
+    private var lastLocation: Location? = null
 
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
@@ -135,7 +143,36 @@ class MainActivity : AppCompatActivity(),
         loadSettings()
         observeViewModel()
         setupLifecycleObserver()
+        initLocation()
     }
+
+    private fun initLocation() {
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        if (PermissionManager.hasAllRequiredPermissions(this)) {
+            try {
+                locationManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5000L, 10f, this)
+                locationManager?.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 5000L, 10f, this)
+                lastLocation = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER) 
+                    ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to start location updates", e)
+            }
+        }
+    }
+
+    private fun stopLocationUpdates() {
+        locationManager?.removeUpdates(this)
+    }
+
+    override fun onLocationChanged(location: Location) { lastLocation = location }
+    @Deprecated("Deprecated in Java")
+    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    override fun onProviderEnabled(provider: String) {}
+    override fun onProviderDisabled(provider: String) {}
 
     private fun setupLifecycleObserver() {
         lifecycle.addObserver(CameraLifecycleObserver(
@@ -146,6 +183,7 @@ class MainActivity : AppCompatActivity(),
 
     private fun handleOnResume() {
         startBackgroundThread()
+        startLocationUpdates()
         streamMonitor = CameraStreamMonitor(backgroundHandler!!, this)
         streamMonitor.start()
         deviceOrientationTracker.enable()
@@ -160,6 +198,7 @@ class MainActivity : AppCompatActivity(),
 
     private fun handleOnPause() {
         deviceOrientationTracker.disable()
+        stopLocationUpdates()
         closeCamera()
         stopBackgroundThread()
     }
@@ -466,6 +505,7 @@ class MainActivity : AppCompatActivity(),
     override fun getCurrentCropRect(): Rect? = currentCropRectInSensor
     override fun getJpgQuality(): Int = binding.seekbarJpgQuality.progress
     override fun getCameraCapabilities(): CameraCapabilities = cameraCapabilities
+    override fun getLocation(): Location? = lastLocation
 
     private fun updateVideoParamsForNewLens() {
         val newId = currentPhysicalCameraId ?: currentLogicalCameraId
