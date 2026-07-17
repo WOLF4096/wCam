@@ -262,9 +262,9 @@ class CaptureManager(
             )
 
             val uri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
+                captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime)
             } else {
-                captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
+                captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
             }
             
             listener.onCaptureCompleted(uri)

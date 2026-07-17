@@ -16,6 +16,7 @@ import java.util.Date
 import java.util.Locale
 import android.content.ContentResolver
 import android.hardware.camera2.CameraCharacteristics
+import kotlin.math.roundToInt
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 
@@ -127,20 +128,31 @@ class CaptureProcessor(
         val evStep = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat()
 
         iso?.let {
-            exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString())
+            val isoStr = it.toString()
+            exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, isoStr)
             @Suppress("DEPRECATION")
-            exif.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, it.toString())
+            exif.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, isoStr)
         }
+        
         exposureTime?.let {
-            val exposureInSeconds = it / 1_000_000_000.0
-            exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureInSeconds.toString())
+            if (it > 0) {
+                val exposureInSeconds = it / 1_000_000_000.0
+                // Use a more compatible rational string format for exposure time
+                if (exposureInSeconds < 1.0) {
+                    val denominator = (1.0 / exposureInSeconds).roundToInt()
+                    exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, "1/$denominator")
+                } else {
+                    exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.format(Locale.US, "%.1f", exposureInSeconds))
+                }
+            }
         }
+        
         aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
         focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
         
         if (evIndex != null && evStep != null) {
             val ev = evIndex * evStep
-            exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, ev.toString())
+            exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, String.format(Locale.US, "%.1f", ev))
         }
         
         // Date Time
