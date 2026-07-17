@@ -465,6 +465,7 @@ class MainActivity : AppCompatActivity(),
     override fun getLensFacing(): Int? = currentLensFacing
     override fun getCurrentCropRect(): Rect? = currentCropRectInSensor
     override fun getJpgQuality(): Int = binding.seekbarJpgQuality.progress
+    override fun getCameraCapabilities(): CameraCapabilities = cameraCapabilities
 
     private fun updateVideoParamsForNewLens() {
         val newId = currentPhysicalCameraId ?: currentLogicalCameraId
@@ -503,7 +504,7 @@ class MainActivity : AppCompatActivity(),
     private fun stopBackgroundThread() { backgroundThread?.quitSafely(); try { backgroundThread?.join(); backgroundThread = null; backgroundHandler = null; captureExecutor.shutdown() } catch (e: InterruptedException) { showToast("后台线程停止失败") } }
     private fun activeMetadataCameraId(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) currentPhysicalCameraId ?: currentLogicalCameraId else currentLogicalCameraId
     private fun showToast(msg: String) { runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() } }
-    private fun applyPhotoParamsToPreview() { previewRequestBuilder?.let { PhotoParamMapper.applyPhotoParamsToRequest(it, viewModel.photoParamState.value, CameraCapabilities.EMPTY, previewAutoIso, previewAutoShutterNanos, true); viewModel.currentFlashMode.value.applyToRequest(it, false); sessionManager.applyZoom(it, viewModel.zoomRatio.value, activeCameraCharacteristics) }; resumePreview() }
+    private fun applyPhotoParamsToPreview() { previewRequestBuilder?.let { PhotoParamMapper.applyPhotoParamsToRequest(it, viewModel.photoParamState.value, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, true); viewModel.currentFlashMode.value.applyToRequest(it, false); sessionManager.applyZoom(it, viewModel.zoomRatio.value, activeCameraCharacteristics) }; resumePreview() }
     private fun saveParamState(key: ParamKey) {
         val state = viewModel.photoParamState.value
         when (key) {
@@ -546,7 +547,7 @@ class MainActivity : AppCompatActivity(),
             val previewSize = if (viewModel.isPhotoMode.value) map?.getOutputSizes(SurfaceTexture::class.java)?.filter { Math.abs(it.width.toFloat()/it.height - 1.333f) < 0.1 }?.sortedByDescending { it.width * it.height }?.find { it.width <= 2500 } ?: Size(1440, 1080) else { val dims = selectedVideoSizeStr.split("x"); if (dims.size == 2) Size(dims[0].toInt(), dims[1].toInt()) else Size(1920, 1080) }
             tex.setDefaultBufferSize(previewSize.width, previewSize.height); runOnUiThread { configureTransform(previewSize.width, previewSize.height) }
             previewSurface = Surface(tex); val surf = previewSurface ?: return
-            previewRequestBuilder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(surf); PhotoParamMapper.applyPhotoParamsToRequest(this, viewModel.photoParamState.value, CameraCapabilities.EMPTY, previewAutoIso, previewAutoShutterNanos, true); viewModel.currentFlashMode.value.applyToRequest(this, false); sessionManager.applyZoom(this, viewModel.zoomRatio.value, activeCameraCharacteristics) }
+            previewRequestBuilder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(surf); PhotoParamMapper.applyPhotoParamsToRequest(this, viewModel.photoParamState.value, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, true); viewModel.currentFlashMode.value.applyToRequest(this, false); sessionManager.applyZoom(this, viewModel.zoomRatio.value, activeCameraCharacteristics) }
             sessionManager.createSession(cam, listOf(surf, raw.surface, jpg.surface), currentPhysicalCameraId, previewRequestBuilder!!.build(), handler, raw.surface)
         } catch (e: Exception) { Log.e("wCam", "Preview error: ${e.message}") }
     }

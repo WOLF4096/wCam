@@ -40,6 +40,7 @@ class CaptureManager(
         fun getLensFacing(): Int?
         fun getCurrentCropRect(): Rect?
         fun getJpgQuality(): Int
+        fun getCameraCapabilities(): CameraCapabilities
     }
 
     private val pendingRawImages = ConcurrentHashMap<Long, Image>()
@@ -69,7 +70,7 @@ class CaptureManager(
                     PhotoParamMapper.applyPhotoParamsToRequest(
                         builder = this,
                         state = listener.getPhotoParamState(),
-                        capabilities = CameraCapabilities.EMPTY, // Will be handled inside mapper if needed
+                        capabilities = listener.getCameraCapabilities(),
                         fallbackAutoIso = listener.getPreviewAutoValues().iso,
                         fallbackAutoShutterNanos = listener.getPreviewAutoValues().shutterNanos,
                         isStream = false
@@ -258,9 +259,9 @@ class CaptureManager(
             )
 
             val uri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime)
+                captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
             } else {
-                captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, listener.getJpgQuality(), chars, result)
+                captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result)
             }
             
             listener.onCaptureCompleted(uri)

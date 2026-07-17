@@ -60,6 +60,7 @@ class CaptureProcessor(
 
         contentResolver.openOutputStream(uri)?.use { os ->
             rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
+            os.flush()
         } ?: throw IOException("Failed to open output stream")
         
         // Write EXIF
@@ -67,10 +68,12 @@ class CaptureProcessor(
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val exif = ExifInterface(pfd.fileDescriptor)
                 writeExifMetadata(exif, characteristics, captureResult)
+                // Since the bitmap is already rotated, we set EXIF orientation to NORMAL
+                exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
                 exif.saveAttributes()
             }
         } catch (e: Exception) {
-            Log.e("CaptureProcessor", "Failed to write EXIF", e)
+            Log.e("CaptureProcessor", "Failed to write EXIF metadata", e)
         }
         
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
