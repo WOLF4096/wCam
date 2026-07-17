@@ -7,6 +7,7 @@ import android.hardware.camera2.*
 import android.location.Location
 import android.media.Image
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -70,6 +71,7 @@ class CameraCoordinator(
     private var activeCharacteristics: CameraCharacteristics? = null
     private var currentLogicalId = ""
     private var currentPhysicalId: String? = null
+    private var currentZoomRatio = 1.0f
 
     fun start() {
         startBackgroundThread()
@@ -224,6 +226,9 @@ class CameraCoordinator(
             previewRequestBuilder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surf)
                 
+                // Apply current digital zoom
+                applyZoomToRequest(this, currentZoomRatio)
+                
                 // Apply target FPS if specified in JSON
                 targetFps?.let { fps ->
                     val ranges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
@@ -267,11 +272,40 @@ class CameraCoordinator(
         }
     }
 
+    fun setZoom(ratio: Float) {
+        currentZoomRatio = ratio
+        val builder = previewRequestBuilder ?: return
+        
+        try {
+            applyZoomToRequest(builder, ratio)
+            // No direct session update here, MainActivity will call applyPhotoParamsToPreview
+        } catch (e: Exception) {
+            Log.e("CameraCoordinator", "zoom=${ratio}异常", e)
+            // We don't rethrow here to let the frontend stay responsive as requested
+        }
+    }
+
+    private fun applyZoomToRequest(builder: CaptureRequest.Builder, ratio: Float) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, ratio)
+        } else {
+            activeCharacteristics?.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)?.let { rect ->
+                val cropW = (rect.width() / ratio).toInt()
+                val cropH = (rect.height() / ratio).toInt()
+                val left = (rect.width() - cropW) / 2
+                val top = (rect.height() - cropH) / 2
+                builder.set(CaptureRequest.SCALER_CROP_REGION, Rect(left, top, left + cropW, top + cropH))
+            }
+        }
+    }
+
     fun capturePhoto() {
         val cam = cameraDevice ?: return
         val session = captureSession ?: return
         val surf = previewSurface ?: return
         
+        // Ensure captureManager has the latest zoom
+        // (CaptureManager actually gets it from listener, which is CameraCoordinator)
         captureManager?.capturePhoto(cam, session, surf)
     }
 

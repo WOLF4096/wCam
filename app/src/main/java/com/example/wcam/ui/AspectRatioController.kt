@@ -33,7 +33,8 @@ class AspectRatioController(
     private var customRatioH = 3
 
     fun setCropScale(scale: Float) {
-        cropScale = (cropScale * scale).coerceIn(0.1f, 1.0f)
+        // We will constrain this later in updateCropUI based on sensor size
+        cropScale = (cropScale * scale).coerceIn(0.001f, 1.0f)
     }
 
     fun updateCropUI(isPhotoMode: Boolean, activeChars: CameraCharacteristics?, selectedVideoSize: String, selectedVideoFps: Int): Rect? {
@@ -53,6 +54,10 @@ class AspectRatioController(
             maxH = sensorH.toFloat()
             maxW = sensorH * cropRatio
         }
+
+        // Constraint: Minimum long side 64px in sensor pixels
+        val minScale = 64f / Math.max(maxW, maxH)
+        if (cropScale < minScale) cropScale = minScale
 
         val currentW = maxW * cropScale
         val currentH = maxH * cropScale

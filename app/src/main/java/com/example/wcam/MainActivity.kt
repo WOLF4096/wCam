@@ -88,7 +88,6 @@ class MainActivity : AppCompatActivity(),
     private var allVideoCapabilities = mutableMapOf<String, List<VideoSizeInfo>>()
     private var isAeAfLocked = false
     private var cropRatio = 4f / 3f
-    private var maxZoomRatio = 10.0f
     private var currentCropRectInSensor: Rect? = null
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -407,9 +406,6 @@ class MainActivity : AppCompatActivity(),
         cameraCapabilities = CameraCapabilities(characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE), characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat(), characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE), characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE), characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE), caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR), characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)?.toSet().orEmpty().contains(CameraMetadata.CONTROL_AWB_MODE_OFF), characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList())
         currentFlashSupported = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
         
-        val defaultMaxZoom = config.getFloat("default_max_zoom", 10.0f)
-        maxZoomRatio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper ?: defaultMaxZoom else characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: defaultMaxZoom
-
         currentSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
         currentLensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
         
@@ -524,7 +520,10 @@ class MainActivity : AppCompatActivity(),
         showToast(if (isAeAfLocked) getString(R.string.ae_af_locked) else getString(R.string.ae_af_unlocked))
         applyPhotoParamsToPreview() 
     }
-    override fun onZoomChanged(scale: Float) { aspectController.setCropScale(scale); updateCropOverlayUI() }
+    override fun onZoomChanged(scale: Float) { 
+        aspectController.setCropScale(scale)
+        updateCropOverlayUI() 
+    }
     override fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) { uiController.showStyledPopup(anchor, options, onSelected) }
 
     private fun updateVideoParamsForNewLens() {
@@ -541,8 +540,19 @@ class MainActivity : AppCompatActivity(),
     }
 
     override fun onLensSelected(logicalId: String, physicalId: String?) {
-        if (currentLogicalCameraId != logicalId || currentPhysicalCameraId != physicalId) {
+        if (currentLogicalCameraId == logicalId && currentPhysicalCameraId == physicalId) {
+            // Same lens clicked, toggle zoom between 1.0x and 2.0x
+            val newZoom = if (viewModel.zoomRatio.value == 1.0f) 2.0f else 1.0f
+            coordinator.setZoom(newZoom)
+            viewModel.setZoomRatio(newZoom)
+            applyPhotoParamsToPreview()
+            showToast("Zoom: ${newZoom}x")
+        } else {
+            // New lens selected, reset zoom to 1.0x
             currentLogicalCameraId = logicalId; currentPhysicalCameraId = physicalId
+            viewModel.setZoomRatio(1.0f)
+            coordinator.setZoom(1.0f)
+
             saveCurrentLensSettings(); lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
             if (!viewModel.isPhotoMode.value) updateVideoParamsForNewLens()
             coordinator.closeCamera(); if (viewModel.isFormatPanelOpen.value) updateFormatPanelUI()
