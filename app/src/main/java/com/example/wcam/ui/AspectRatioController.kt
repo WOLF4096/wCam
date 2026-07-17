@@ -58,10 +58,29 @@ class AspectRatioController(
         val currentH = maxH * cropScale
 
         val mp = (currentW * currentH) / 1_000_000.0
-        val resText = if (isPhotoMode) {
+        var resText = if (isPhotoMode) {
             "${currentW.toInt()}x${currentH.toInt()}@${String.format(Locale.US, "%.1f", mp)}MP"
         } else {
             "$selectedVideoSize@${selectedVideoFps}fps"
+        }
+
+        if (isPhotoMode) {
+            val format = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
+            val quality = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
+            val fullAlgo = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
+            val algo = fullAlgo.split('：', ':')[0].trim()
+            
+            val formatInfo = when (format) {
+                "JPG" -> "JPG $quality%"
+                "JPG + RAW" -> "JPG $quality% + RAW"
+                "RAW" -> "RAW"
+                else -> format
+            }
+            
+            resText += " | $formatInfo"
+            if (format != "RAW") {
+                resText += " | $algo"
+            }
         }
 
         overlayController.updatePhysicalResText(resText)

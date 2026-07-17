@@ -265,7 +265,10 @@ class MainActivity : AppCompatActivity(),
         binding.seekbarJpgQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, p: Int, f: Boolean) {
                 binding.tvJpgQualityTitle.text = getString(R.string.jpg_quality_title, p)
-                if (f) preferenceManager.saveInt(PreferenceManager.KEY_JPG_QUALITY, p)
+                if (f) {
+                    preferenceManager.saveInt(PreferenceManager.KEY_JPG_QUALITY, p)
+                    updateCropOverlayUI()
+                }
             }
             override fun onStartTrackingTouch(s: SeekBar?) {}
             override fun onStopTrackingTouch(s: SeekBar?) {}
@@ -344,6 +347,7 @@ class MainActivity : AppCompatActivity(),
                 override fun onPhotoParamsChanged(f: String, a: String) {
                     preferenceManager.saveString(PreferenceManager.KEY_OUTPUT_FORMAT, f)
                     if (a.isNotEmpty()) preferenceManager.saveString(PreferenceManager.KEY_DEMOSAIC_ALGO, a)
+                    updateCropOverlayUI()
                 }
             })
         } else {
