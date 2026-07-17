@@ -29,14 +29,15 @@ import android.content.pm.PackageManager
  */
 class CaptureProcessor(
     private val context: Context,
-    private val rawMediaStore: RawMediaStore
+    private val rawMediaStore: RawMediaStore,
+    private val config: com.example.wcam.util.ConfigManager
 ) {
     private val contentResolver = context.contentResolver
-    private var softwareName: String = "wCam"
+    private var softwareName: String = config.getString("exif_software_tag", "wCam 1.1")
 
     init {
         try {
-            val pInfo: PackageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val pInfo: android.content.pm.PackageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             val appName = context.applicationInfo.loadLabel(context.packageManager).toString()
             softwareName = "$appName ${pInfo.versionName}"
         } catch (e: Exception) {

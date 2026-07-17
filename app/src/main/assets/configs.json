@@ -1,0 +1,54 @@
+{
+  "default_config": {
+    "iso_max": 64000,
+    "preview_shutter_cap_nanos": 200000000,
+    "default_shutter_nanos": 100000000,
+    "lsc_strength": 1.30,
+    "default_black_level": 64,
+    "default_white_level": 1023,
+    "supported_kelvin_values": [3200, 4000, 5200, 6000, 7000],
+    "preview_max_width": 2500,
+    "preferred_aspect_ratio": 1.333,
+    "histogram_sample_width": 160,
+    "histogram_sample_height": 120,
+    "stream_freeze_threshold_ms": 2000,
+    "default_max_zoom": 10.0,
+    "default_max_diopter": 50.0,
+    "default_logical_camera_id": "0",
+    "default_physical_camera_id": "2",
+    "exif_software_tag": "wCam 1.1"
+  },
+  "device_configs": [
+    {
+      "manufacturer": "vivo",
+      "model": "V2509A",
+      "cameras": [
+        {
+          "id": "2",
+          "name": "主摄",
+          "logical_id": "0",
+          "supports_raw": true,
+          "preview_size": "1920x1440@30"
+        },
+        {
+          "id": "3",
+          "name": "长焦",
+          "logical_id": "0",
+          "supports_raw": true
+        },
+        {
+          "id": "4",
+          "name": "广角",
+          "logical_id": "0",
+          "supports_raw": true
+        },
+        {
+          "id": "1",
+          "name": "前置",
+          "logical_id": "1",
+          "supports_raw": false
+        }
+      ]
+    }
+  ]
+}

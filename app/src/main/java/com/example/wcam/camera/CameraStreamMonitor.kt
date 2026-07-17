@@ -10,6 +10,7 @@ import android.view.TextureView
  */
 class CameraStreamMonitor(
     private val backgroundHandler: Handler,
+    private val config: com.example.wcam.util.ConfigManager,
     private val listener: MonitorListener
 ) {
 
@@ -26,18 +27,21 @@ class CameraStreamMonitor(
     private val histogramTask = object : Runnable {
         override fun run() {
             val textureView = listener.getPreviewTexture()
+            val sampleW = config.getInt("histogram_sample_width", 160)
+            val sampleH = config.getInt("histogram_sample_height", 120)
+            
             if (listener.isHistogramVisible() && textureView?.isAvailable == true) {
                 try {
-                    val bitmap = textureView.getBitmap(160, 120)
+                    val bitmap = textureView.getBitmap(sampleW, sampleH)
                     if (bitmap != null) {
-                        val pixels = IntArray(160 * 120)
-                        bitmap.getPixels(pixels, 0, 160, 0, 0, 160, 120)
+                        val pixels = IntArray(sampleW * sampleH)
+                        bitmap.getPixels(pixels, 0, sampleW, 0, 0, sampleW, sampleH)
                         
                         val rHist = IntArray(256)
                         val gHist = IntArray(256)
                         val bHist = IntArray(256)
                         
-                        nativeCalculateHistogram(pixels, 160, 120, rHist, gHist, bHist)
+                        nativeCalculateHistogram(pixels, sampleW, sampleH, rHist, gHist, bHist)
                         listener.onHistogramUpdate(rHist, gHist, bHist)
                         bitmap.recycle()
                     }
@@ -51,9 +55,10 @@ class CameraStreamMonitor(
 
     private val freezeWatchdog = object : Runnable {
         override fun run() {
+            val freezeThreshold = config.getLong("stream_freeze_threshold_ms", 2000L)
             if (lastPreviewFrameTime > 0 && !listener.isCaptureInProgress()) {
                 val diff = System.currentTimeMillis() - lastPreviewFrameTime
-                if (diff > 2000) {
+                if (diff > freezeThreshold) {
                     Log.w("CameraStreamMonitor", "Stream frozen for $diff ms")
                     listener.onStreamFrozen()
                     lastPreviewFrameTime = System.currentTimeMillis()

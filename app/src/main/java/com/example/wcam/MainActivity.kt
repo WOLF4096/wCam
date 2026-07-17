@@ -50,6 +50,7 @@ class MainActivity : AppCompatActivity(),
 
     private lateinit var coordinator: CameraCoordinator
     private lateinit var permissionHelper: PermissionHelper
+    private lateinit var config: com.example.wcam.util.ConfigManager
     
     private lateinit var uiController: CameraUiController
     private lateinit var manualParamController: ManualParamController
@@ -112,6 +113,8 @@ class MainActivity : AppCompatActivity(),
         enableEdgeToEdge()
 
         permissionHelper = PermissionHelper(this)
+        config = com.example.wcam.util.ConfigManager(this)
+        PhotoParamMapper.init(config)
         
         if (permissionHelper.hasAllPermissions()) {
             initApp()
@@ -178,7 +181,7 @@ class MainActivity : AppCompatActivity(),
     private fun handleOnResume() {
         coordinator.start()
         startLocationUpdates()
-        streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), this)
+        streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), config, this)
         streamMonitor.start()
         deviceOrientationTracker.enable()
         galleryController.getRecentUri() ?: rawMediaStore.findLatestRecentPhotoUri()?.let { galleryController.updateRecentPhotoPreview(it) }
@@ -229,13 +232,13 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun initControllers() {
-        val captureProcessor = CaptureProcessor(this, rawMediaStore)
-        coordinator = CameraCoordinator(this, viewModel, preferenceManager, captureProcessor, this)
+        val captureProcessor = CaptureProcessor(this, rawMediaStore, config)
+        coordinator = CameraCoordinator(this, viewModel, preferenceManager, captureProcessor, config, this)
         
         uiController = CameraUiController(this, this)
         manualParamController = ManualParamController(this)
         overlayController = OverlayController(binding.viewGridLines, binding.viewHistogram, binding.viewCropOverlay, binding.tvPhysicalRes)
-        streamMonitor = CameraStreamMonitor(android.os.Handler(mainLooper), this)
+        streamMonitor = CameraStreamMonitor(android.os.Handler(mainLooper), config, this)
         gestureManager = GestureManager(this, this)
         lensController = LensController(LensController.LensButtons(binding.lensSelector.btnLensFront, binding.lensSelector.btnLensWide, binding.lensSelector.btnLensMain, binding.lensSelector.btnLensTele), this)
         aspectController = AspectRatioController(this, preferenceManager, overlayController, this)
@@ -278,8 +281,12 @@ class MainActivity : AppCompatActivity(),
 
     private fun loadSettings() {
         viewModel.setPhotoMode(preferenceManager.getBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, true))
-        currentLogicalCameraId = preferenceManager.getString(PreferenceManager.KEY_LENS_ID, "0")
-        currentPhysicalCameraId = preferenceManager.getString(PreferenceManager.KEY_PHYSICAL_LENS_ID, "2")
+        
+        val defaultLogicalId = config.getString("default_logical_camera_id", "0")
+        val defaultPhysicalId = config.getString("default_physical_camera_id", "2")
+        
+        currentLogicalCameraId = preferenceManager.getString(PreferenceManager.KEY_LENS_ID, defaultLogicalId)
+        currentPhysicalCameraId = preferenceManager.getString(PreferenceManager.KEY_PHYSICAL_LENS_ID, defaultPhysicalId)
         viewModel.setGridVisible(preferenceManager.getBoolean(PreferenceManager.KEY_GRID_VISIBLE, false))
         viewModel.setHistogramVisible(preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false))
         selectedPhotoRatioStr = preferenceManager.getString(PreferenceManager.KEY_PHOTO_RATIO_STR, "4:3")

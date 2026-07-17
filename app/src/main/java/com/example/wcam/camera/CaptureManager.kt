@@ -44,6 +44,12 @@ class CaptureManager(
         fun getLocation(): android.location.Location?
     }
 
+    private var config: com.example.wcam.util.ConfigManager? = null
+
+    fun setConfig(configManager: com.example.wcam.util.ConfigManager) {
+        config = configManager
+    }
+
     private val pendingRawImages = ConcurrentHashMap<Long, Image>()
     private val pendingCaptureResults = ConcurrentHashMap<Long, TotalCaptureResult>()
     private val captureStartTimeMap = ConcurrentHashMap<Long, Long>()
@@ -121,10 +127,11 @@ class CaptureManager(
 
     private fun calculateShutterNanos(): Long {
         val state = listener.getPhotoParamState()
+        val defaultShutter = config?.getLong("default_shutter_nanos", 100_000_000L) ?: 100_000_000L
         return if (state.shutter.isAuto) {
-            listener.getPreviewAutoValues().shutterNanos ?: 100_000_000L
+            listener.getPreviewAutoValues().shutterNanos ?: defaultShutter
         } else {
-            state.shutter.manualValue ?: 100_000_000L
+            state.shutter.manualValue ?: defaultShutter
         }
     }
 
@@ -192,7 +199,7 @@ class CaptureManager(
 
     private fun prepareCaptureTask(image: Image, result: TotalCaptureResult, chars: CameraCharacteristics, format: String, timestamp: Long): CaptureTask {
         val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 100
-        val lscStrength = 1.30f // Can be passed in
+        val lscStrength = config?.getFloat("lsc_strength", 1.30f) ?: 1.30f
         val currentLsc = lscStrength * (if (iso <= 100) 1.0f else if (iso >= 3200) 0.5f else 1.0f - ((iso - 100).toFloat() / 3100f * 0.5f))
         
         val algoKey = mapAlgoKey(preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast"))
@@ -205,11 +212,12 @@ class CaptureManager(
 
         val bayerPattern = chars.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
         val blackLevelPattern = chars.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+        val defaultBlackLevel = config?.getInt("default_black_level", 64) ?: 64
         val blackLevel = if (blackLevelPattern != null) {
             (blackLevelPattern.getOffsetForIndex(0, 0) + blackLevelPattern.getOffsetForIndex(1, 0) + 
              blackLevelPattern.getOffsetForIndex(0, 1) + blackLevelPattern.getOffsetForIndex(1, 1)) / 4
-        } else 64
-        val whiteLevel = chars.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: 1023
+        } else defaultBlackLevel
+        val whiteLevel = chars.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: (config?.getInt("default_white_level", 1023) ?: 1023)
         
         val wbGains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
         val wbArray = if (wbGains != null) floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)

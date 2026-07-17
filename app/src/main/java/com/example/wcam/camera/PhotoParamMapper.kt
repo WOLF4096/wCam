@@ -9,7 +9,14 @@ import kotlin.math.roundToInt
 
 object PhotoParamMapper {
 
-    val SUPPORTED_KELVIN_VALUES = listOf(3200, 4000, 5200, 6000, 7000)
+    private var config: com.example.wcam.util.ConfigManager? = null
+    
+    fun init(configManager: com.example.wcam.util.ConfigManager) {
+        config = configManager
+    }
+
+    val SUPPORTED_KELVIN_VALUES: List<Int>
+        get() = config?.getIntList("supported_kelvin_values") ?: listOf(3200, 4000, 5200, 6000, 7000)
 
     fun formatIsoDisplay(iso: Int): String {
         return if (iso >= 1000) {
@@ -196,8 +203,9 @@ object PhotoParamMapper {
                 if (!capabilities.supportsManualSensor || hardwareRange == null) {
                     currentState
                 } else {
-                    // Expand the upper bound to 64000 to bypass hardware reported limit
-                    val extendedRange = hardwareRange.first..64000
+                    // Expand the upper bound to bypass hardware reported limit
+                    val isoMax = config?.getInt("iso_max", 64000) ?: 64000
+                    val extendedRange = hardwareRange.first..isoMax
                     val parsedValue = parseIsoLabel(label)
                     val clampedValue = clampIso(parsedValue, extendedRange)
                     
@@ -284,9 +292,10 @@ object PhotoParamMapper {
             val isoValue = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower
             var shutterValue = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower
             
-            if (isStream && shutterValue != null && shutterValue > 200_000_000L) {
-                // Cap stream/video exposure at 1/5s to avoid freezing
-                shutterValue = 200_000_000L
+            val shutterCap = config?.getLong("preview_shutter_cap_nanos", 200_000_000L) ?: 200_000_000L
+            if (isStream && shutterValue != null && shutterValue > shutterCap) {
+                // Cap stream/video exposure to avoid freezing
+                shutterValue = shutterCap
             }
             
             isoValue?.let { 

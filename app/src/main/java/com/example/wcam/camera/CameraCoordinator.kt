@@ -28,6 +28,7 @@ class CameraCoordinator(
     private val viewModel: CameraViewModel,
     private val preferenceManager: PreferenceManager,
     private val captureProcessor: CaptureProcessor,
+    private val config: com.example.wcam.util.ConfigManager,
     private val listener: CoordinatorListener
 ) : CameraManager.CameraListener, CaptureSessionManager.SessionListener, CaptureManager.CaptureListener {
 
@@ -110,7 +111,7 @@ class CameraCoordinator(
                 executor,
                 handler,
                 this
-            )
+            ).apply { setConfig(config) }
         }
     }
 
@@ -179,11 +180,14 @@ class CameraCoordinator(
             captureSession?.close()
             
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val maxWidth = config.getInt("preview_max_width", 2500)
+            val preferredRatio = config.getFloat("preferred_aspect_ratio", 1.333f)
+
             val previewSize = if (viewModel.isPhotoMode.value) {
                 map?.getOutputSizes(SurfaceTexture::class.java)
-                    ?.filter { Math.abs(it.width.toFloat() / it.height - 1.333f) < 0.1 }
+                    ?.filter { Math.abs(it.width.toFloat() / it.height - preferredRatio) < 0.1 }
                     ?.sortedByDescending { it.width * it.height }
-                    ?.find { it.width <= 2500 } ?: Size(1440, 1080)
+                    ?.find { it.width <= maxWidth } ?: Size(1440, 1080)
             } else {
                 Size(1920, 1080)
             }
