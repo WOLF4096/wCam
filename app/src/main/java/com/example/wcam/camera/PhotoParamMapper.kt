@@ -256,7 +256,7 @@ object PhotoParamMapper {
         val manualExposure = !state.iso.isAuto || !state.shutter.isAuto
 
         if (manualExposure && capabilities.supportsManualSensor) {
-            builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            // Force CONTROL_AE_MODE_OFF for manual exposure
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
             
             val isoToApply = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower ?: 100
@@ -275,8 +275,9 @@ object PhotoParamMapper {
                 builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
             }
         } else {
-            builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            // Reset sensor duration if not manual
+            builder.set(CaptureRequest.SENSOR_FRAME_DURATION, null)
         }
 
         if (!state.ev.isAuto) {

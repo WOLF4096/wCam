@@ -10,6 +10,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
+import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -19,6 +20,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.content.Context
+import android.media.MediaScannerConnection
 
 /**
  * Handles image processing, metadata writing, and saving to MediaStore.
@@ -78,7 +80,12 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName)
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName + "/")
+            } else {
+                val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), folderName)
+                if (!folder.exists()) folder.mkdirs()
+                val file = File(folder, fileName)
+                put(MediaStore.Images.Media.DATA, file.absolutePath)
             }
         }
 
@@ -90,6 +97,14 @@ class CaptureProcessor(
             os.flush()
         } ?: throw IOException("Failed to open output stream")
         
+        // Scan for legacy versions
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val path = values.getAsString(MediaStore.Images.Media.DATA)
+            if (path != null) {
+                MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/jpeg"), null)
+            }
+        }
+
         // Write EXIF
         try {
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
@@ -145,7 +160,12 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName)
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName + "/")
+            } else {
+                val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), folderName)
+                if (!folder.exists()) folder.mkdirs()
+                val file = File(folder, fileName)
+                put(MediaStore.Images.Media.DATA, file.absolutePath)
             }
         }
 
@@ -155,6 +175,13 @@ class CaptureProcessor(
         contentResolver.openOutputStream(uri)?.use { os ->
             finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
         } ?: throw IOException("Failed to open output stream")
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val path = values.getAsString(MediaStore.Images.Media.DATA)
+            if (path != null) {
+                MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/png"), null)
+            }
+        }
         
         if (finalBitmap != rotatedBitmap) finalBitmap.recycle()
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
@@ -191,7 +218,7 @@ class CaptureProcessor(
         }
         
         aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
-        focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
+        focalLength?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) } // Fallback if focal length missing
         
         if (evIndex != null && evStep != null) {
             val ev = evIndex * evStep

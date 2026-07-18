@@ -15,6 +15,9 @@ import android.provider.MediaStore
 import android.util.Size
 import java.io.File
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 const val RAW_MIME_TYPE = "image/x-adobe-dng"
 
@@ -42,7 +45,7 @@ class RawMediaStore(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, RAW_MIME_TYPE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/$folderName")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName + "/")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 val folder = File(
@@ -69,7 +72,6 @@ class RawMediaStore(
         }
         try {
             resolver.openOutputStream(uri)?.use { outputStream ->
-                // Direct saving without calculating strides or buffers manually
                 dngCreator.writeImage(outputStream, image)
             } ?: throw IOException("Unable to open RAW output stream")
 
@@ -93,47 +95,27 @@ class RawMediaStore(
     fun loadThumbnailBitmap(uri: Uri): Bitmap? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // 加载稍大一点的缩略图以保证中心裁剪后的清晰度
                 val source = context.contentResolver.loadThumbnail(uri, Size(512, 512), null)
-                
                 source?.let {
-                    // 计算中心 1:1 区域
                     val minDim = Math.min(it.width, it.height)
                     val left = (it.width - minDim) / 2
                     val top = (it.height - minDim) / 2
-                    
-                    // 裁剪中心 1:1 区域
                     val cropped = Bitmap.createBitmap(it, left, top, minDim, minDim)
-                    
-                    // 如果裁剪产生了新 Bitmap，则回收原始图以节省内存
-                    if (cropped != it) {
-                        it.recycle()
-                    }
-                    
-                    // 压缩/缩放到预览按钮建议的尺寸 (256x256)
+                    if (cropped != it) it.recycle()
                     if (cropped.width > 256) {
                         val scaled = Bitmap.createScaledBitmap(cropped, 256, 256, true)
-                        if (scaled != cropped) {
-                            cropped.recycle()
-                        }
+                        if (scaled != cropped) cropped.recycle()
                         scaled
-                    } else {
-                        cropped
-                    }
+                    } else cropped
                 }
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
+            } else null
+        } catch (e: Exception) { null }
     }
 
     fun findLatestRecentPhotoUri(): Uri? {
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Images.Media._ID)
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
-
         context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
@@ -142,5 +124,10 @@ class RawMediaStore(
             }
         }
         return null
+    }
+
+    private fun createPhotoDisplayName(timestampMillis: Long, extension: String): String {
+        val formatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+        return "${formatter.format(Date(timestampMillis))}.$extension"
     }
 }

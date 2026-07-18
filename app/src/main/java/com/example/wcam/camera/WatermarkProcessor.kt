@@ -22,7 +22,7 @@ class WatermarkProcessor {
         config: WatermarkConfig,
         characteristics: CameraCharacteristics?,
         result: TotalCaptureResult?,
-        rotationDegrees: Int
+        rotationDegrees: Int // Note: bitmap passed here should be ALREADY ROTATED
     ): Bitmap {
         if (config.type == "None") return bitmap
 
@@ -68,28 +68,29 @@ class WatermarkProcessor {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
         
-        // Font size relative to height, but at least a reasonable absolute size
+        // Font size relative to height
         val textSize = (bitmap.height / 40f).coerceAtLeast(40f)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             this.textSize = textSize
-            setShadowLayer(3f, 2f, 2f, Color.BLACK)
+            setShadowLayer(4f, 2f, 2f, Color.BLACK)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
-        // Position: 100px from bottom-left (absolute pixels)
-        // Since the bitmap is already rotated to its final orientation, bottom-left is always bottom-left.
+        // Draw at bottom left.
+        // We use 100px padding from the bottom and left edges of the final rotated bitmap.
         canvas.drawText(text, 100f, bitmap.height - 100f, paint)
         return mutableBitmap
     }
 
     private fun drawExternalWatermark(bitmap: Bitmap, text: String): Bitmap {
-        val padding = 200 // Total height for external area
-        val newBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height + padding, Bitmap.Config.ARGB_8888)
+        val padding = 200 // White area height
+        val newHeight = bitmap.height + padding
+        val newBitmap = Bitmap.createBitmap(bitmap.width, newHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(newBitmap)
         
         canvas.drawColor(Color.WHITE)
-        // Draw original photo at top
+        // Original photo on top
         canvas.drawBitmap(bitmap, 0f, 0f, null)
 
         val textSize = (bitmap.height / 40f).coerceAtLeast(40f)
@@ -99,9 +100,9 @@ class WatermarkProcessor {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
-        // Requirements say "bottom-left 100, -100px". 
-        // This means it's 100px up from the bottom of the NEW image.
-        canvas.drawText(text, 100f, newBitmap.height - 100f, paint)
+        // Draw in the middle of the white area vertically, 100px from left
+        // White area starts at bitmap.height
+        canvas.drawText(text, 100f, bitmap.height + (padding / 2f) + (textSize / 2f), paint)
         return newBitmap
     }
 }

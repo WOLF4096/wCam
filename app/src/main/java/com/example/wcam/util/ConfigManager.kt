@@ -30,27 +30,35 @@ class ConfigManager(context: Context) {
     }
 
     fun getString(key: String, fallback: String): String {
-        return currentDeviceConfig?.optString(key) 
-            ?: defaultConfig?.optString(key) 
-            ?: fallback
+        return if (currentDeviceConfig?.has(key) == true) {
+            currentDeviceConfig!!.optString(key)
+        } else {
+            defaultConfig?.optString(key) ?: fallback
+        }
     }
 
     fun getInt(key: String, fallback: Int): Int {
-        return currentDeviceConfig?.optInt(key, -1).takeIf { it != -1 }
-            ?: defaultConfig?.optInt(key, fallback)
-            ?: fallback
+        return if (currentDeviceConfig?.has(key) == true) {
+            currentDeviceConfig!!.optInt(key)
+        } else {
+            defaultConfig?.optInt(key, fallback) ?: fallback
+        }
     }
 
     fun getLong(key: String, fallback: Long): Long {
-        return currentDeviceConfig?.optLong(key, -1L).takeIf { it != -1L }
-            ?: defaultConfig?.optLong(key, fallback)
-            ?: fallback
+        return if (currentDeviceConfig?.has(key) == true) {
+            currentDeviceConfig!!.optLong(key)
+        } else {
+            defaultConfig?.optLong(key, fallback) ?: fallback
+        }
     }
 
     fun getDouble(key: String, fallback: Double): Double {
-        return currentDeviceConfig?.optDouble(key, Double.NaN).takeIf { it?.isNaN() == false }
-            ?: defaultConfig?.optDouble(key, fallback)
-            ?: fallback
+        return if (currentDeviceConfig?.has(key) == true) {
+            currentDeviceConfig!!.optDouble(key)
+        } else {
+            defaultConfig?.optDouble(key, fallback) ?: fallback
+        }
     }
 
     fun getFloat(key: String, fallback: Float): Float {
