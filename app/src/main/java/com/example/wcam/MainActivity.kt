@@ -13,7 +13,6 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.util.Size
-import android.view.MotionEvent
 import android.view.TextureView
 import android.view.View
 import android.widget.*
@@ -436,7 +435,6 @@ class MainActivity : AppCompatActivity(),
     override fun onReadyToResumePreview() { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); resumePreview() } }
     override fun onError(message: String) { showToast(message) }
     override fun getPreviewTexture(): TextureView = binding.cameraPreview
-
     override fun getCountdownTextView(): TextView? = binding.tvCountdownOverlay
 
     // State getters for Coordinator
@@ -533,18 +531,15 @@ class MainActivity : AppCompatActivity(),
 
         viewsToRotate.forEach { view ->
             var currentRotation = view.rotation
-            // Normalize current rotation to [0, 360)
             currentRotation = (currentRotation % 360 + 360) % 360
             
             var delta = targetRotation - currentRotation
-            // Find the shortest path for rotation
             if (delta > 180) delta -= 360
             if (delta < -180) delta += 360
             
             view.animate().rotationBy(delta).setDuration(300).start()
         }
         
-        // Lens selector buttons
         val lensContainer = binding.lensSelector.lensSelectorContainer
         for (i in 0 until lensContainer.childCount) {
             val view = lensContainer.getChildAt(i)

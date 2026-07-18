@@ -10,22 +10,30 @@ enum class FlashMode(val iconRes: Int) {
     TORCH(R.drawable.ic_flash_torch);
 
     fun applyToRequest(builder: CaptureRequest.Builder, isStillCapture: Boolean) {
+        val currentAeMode = builder.get(CaptureRequest.CONTROL_AE_MODE)
+        val isManualExposure = currentAeMode == CaptureRequest.CONTROL_AE_MODE_OFF
+
         when (this) {
             OFF -> {
                 builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
-                builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                // Do not force AE_MODE_ON if it was already set to OFF (manual)
+                if (!isManualExposure) {
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                }
             }
             SINGLE -> {
-                if (isStillCapture) {
+                if (isStillCapture && !isManualExposure) {
                     builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH)
                 } else {
                     builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
-                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    if (!isManualExposure) {
+                        builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    }
                 }
             }
             TORCH -> {
                 builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
-                builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                // AE mode must be ON or OFF. If manual, keep OFF. If auto, keep ON.
             }
         }
     }

@@ -256,40 +256,26 @@ object PhotoParamMapper {
         val manualExposure = !state.iso.isAuto || !state.shutter.isAuto
 
         if (manualExposure && capabilities.supportsManualSensor) {
+            builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            val isoValue = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower
-            var shutterValue = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower
             
-            // Critical fix: ensure we only apply values if they are actually manually set
-            // or if the overall exposure is manual.
-            if (!state.iso.isAuto) {
-                isoValue?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
-            } else {
-                fallbackAutoIso?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
-            }
-
-            if (!state.shutter.isAuto) {
-                shutterValue?.let { 
-                    builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
-                    builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
-                }
-            } else {
-                fallbackAutoShutterNanos?.let { 
-                    builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
-                    builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
-                }
-            }
-
+            val isoToApply = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower ?: 100
+            var shutterToApply = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower ?: 10_000_000L
+            
             val shutterCap = config?.getLong("preview_shutter_cap_nanos", 200_000_000L) ?: 200_000_000L
-            if (isStream && shutterValue != null && shutterValue > shutterCap) {
-                builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterCap)
-                builder.set(CaptureRequest.SENSOR_FRAME_DURATION, shutterCap)
+            if (isStream && shutterToApply > shutterCap) {
+                shutterToApply = shutterCap
             }
             
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, isoToApply)
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterToApply)
+            builder.set(CaptureRequest.SENSOR_FRAME_DURATION, shutterToApply)
+
             capabilities.aeFpsRanges?.minByOrNull { it.lower }?.let { range ->
                 builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
             }
         } else {
+            builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
         }
 

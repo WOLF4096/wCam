@@ -84,7 +84,7 @@ class CaptureManager(
                     )
                     
                     listener.getFlashMode().applyToRequest(this, isStillCapture = true)
-                    // Digital zoom
+                    
                     val zoomRatio = listener.getZoomRatio()
                     val chars = listener.getActiveCameraCharacteristics()
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
@@ -117,12 +117,7 @@ class CaptureManager(
             }
         }
 
-        if (listener.getFlashMode() == FlashMode.SINGLE) {
-            // Flash pulse logic would need to be handled by caller or passed in
-            captureAction() 
-        } else {
-            captureAction()
-        }
+        captureAction()
     }
 
     private fun calculateShutterNanos(): Long {
@@ -262,16 +257,14 @@ class CaptureManager(
 
     private fun executeCaptureTask(task: CaptureTask, chars: CameraCharacteristics, result: TotalCaptureResult, formats: Set<String>) {
         try {
-            // Produce a non-rotated bitmap from the engine, then rotate in Java for better compatibility
             val bitmap = DemosaicEngine.processFromBuffer(
                 task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
                 task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
                 task.metadata.shadingMap, task.metadata.shadingMapSize,
                 task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
-                task.cropRect, 0 // No rotation in engine
+                task.cropRect, 0
             )
 
-            // Apply Watermark
             val wmMode = preferenceManager.getString("wm_mode", "None")
             val wmConfig = WatermarkProcessor.WatermarkConfig(
                 type = wmMode,
@@ -280,19 +273,17 @@ class CaptureManager(
                 showText = preferenceManager.getBoolean("wm_show_text", false),
                 customText = preferenceManager.getString("wm_custom_text", "wCam")
             )
-            val watermarkedBitmap = WatermarkProcessor().applyWatermark(bitmap, wmConfig, chars, result, task.rotationDegrees)
 
             if (formats.contains("JPG")) {
-                val uri = captureProcessor.saveJpegBitmap(watermarkedBitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
+                val uri = captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
                 listener.onCaptureCompleted(uri)
             }
             
             if (formats.contains("PNG")) {
-                val uri = captureProcessor.savePngBitmap(watermarkedBitmap, "", task.rotationDegrees, task.captureStartTime)
+                val uri = captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime, chars, result, wmConfig)
                 listener.onCaptureCompleted(uri)
             }
             
-            if (watermarkedBitmap != bitmap) watermarkedBitmap.recycle()
             bitmap.recycle()
         } catch (e: Exception) {
             Log.e("CaptureManager", "Execute task failed", e)
@@ -303,7 +294,7 @@ class CaptureManager(
         return when {
             savedAlgo.startsWith("RGB通道") -> "RgbCh"
             savedAlgo.startsWith("灰度") -> "Mono"
-            savedAlgo.startsWith("无") || savedAlgo.startsWith("原始拜尔") -> "None"
+            savedAlgo.startsWith("简单处理") || savedAlgo.startsWith("无") || savedAlgo.startsWith("原始拜尔") -> "None"
             else -> savedAlgo.split('：', ':')[0].trim()
         }
     }

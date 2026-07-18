@@ -35,8 +35,8 @@ class CaptureProcessor(
     init {
         try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val appName = context.getString(context.applicationInfo.labelRes)
-            softwareName = "$appName ${pInfo.versionName}"
+            val appLabel = context.applicationInfo.loadLabel(context.packageManager).toString()
+            softwareName = "$appLabel ${pInfo.versionName}"
         } catch (e: Exception) {
             Log.e("CaptureProcessor", "Failed to get version info", e)
         }
@@ -53,8 +53,12 @@ class CaptureProcessor(
         quality: Int,
         characteristics: CameraCharacteristics?,
         captureResult: TotalCaptureResult?,
-        location: android.location.Location? = null
+        location: android.location.Location? = null,
+        wmConfig: WatermarkProcessor.WatermarkConfig? = null
     ): Uri {
+        val folderName = config.getString("default_storage_folder", "wCam")
+        
+        // 1. Rotate first
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = if (rotationDegrees != 0) {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
@@ -62,13 +66,19 @@ class CaptureProcessor(
             bitmap
         }
         
+        // 2. Apply Watermark to rotated bitmap
+        val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
+            WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0)
+        } else {
+            rotatedBitmap
+        }
+
         val fileName = createPhotoDisplayName(timestamp, "jpg")
-        val folderName = config.getString("default_storage_folder", "wCam")
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/$folderName")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName)
             }
         }
 
@@ -76,7 +86,7 @@ class CaptureProcessor(
             ?: throw IOException("Failed to create MediaStore entry")
 
         contentResolver.openOutputStream(uri)?.use { os ->
-            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
+            finalBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
             os.flush()
         } ?: throw IOException("Failed to open output stream")
         
@@ -85,30 +95,47 @@ class CaptureProcessor(
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val exif = ExifInterface(pfd.fileDescriptor)
                 writeExifMetadata(exif, characteristics, captureResult)
-                // Since the bitmap is already rotated, we set EXIF orientation to NORMAL
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
                 
                 if (preferenceManager.getBoolean("save_location", true)) {
                     location?.let { exif.setGpsInfo(it) }
                 }
-
+                
                 exif.saveAttributes()
             }
         } catch (e: Exception) {
             Log.e("CaptureProcessor", "Failed to write EXIF metadata", e)
         }
         
+        if (finalBitmap != rotatedBitmap) finalBitmap.recycle()
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         return uri
     }
 
-    fun savePngBitmap(bitmap: Bitmap, suffix: String, rotationDegrees: Int, timestamp: Long): Uri {
+    fun savePngBitmap(
+        bitmap: Bitmap, 
+        suffix: String, 
+        rotationDegrees: Int, 
+        timestamp: Long,
+        characteristics: CameraCharacteristics? = null,
+        captureResult: TotalCaptureResult? = null,
+        wmConfig: WatermarkProcessor.WatermarkConfig? = null
+    ): Uri {
         val folderName = config.getString("default_storage_folder", "wCam")
+        
+        // 1. Rotate first
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = if (rotationDegrees != 0) {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
         } else {
             bitmap
+        }
+
+        // 2. Apply Watermark to rotated bitmap
+        val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
+            WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0)
+        } else {
+            rotatedBitmap
         }
         
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(timestamp))
@@ -118,7 +145,7 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/$folderName")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName)
             }
         }
 
@@ -126,9 +153,10 @@ class CaptureProcessor(
             ?: throw IOException("Failed to create MediaStore entry")
 
         contentResolver.openOutputStream(uri)?.use { os ->
-            rotatedBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
+            finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
         } ?: throw IOException("Failed to open output stream")
         
+        if (finalBitmap != rotatedBitmap) finalBitmap.recycle()
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         return uri
     }
@@ -158,7 +186,6 @@ class CaptureProcessor(
         exposureTime?.let {
             if (it > 0) {
                 val exposureInSeconds = it / 1_000_000_000.0
-                // Use decimal format for better compatibility (e.g., 0.008)
                 exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.format(Locale.US, "%.6f", exposureInSeconds))
             }
         }
@@ -171,16 +198,13 @@ class CaptureProcessor(
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, String.format(Locale.US, "%.1f", ev))
         }
 
-        // Flash fired check: 0=off, 1=fired
         val flashFired = if (flashState != null) {
             flashState == CaptureResult.FLASH_STATE_FIRED || flashState == CaptureResult.FLASH_STATE_PARTIAL
         } else {
-            // Fallback: check request if result missing
             false
         }
         exif.setAttribute(ExifInterface.TAG_FLASH, if (flashFired) "1" else "0")
         
-        // Date Time
         val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
         val now = Date()
         val dateStr = sdf.format(now)
