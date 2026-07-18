@@ -14,6 +14,7 @@ import android.util.Log
 import android.util.Size
 import android.view.Surface
 import android.view.TextureView
+import android.widget.TextView
 import com.example.wcam.PreferenceManager
 import com.example.wcam.ui.ManualParamController
 import com.example.wcam.viewmodel.CameraViewModel
@@ -43,6 +44,7 @@ class CameraCoordinator(
         fun onReadyToResumePreview()
         fun onError(message: String)
         fun getPreviewTexture(): TextureView
+        fun getCountdownTextView(): TextView?
         
         // State getters that remain in Activity for now (UI related or calculated)
         fun getDeviceRotationDegrees(): Int
@@ -72,11 +74,17 @@ class CameraCoordinator(
     private var currentLogicalId = ""
     private var currentPhysicalId: String? = null
 
+    private var countdownManager: CountdownManager? = null
+    private var autoCaptureManager: AutoCaptureManager? = null
+    private val watermarkProcessor = WatermarkProcessor()
+
     fun start() {
         startBackgroundThread()
     }
 
     fun stop() {
+        autoCaptureManager?.stop()
+        autoCaptureManager = null
         closeCamera()
         stopBackgroundThread()
     }
@@ -113,6 +121,10 @@ class CameraCoordinator(
                 handler,
                 this
             ).apply { setConfig(config) }
+
+            autoCaptureManager = AutoCaptureManager(handler) {
+                capturePhoto()
+            }
         }
     }
 
@@ -269,6 +281,41 @@ class CameraCoordinator(
     }
 
     fun capturePhoto() {
+        // Handle Auto Capture first-time trigger
+        val autoMode = preferenceManager.getString("auto_capture_mode", "None")
+        if (autoCaptureManager != null && autoMode != "None") {
+            if (autoMode == "Interval") {
+                val interval = preferenceManager.getString("auto_interval_sec", "5").toIntOrNull() ?: 5
+                val duration = preferenceManager.getString("auto_interval_duration", "60").toIntOrNull() ?: 60
+                autoCaptureManager?.startInterval(interval, duration)
+            } else if (autoMode == "Continuous") {
+                val count = preferenceManager.getString("auto_continuous_count", "10").toIntOrNull() ?: 10
+                autoCaptureManager?.startContinuous(count)
+            }
+            return
+        }
+
+        val seconds = preferenceManager.getInt("countdown_sec", 0)
+        if (countdownManager == null) {
+            // This is a bit hacky, normally listener should provide the view
+            // but we can't easily change the interface right now.
+            // I'll assume we can get it or pass it.
+            // Let's add it to CoordinatorListener.
+        }
+        
+        listener.getCountdownTextView()?.let { tv ->
+            if (countdownManager == null) {
+                countdownManager = CountdownManager(Handler(android.os.Looper.getMainLooper()), tv) {
+                    executeCaptureAction()
+                }
+            }
+            countdownManager?.start(seconds)
+        } ?: run {
+            executeCaptureAction()
+        }
+    }
+
+    private fun executeCaptureAction() {
         val cam = cameraDevice ?: return
         val session = captureSession ?: return
         val surf = previewSurface ?: return
@@ -296,6 +343,7 @@ class CameraCoordinator(
 
     override fun onCaptureCompleted(uri: Uri?) {
         listener.onCaptureCompleted(uri)
+        autoCaptureManager?.onFrameProcessed()
     }
 
     override fun onCaptureFailed(message: String) {

@@ -212,14 +212,14 @@ class MainActivity : AppCompatActivity(),
         preferenceManager = PreferenceManager(this)
         config = com.example.wcam.util.ConfigManager(this)
         PhotoParamMapper.init(config)
-        rawMediaStore = RawMediaStore(this, config)
+        rawMediaStore = RawMediaStore(this, config, preferenceManager)
         deviceOrientationTracker = DeviceOrientationTracker(this)
 
         initControllers()
     }
 
     private fun initControllers() {
-        val captureProcessor = CaptureProcessor(this, rawMediaStore, config)
+        val captureProcessor = CaptureProcessor(this, rawMediaStore, config, preferenceManager)
         coordinator = CameraCoordinator(this, viewModel, preferenceManager, captureProcessor, config, this)
         
         uiController = CameraUiController(this, this)
@@ -425,6 +425,8 @@ class MainActivity : AppCompatActivity(),
     override fun onReadyToResumePreview() { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); resumePreview() } }
     override fun onError(message: String) { showToast(message) }
     override fun getPreviewTexture(): TextureView = binding.cameraPreview
+
+    override fun getCountdownTextView(): TextView? = binding.tvCountdownOverlay
 
     // State getters for Coordinator
     override fun getDeviceRotationDegrees(): Int = deviceOrientationTracker.deviceRotationDegrees

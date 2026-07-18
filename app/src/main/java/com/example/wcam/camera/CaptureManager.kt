@@ -176,20 +176,21 @@ class CaptureManager(
     }
 
     private fun dispatchCaptureTask(image: Image, result: TotalCaptureResult, chars: CameraCharacteristics, wallTime: Long) {
-        val format = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
+        val formatString = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
+        val formats = formatString.split(",").filter { it.isNotEmpty() }.toSet()
         isCaptureInProgress = false
         
-        val task = prepareCaptureTask(image, result, chars, format, wallTime)
+        val task = prepareCaptureTask(image, result, chars, formatString, wallTime)
         
         captureExecutor.submit {
             try {
-                if (format == "RAW" || format == "JPG + RAW") {
+                if (formats.contains("RAW")) {
                     val uri = captureProcessor.saveRawImage(image, chars, result, task.exifOrientation, task.location, wallTime)
-                    if (format == "RAW") listener.onCaptureCompleted(uri)
+                    listener.onCaptureCompleted(uri)
                 }
 
-                if (format == "JPG" || format == "JPG + RAW") {
-                    executeCaptureTask(task, chars, result)
+                if (formats.contains("JPG") || formats.contains("PNG")) {
+                    executeCaptureTask(task, chars, result, formats)
                 }
             } finally {
                 image.close()
@@ -259,7 +260,7 @@ class CaptureManager(
         )
     }
 
-    private fun executeCaptureTask(task: CaptureTask, chars: CameraCharacteristics, result: TotalCaptureResult) {
+    private fun executeCaptureTask(task: CaptureTask, chars: CameraCharacteristics, result: TotalCaptureResult, formats: Set<String>) {
         try {
             // Produce a non-rotated bitmap from the engine, then rotate in Java for better compatibility
             val bitmap = DemosaicEngine.processFromBuffer(
@@ -270,13 +271,28 @@ class CaptureManager(
                 task.cropRect, 0 // No rotation in engine
             )
 
-            val uri = if (task.algoKey == "Mono" || task.algoKey == "None") {
-                captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime)
-            } else {
-                captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
+            // Apply Watermark
+            val wmMode = preferenceManager.getString("wm_mode", "None")
+            val wmConfig = WatermarkProcessor.WatermarkConfig(
+                type = wmMode,
+                showTime = preferenceManager.getBoolean("wm_show_time", true),
+                showParams = preferenceManager.getBoolean("wm_show_params", true),
+                showText = preferenceManager.getBoolean("wm_show_text", false),
+                customText = preferenceManager.getString("wm_custom_text", "wCam")
+            )
+            val watermarkedBitmap = WatermarkProcessor().applyWatermark(bitmap, wmConfig, chars, result)
+
+            if (formats.contains("JPG")) {
+                val uri = captureProcessor.saveJpegBitmap(watermarkedBitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)
+                listener.onCaptureCompleted(uri)
             }
             
-            listener.onCaptureCompleted(uri)
+            if (formats.contains("PNG")) {
+                val uri = captureProcessor.savePngBitmap(watermarkedBitmap, "", task.rotationDegrees, task.captureStartTime)
+                listener.onCaptureCompleted(uri)
+            }
+            
+            if (watermarkedBitmap != bitmap) watermarkedBitmap.recycle()
             bitmap.recycle()
         } catch (e: Exception) {
             Log.e("CaptureManager", "Execute task failed", e)

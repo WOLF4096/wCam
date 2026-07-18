@@ -26,7 +26,8 @@ import android.content.Context
 class CaptureProcessor(
     private val context: Context,
     private val rawMediaStore: RawMediaStore,
-    private val config: com.example.wcam.util.ConfigManager
+    private val config: com.example.wcam.util.ConfigManager,
+    private val preferenceManager: com.example.wcam.PreferenceManager
 ) {
     private val contentResolver = context.contentResolver
     private var softwareName: String = "wCam"
@@ -86,7 +87,11 @@ class CaptureProcessor(
                 writeExifMetadata(exif, characteristics, captureResult)
                 // Since the bitmap is already rotated, we set EXIF orientation to NORMAL
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                location?.let { exif.setGpsInfo(it) }
+                
+                if (preferenceManager.getBoolean("save_location", true)) {
+                    location?.let { exif.setGpsInfo(it) }
+                }
+
                 exif.saveAttributes()
             }
         } catch (e: Exception) {

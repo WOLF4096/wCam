@@ -20,7 +20,8 @@ const val RAW_MIME_TYPE = "image/x-adobe-dng"
 
 class RawMediaStore(
     private val context: Context,
-    private val config: com.example.wcam.util.ConfigManager? = null
+    private val config: com.example.wcam.util.ConfigManager? = null,
+    private val preferenceManager: com.example.wcam.PreferenceManager? = null
 ) {
     fun saveRawImage(
         image: Image,
@@ -62,7 +63,9 @@ class RawMediaStore(
 
         val dngCreator = DngCreator(characteristics, captureResult).apply {
             setOrientation(exifOrientation)
-            location?.let { setLocation(it) }
+            if (preferenceManager?.getBoolean("save_location", true) == true) {
+                location?.let { setLocation(it) }
+            }
         }
         try {
             resolver.openOutputStream(uri)?.use { outputStream ->

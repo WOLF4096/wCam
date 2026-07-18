@@ -4,7 +4,12 @@
     android:layout_height="match_parent"
     android:background="@color/settings_bg"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:paddingHorizontal="14dp">
+
+    <!-- 100px Safety Zone -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="100px" />
 
     <!-- Top Bar -->
     <LinearLayout
@@ -33,7 +38,8 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:paddingBottom="40dp">
 
             <!-- 1. Format Card -->
             <LinearLayout
@@ -47,7 +53,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="保持格式"
+                    android:text="保存格式"
                     android:textColor="@color/settings_text_main"
                     android:textSize="13sp"
                     android:layout_marginBottom="10dp" />
@@ -172,12 +178,12 @@
                     android:orientation="horizontal"
                     android:layout_marginBottom="10dp">
                     <TextView
-                        android:id="@+id/seg_none"
+                        android:id="@+id/seg_simple"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:background="@drawable/sl_settings_chip"
-                        android:text="无"
+                        android:text="简单处理"
                         android:textColor="@color/sl_settings_chip_text"
                         android:gravity="center"
                         android:paddingVertical="8dp"
@@ -205,7 +211,6 @@
                     android:rowCount="1"
                     android:alignmentMode="alignBounds"
                     android:columnOrderPreserved="false">
-                    <!-- Chips will be added here -->
                 </GridLayout>
 
                 <GridLayout
@@ -217,11 +222,10 @@
                     android:alignmentMode="alignBounds"
                     android:columnOrderPreserved="false"
                     android:visibility="gone">
-                    <!-- Chips will be added here -->
                 </GridLayout>
             </LinearLayout>
 
-            <!-- 3. Countdown Card (UI only) -->
+            <!-- 3. Countdown Card -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -242,12 +246,14 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
                     <SeekBar
+                        android:id="@+id/seekbar_countdown"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:max="10"
                         android:progress="0" />
                     <TextView
+                        android:id="@+id/tv_countdown_val"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0s"
@@ -258,7 +264,7 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- 4. Auto Capture Card (UI only) -->
+            <!-- 4. Auto Capture Card -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -278,6 +284,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal">
                     <TextView
+                        android:id="@+id/seg_auto_none"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -288,6 +295,7 @@
                         android:paddingVertical="8dp"
                         android:layout_marginEnd="4dp" />
                     <TextView
+                        android:id="@+id/seg_auto_interval"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -298,6 +306,7 @@
                         android:paddingVertical="8dp"
                         android:layout_marginHorizontal="4dp" />
                     <TextView
+                        android:id="@+id/seg_auto_continuous"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -308,9 +317,78 @@
                         android:paddingVertical="8dp"
                         android:layout_marginStart="4dp" />
                 </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/panel_auto_interval"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@color/settings_unselected_bg"
+                        android:padding="8dp"
+                        android:gravity="center">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="间隔" android:textColor="@color/white" />
+                        <EditText
+                            android:id="@+id/et_interval_sec"
+                            android:layout_width="60dp"
+                            android:layout_height="wrap_content"
+                            android:background="@null"
+                            android:inputType="number"
+                            android:gravity="center"
+                            android:text="5"
+                            android:textColor="@color/white" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="秒拍一张" android:textColor="@color/white" />
+                    </LinearLayout>
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@color/settings_unselected_bg"
+                        android:padding="8dp"
+                        android:gravity="center">
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="直到达到时长" android:textColor="@color/white" />
+                        <EditText
+                            android:id="@+id/et_interval_duration"
+                            android:layout_width="60dp"
+                            android:layout_height="wrap_content"
+                            android:background="@null"
+                            android:inputType="number"
+                            android:gravity="center"
+                            android:text="60"
+                            android:textColor="@color/white" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="秒" android:textColor="@color/white" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/panel_auto_continuous"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="10dp"
+                    android:background="@color/settings_unselected_bg"
+                    android:padding="8dp"
+                    android:gravity="center"
+                    android:visibility="gone">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="连续拍" android:textColor="@color/white" />
+                    <EditText
+                        android:id="@+id/et_continuous_count"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:background="@null"
+                        android:inputType="number"
+                        android:gravity="center"
+                        android:text="10"
+                        android:textColor="@color/white" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="张" android:textColor="@color/white" />
+                </LinearLayout>
             </LinearLayout>
 
-            <!-- 5. Watermark Card (UI only) -->
+            <!-- 5. Watermark Card -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -330,6 +408,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal">
                     <TextView
+                        android:id="@+id/seg_wm_none"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -340,6 +419,7 @@
                         android:paddingVertical="8dp"
                         android:layout_marginEnd="4dp" />
                     <TextView
+                        android:id="@+id/seg_wm_internal"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -350,6 +430,7 @@
                         android:paddingVertical="8dp"
                         android:layout_marginHorizontal="4dp" />
                     <TextView
+                        android:id="@+id/seg_wm_external"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -359,6 +440,65 @@
                         android:gravity="center"
                         android:paddingVertical="8dp"
                         android:layout_marginStart="4dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/panel_wm_options"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="12dp">
+                        <TextView
+                            android:id="@+id/chip_wm_time"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@drawable/sl_settings_chip"
+                            android:text="时间"
+                            android:textColor="@color/sl_settings_chip_text"
+                            android:gravity="center"
+                            android:paddingVertical="8dp"
+                            android:layout_marginEnd="4dp" />
+                        <TextView
+                            android:id="@+id/chip_wm_params"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@drawable/sl_settings_chip"
+                            android:text="参数"
+                            android:textColor="@color/sl_settings_chip_text"
+                            android:gravity="center"
+                            android:paddingVertical="8dp"
+                            android:layout_marginHorizontal="4dp" />
+                        <TextView
+                            android:id="@+id/chip_wm_text"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@drawable/sl_settings_chip"
+                            android:text="固定文本"
+                            android:textColor="@color/sl_settings_chip_text"
+                            android:gravity="center"
+                            android:paddingVertical="8dp"
+                            android:layout_marginStart="4dp" />
+                    </LinearLayout>
+                    <EditText
+                        android:id="@+id/et_wm_custom"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@color/settings_unselected_bg"
+                        android:hint="输入水印文本..."
+                        android:padding="10dp"
+                        android:textColor="@color/white"
+                        android:textColorHint="@color/settings_text_main"
+                        android:textSize="14sp"
+                        android:visibility="gone" />
                 </LinearLayout>
             </LinearLayout>
 
