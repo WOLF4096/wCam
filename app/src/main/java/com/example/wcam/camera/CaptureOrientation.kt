@@ -33,9 +33,9 @@ object CaptureOrientationCalculator {
     ): CaptureRotation {
         val normalizedDeviceRotation = nearestDeviceRotationDegrees(deviceRotationDegrees)
         val jpegDegrees = if (lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
-            (sensorOrientation + normalizedDeviceRotation) % 360
-        } else {
             (sensorOrientation - normalizedDeviceRotation + 360) % 360
+        } else {
+            (sensorOrientation + normalizedDeviceRotation) % 360
         }
         return CaptureRotation(
             degrees = jpegDegrees,

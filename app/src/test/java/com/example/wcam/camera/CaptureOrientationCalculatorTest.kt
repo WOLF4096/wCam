@@ -14,26 +14,26 @@ class CaptureOrientationCalculatorTest {
     }
 
     @Test
-    fun captureRotation_backCameraSubtractsDeviceRotationFromSensorOrientation() {
+    fun captureRotation_backCameraAddsDeviceRotationToSensorOrientation() {
         val rotation = CaptureOrientationCalculator.captureRotation(
             sensorOrientation = 90,
             lensFacing = CameraCharacteristics.LENS_FACING_BACK,
             deviceRotationDegrees = 90,
         )
 
-        assertEquals(0, rotation.degrees)
-        assertEquals(EXIF_ORIENTATION_NORMAL, rotation.exifOrientation)
+        assertEquals(180, rotation.degrees)
+        assertEquals(EXIF_ORIENTATION_ROTATE_180, rotation.exifOrientation)
     }
 
     @Test
-    fun captureRotation_frontCameraAddsDeviceRotationToSensorOrientation() {
+    fun captureRotation_frontCameraSubtractsDeviceRotationFromSensorOrientation() {
         val rotation = CaptureOrientationCalculator.captureRotation(
             sensorOrientation = 90,
             lensFacing = CameraCharacteristics.LENS_FACING_FRONT,
             deviceRotationDegrees = 90,
         )
 
-        assertEquals(180, rotation.degrees)
-        assertEquals(EXIF_ORIENTATION_ROTATE_180, rotation.exifOrientation)
+        assertEquals(0, rotation.degrees)
+        assertEquals(EXIF_ORIENTATION_NORMAL, rotation.exifOrientation)
     }
 }
