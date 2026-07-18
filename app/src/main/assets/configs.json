@@ -12,11 +12,9 @@
     "histogram_sample_height": 48,
     "stream_freeze_threshold_ms": 2000,
     "default_storage_folder": "wCam",
-    "wm_font_size_ratio": 40,
-    "wm_min_font_size": 16,
+    "wm_font_size": 64,
     "wm_padding_x": 40,
     "wm_padding_y": 40,
-    "wm_external_padding": 160,
     "wm_font_family": "DEFAULT",
     "wm_font_style": "BOLD"
   },

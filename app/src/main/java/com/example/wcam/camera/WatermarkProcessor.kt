@@ -90,50 +90,77 @@ class WatermarkProcessor {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
         
-        // Font size relative to height
-        val sizeRatio = config.getFloat("wm_font_size_ratio", 40f)
-        val minSize = config.getFloat("wm_min_font_size", 40f)
-        val textSize = (bitmap.height / sizeRatio).coerceAtLeast(minSize)
-        
-        val paddingX = config.getFloat("wm_padding_x", 100f)
-        val paddingY = config.getFloat("wm_padding_y", 100f)
+        val baseFontSize = config.getFloat("wm_font_size", 64f)
+        val basePaddingX = config.getFloat("wm_padding_x", 40f)
+        val basePaddingY = config.getFloat("wm_padding_y", 40f)
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            this.textSize = textSize
+            this.textSize = baseFontSize
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
             typeface = getTypeface(config)
         }
 
-        // Draw at bottom left.
-        canvas.drawText(text, paddingX, bitmap.height - paddingY, paint)
+        // Calculate text width and scale if necessary
+        val textWidth = paint.measureText(text)
+        val requiredWidth = textWidth + basePaddingX * 2
+        val scale = if (requiredWidth > bitmap.width) {
+            bitmap.width.toFloat() / requiredWidth
+        } else 1.0f
+
+        val finalFontSize = baseFontSize * scale
+        val finalPaddingX = basePaddingX * scale
+        val finalPaddingY = basePaddingY * scale
+
+        paint.textSize = finalFontSize
+
+        // Draw at bottom left
+        canvas.drawText(text, finalPaddingX, bitmap.height - finalPaddingY, paint)
         return mutableBitmap
     }
 
     private fun drawExternalWatermark(bitmap: Bitmap, text: String, config: com.example.wcam.util.ConfigManager): Bitmap {
-        val padding = config.getInt("wm_external_padding", 200) // White area height
-        val newHeight = bitmap.height + padding
+        val baseFontSize = config.getFloat("wm_font_size", 64f)
+        val basePaddingX = config.getFloat("wm_padding_x", 40f)
+        val basePaddingY = config.getFloat("wm_padding_y", 40f)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            this.textSize = baseFontSize
+            typeface = getTypeface(config)
+        }
+
+        // Calculate scale
+        val textWidth = paint.measureText(text)
+        val requiredWidth = textWidth + basePaddingX * 2
+        val scale = if (requiredWidth > bitmap.width) {
+            bitmap.width.toFloat() / requiredWidth
+        } else 1.0f
+
+        val finalFontSize = baseFontSize * scale
+        val finalPaddingX = basePaddingX * scale
+        val finalPaddingY = basePaddingY * scale
+        
+        paint.textSize = finalFontSize
+        
+        // Calculate white bar height based on scaled font height and vertical padding
+        val fontMetrics = paint.fontMetrics
+        val fontHeight = fontMetrics.descent - fontMetrics.ascent
+        val externalPadding = (fontHeight + finalPaddingY * 2).toInt()
+
+        val newHeight = bitmap.height + externalPadding
         val newBitmap = Bitmap.createBitmap(bitmap.width, newHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(newBitmap)
         
         canvas.drawColor(Color.WHITE)
-        // Original photo on top
         canvas.drawBitmap(bitmap, 0f, 0f, null)
 
-        val sizeRatio = config.getFloat("wm_font_size_ratio", 40f)
-        val minSize = config.getFloat("wm_min_font_size", 40f)
-        val textSize = (bitmap.height / sizeRatio).coerceAtLeast(minSize)
-        
-        val paddingX = config.getFloat("wm_padding_x", 100f)
-
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
-            this.textSize = textSize
-            typeface = getTypeface(config)
-        }
-
         // Draw in the middle of the white area vertically
-        canvas.drawText(text, paddingX, bitmap.height + (padding / 2f) + (textSize / 2f), paint)
+        // The Y coordinate for drawText is the baseline. 
+        // Middle of white bar is bitmap.height + externalPadding/2
+        // We need to offset it to center the font height.
+        val centerY = bitmap.height + (externalPadding / 2f) - (fontMetrics.ascent + fontMetrics.descent) / 2f
+        canvas.drawText(text, finalPaddingX, centerY, paint)
         return newBitmap
     }
 }
