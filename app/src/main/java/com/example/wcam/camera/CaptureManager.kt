@@ -27,6 +27,7 @@ class CaptureManager(
 
     interface CaptureListener {
         fun onCaptureStarted(shutterNanos: Long)
+        fun onHardwareExposureStarted(exposureMs: Long)
         fun onCaptureCompleted(uri: android.net.Uri?)
         fun onCaptureFailed(message: String)
         fun onReadyToResumePreview()
@@ -142,6 +143,11 @@ class CaptureManager(
     }
 
     private val stillCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureStarted(session: CameraCaptureSession, request: CaptureRequest, timestamp: Long, frameNumber: Long) {
+            val exposureNanos = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME) ?: calculateShutterNanos()
+            listener.onHardwareExposureStarted(exposureNanos / 1_000_000L)
+        }
+
         override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
             val wallTime = request.tag as? Long ?: System.currentTimeMillis()
             Log.d("CaptureTimer", "[$wallTime] Hardware capture completed in ${System.currentTimeMillis() - wallTime}ms")

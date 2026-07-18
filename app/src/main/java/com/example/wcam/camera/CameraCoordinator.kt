@@ -387,12 +387,19 @@ class CameraCoordinator(
         listener.onCaptureStarted(shutterNanos)
     }
 
+    override fun onHardwareExposureStarted(exposureMs: Long) {
+        if (viewModel.currentFlashMode.value == FlashMode.SINGLE) {
+            // The exposure has JUST started on the sensor.
+            // We need to keep the LED on for exactly the exposure duration.
+            // We add a tiny 5ms margin to ensure the flash covers the entire rolling shutter period if applicable.
+            backgroundHandler?.postDelayed({
+                stopFlashPulse()
+            }, exposureMs + 5)
+        }
+    }
+
     override fun onCaptureCompleted(uri: Uri?) {
         coordinatorCaptureLock = false
-        // If we were in a manual flash pulse, turn it off
-        if (viewModel.currentFlashMode.value == FlashMode.SINGLE) {
-            stopFlashPulse()
-        }
         listener.onCaptureCompleted(uri)
         autoCaptureManager?.onFrameProcessed()
     }
