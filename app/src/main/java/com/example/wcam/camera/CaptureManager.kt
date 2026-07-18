@@ -156,7 +156,7 @@ class CaptureManager(
             pendingCaptureResults[sensorTimestamp] = result
             captureStartTimeMap[sensorTimestamp] = wallTime
             
-            listener.onReadyToResumePreview()
+            // 立即检查是否可以分发任务并恢复快门
             processPendingCaptures()
         }
 
@@ -191,7 +191,10 @@ class CaptureManager(
     private fun dispatchCaptureTask(image: Image, result: TotalCaptureResult, chars: CameraCharacteristics, wallTime: Long) {
         val formatString = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         val formats = formatString.split(",").filter { it.isNotEmpty() }.toSet()
+        
+        // 关键点：在分发任务给线程池的一瞬间，立即释放快门锁，让用户可以进行下一次拍摄
         isCaptureInProgress = false
+        listener.onReadyToResumePreview()
         
         val task = prepareCaptureTask(image, result, chars, formatString, wallTime)
         

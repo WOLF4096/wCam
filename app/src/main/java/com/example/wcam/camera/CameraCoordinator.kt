@@ -438,6 +438,7 @@ class CameraCoordinator(
     }
 
     override fun onReadyToResumePreview() {
+        coordinatorCaptureLock = false
         listener.onReadyToResumePreview()
     }
 
