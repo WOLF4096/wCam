@@ -1,9 +1,11 @@
 package com.example.wcam.ui
 
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -31,17 +33,35 @@ class CameraUiController(
 
     private var countdownTimer: android.os.CountDownTimer? = null
 
-    fun updateFlashUi(btnFlash: TextView, mode: FlashMode) {
-        btnFlash.text = mode.label
-        btnFlash.setTextColor(mode.textColor)
+    fun updateFlashUi(btnFlash: ImageButton, mode: FlashMode) {
+        btnFlash.setImageResource(mode.iconRes)
+        // Tint gold if not OFF
+        if (mode != FlashMode.OFF) {
+            btnFlash.setColorFilter(Color.parseColor("#FFCC00"))
+        } else {
+            btnFlash.clearColorFilter()
+        }
     }
 
-    fun updateHistogramUi(btnHistogram: TextView, isVisible: Boolean) {
-        btnHistogram.setTextColor(if (isVisible) Color.parseColor("#FFCC00") else Color.WHITE)
+    fun updateHistogramUi(btnHistogram: ImageButton, isVisible: Boolean) {
+        if (isVisible) {
+            btnHistogram.setColorFilter(Color.parseColor("#FFCC00"))
+        } else {
+            btnHistogram.clearColorFilter()
+        }
     }
 
-    fun updateGridUi(btnGrid: TextView, isVisible: Boolean) {
-        btnGrid.setTextColor(if (isVisible) Color.parseColor("#FFCC00") else Color.WHITE)
+    fun updateGridUi(btnGrid: ImageButton, isVisible: Boolean) {
+        if (isVisible) {
+            btnGrid.setColorFilter(Color.parseColor("#FFCC00"))
+        } else {
+            btnGrid.clearColorFilter()
+        }
+    }
+
+    fun updateSettingsUi(btnSettings: ImageButton) {
+        // Just clear any filters if needed, usually remains white
+        btnSettings.clearColorFilter()
     }
 
     fun updateResolutionText(btnResolution: TextView, text: String, isChanged: Boolean = false) {
@@ -137,7 +157,7 @@ class CameraUiController(
             }
         }
         listPopupWindow.setAdapter(adapter)
-        listPopupWindow.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.parseColor("#CC1A1A1A")))
+        listPopupWindow.setBackgroundDrawable(ColorDrawable(Color.parseColor("#CC1A1A1A")))
         listPopupWindow.setOnItemClickListener { _, _, position, _ ->
             onSelected(options[position])
             listPopupWindow.dismiss()

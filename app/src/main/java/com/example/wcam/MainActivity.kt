@@ -214,6 +214,11 @@ class MainActivity : AppCompatActivity(),
         PhotoParamMapper.init(config)
         rawMediaStore = RawMediaStore(this, config, preferenceManager)
         deviceOrientationTracker = DeviceOrientationTracker(this)
+        deviceOrientationTracker.setRotationListener(object : DeviceOrientationTracker.RotationListener {
+            override fun onRotationStepChanged(degrees: Int) {
+                runOnUiThread { rotateUiElements(degrees) }
+            }
+        })
 
         initControllers()
     }
@@ -242,12 +247,7 @@ class MainActivity : AppCompatActivity(),
 
     private fun setupListeners() {
         binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
-        binding.topToolbar.btnFlash.setOnClickListener { view ->
-            uiController.showStyledPopup(view, listOf(getString(R.string.flash_off), getString(R.string.flash_on), getString(R.string.flash_torch))) { selected ->
-                val mode = when (selected) { getString(R.string.flash_on) -> FlashMode.SINGLE; getString(R.string.flash_torch) -> FlashMode.TORCH; else -> FlashMode.OFF }
-                if (mode != FlashMode.OFF && !currentFlashSupported) showToast(getString(R.string.toast_flash_not_supported)) else viewModel.setFlashMode(mode)
-            }
-        }
+        binding.topToolbar.btnFlash.setOnClickListener { cycleFlashMode() }
         binding.topToolbar.btnHistogram.setOnClickListener { viewModel.setHistogramVisible(!viewModel.isHistogramVisible.value) }
         binding.topToolbar.btnGridLines.setOnClickListener { viewModel.setGridVisible(!viewModel.isGridVisible.value) }
         binding.topToolbar.btnResolution.setOnClickListener { view -> onResolutionClick(view) }
@@ -396,6 +396,17 @@ class MainActivity : AppCompatActivity(),
     override fun getPhotoParamState(): PhotoParamState = viewModel.photoParamState.value
     override fun getPreviewAutoValues(): ManualParamController.PreviewAutoValues = ManualParamController.PreviewAutoValues(previewAutoCompensation, cameraCapabilities.aeCompensationStep ?: 0f, previewAutoKelvinLabel, previewAutoIso, previewAutoShutterNanos, previewAutoFocusDistance)
     override fun onFlashModeChanged(mode: FlashMode) { viewModel.setFlashMode(mode) }
+    
+    private fun cycleFlashMode() {
+        val current = viewModel.currentFlashMode.value
+        val next = when (current) {
+            FlashMode.OFF -> FlashMode.SINGLE
+            FlashMode.SINGLE -> FlashMode.TORCH
+            FlashMode.TORCH -> FlashMode.OFF
+        }
+        viewModel.setFlashMode(next)
+    }
+
     override fun onHistogramToggle() { viewModel.setHistogramVisible(!viewModel.isHistogramVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, viewModel.isHistogramVisible.value) }
     override fun onGridToggle() { viewModel.setGridVisible(!viewModel.isGridVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, viewModel.isGridVisible.value) }
     override fun onResolutionClick(view: View) { if (viewModel.isPhotoMode.value) aspectController.showPhotoRatioPopup(view) else showVideoParamsPopup(view) }
@@ -496,6 +507,40 @@ class MainActivity : AppCompatActivity(),
 
     private fun activeMetadataCameraId(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) currentPhysicalCameraId ?: currentLogicalCameraId else currentLogicalCameraId
     private fun showToast(msg: String) { runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() } }
+
+    private fun rotateUiElements(degrees: Int) {
+        val rotation = when (degrees) {
+            90 -> 270f
+            180 -> 180f
+            270 -> 90f
+            else -> 0f
+        }
+        
+        val viewsToRotate = listOf(
+            binding.topToolbar.btnFlash,
+            binding.topToolbar.btnHistogram,
+            binding.topToolbar.btnGridLines,
+            binding.topToolbar.btnResolution,
+            binding.topToolbar.btnSettings,
+            binding.bottomActionBar.btnModeSwitch,
+            binding.bottomActionBar.btnGallery,
+            binding.paramBar.layoutParamEv,
+            binding.paramBar.layoutParamWb,
+            binding.paramBar.layoutParamIso,
+            binding.paramBar.layoutParamS,
+            binding.paramBar.layoutParamAf
+        )
+
+        viewsToRotate.forEach { view ->
+            view.animate().rotation(rotation).setDuration(300).start()
+        }
+        
+        // Lens selector buttons
+        val lensContainer = binding.lensSelector.lensSelectorContainer
+        for (i in 0 until lensContainer.childCount) {
+            lensContainer.getChildAt(i).animate().rotation(rotation).setDuration(300).start()
+        }
+    }
     
     private fun saveParamState(key: ParamKey) {
         val state = viewModel.photoParamState.value

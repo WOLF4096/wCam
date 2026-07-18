@@ -57,10 +57,24 @@ class DeviceOrientationTracker(context: Context) : OrientationEventListener(cont
     var deviceRotationDegrees: Int = 0
         private set
 
+    interface RotationListener {
+        fun onRotationStepChanged(degrees: Int)
+    }
+    
+    private var listener: RotationListener? = null
+    
+    fun setRotationListener(l: RotationListener) {
+        listener = l
+    }
+
     override fun onOrientationChanged(orientation: Int) {
         if (orientation == ORIENTATION_UNKNOWN) {
             return
         }
-        deviceRotationDegrees = CaptureOrientationCalculator.nearestDeviceRotationDegrees(orientation)
+        val newRotation = CaptureOrientationCalculator.nearestDeviceRotationDegrees(orientation)
+        if (newRotation != deviceRotationDegrees) {
+            deviceRotationDegrees = newRotation
+            listener?.onRotationStepChanged(newRotation)
+        }
     }
 }

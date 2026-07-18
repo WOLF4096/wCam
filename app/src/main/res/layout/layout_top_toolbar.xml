@@ -7,9 +7,9 @@
     android:gravity="center"
     android:paddingHorizontal="16dp">
 
-    <TextView android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_flash" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-    <TextView android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_histogram" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-    <TextView android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_grid_lines" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+    <ImageButton android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_flash_off" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Flash" />
+    <ImageButton android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_histogram" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Histogram" />
+    <ImageButton android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_grid_lines" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Grid Lines" />
     <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_resolution" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-    <TextView android:id="@+id/btn_settings" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_settings" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+    <ImageButton android:id="@+id/btn_settings" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_settings" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Settings" />
 </LinearLayout>

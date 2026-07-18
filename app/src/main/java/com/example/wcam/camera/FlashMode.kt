@@ -2,27 +2,31 @@ package com.example.wcam.camera
 
 import android.graphics.Color
 import android.hardware.camera2.CaptureRequest
+import com.example.wcam.R
 
-enum class FlashMode(
-    val label: String,
-    val textColor: Int,
-) {
-    OFF("关闭", Color.WHITE),
-    SINGLE("打开", Color.parseColor("#FFCC00")),
-    TORCH("常亮", Color.parseColor("#FFCC00"));
+enum class FlashMode(val iconRes: Int) {
+    OFF(R.drawable.ic_flash_off),
+    SINGLE(R.drawable.ic_flash_on),
+    TORCH(R.drawable.ic_flash_torch);
 
     fun applyToRequest(builder: CaptureRequest.Builder, isStillCapture: Boolean) {
         when (this) {
-            OFF -> builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+            OFF -> {
+                builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            }
             SINGLE -> {
-                // 使用 TORCH 模式脉冲来实现“打开”逻辑，以确保在手动曝光下也能强制开启
                 if (isStillCapture) {
-                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH)
                 } else {
                     builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 }
             }
-            TORCH -> builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+            TORCH -> {
+                builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+                builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            }
         }
     }
 }

@@ -106,7 +106,7 @@ class AspectRatioController(
     }
 
     fun showPhotoRatioPopup(anchor: View) {
-        val options = listOf("1:1", "3:4", "9:16", "1:2", "自定义")
+        val options = listOf("1:1", "3:4", "9:16", "9:20", "1:2", "1:3", "1:4", "自定义")
         listener.showStyledPopup(anchor, options) { selected ->
             when (selected) {
                 "1:1" -> updateRatio(1.0f, "1:1")
