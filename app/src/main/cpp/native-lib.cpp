@@ -108,7 +108,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     int rotH = (rotation % 180 == 0) ? cropHeight : cropWidth;
 
     try {
-        if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16") {
+        if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16" || algo == "Bright4") {
             int step = (algo == "Bin4") ? 2 : (algo == "Bin9" ? 3 : 4);
             int outW = cropWidth / step;
             int outH = cropHeight / step;
@@ -134,9 +134,16 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                         }
                     }
 
-                    float rLin = (countR > 0) ? (sumR / countR) : 0;
-                    float gLin = (countG > 0) ? (sumG / countG) : 0;
-                    float bLin = (countB > 0) ? (sumB / countB) : 0;
+                    float rLin, gLin, bLin;
+                    if (algo == "Bright4") {
+                        rLin = sumR;
+                        gLin = sumG * 0.5f;
+                        bLin = sumB;
+                    } else {
+                        rLin = (countR > 0) ? (sumR / countR) : 0;
+                        gLin = (countG > 0) ? (sumG / countG) : 0;
+                        bLin = (countB > 0) ? (sumB / countB) : 0;
+                    }
 
                     uint32_t mixed = rgb_to_pixel(rLin, gLin, bLin);
                     int tx, ty;

@@ -332,6 +332,7 @@ class CaptureManager(
             savedAlgo.startsWith("4合1") -> "Bin4"
             savedAlgo.startsWith("9合1") -> "Bin9"
             savedAlgo.startsWith("16合1") -> "Bin16"
+            savedAlgo.startsWith("4倍亮度") -> "Bright4"
             else -> savedAlgo.split('：', ':')[0].trim()
         }
     }

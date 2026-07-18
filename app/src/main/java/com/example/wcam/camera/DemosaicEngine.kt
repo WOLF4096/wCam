@@ -61,7 +61,7 @@ object DemosaicEngine {
         when (algorithm) {
             "Bin4" -> step = 2
             "Bin9" -> step = 3
-            "Bin16" -> step = 4
+            "Bin16", "Bright4" -> step = 4
         }
         
         // Ensure crop dimensions are multiples of the binning step and 2 for Bayer
