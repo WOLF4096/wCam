@@ -21,6 +21,8 @@ class PreferenceManager(context: Context) {
         const val KEY_VIDEO_RESOLUTION = "video_resolution"
         const val KEY_VIDEO_FPS = "video_fps"
         const val KEY_VIDEO_BITRATE = "video_bitrate"
+        const val KEY_AE_AF_LOCKED = "ae_af_locked"
+        const val KEY_ZOOM_SCALE = "zoom_scale"
 
         // Manual Param Keys
         const val KEY_PARAM_EV_AUTO = "param_ev_auto"

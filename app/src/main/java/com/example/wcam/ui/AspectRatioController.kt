@@ -34,6 +34,16 @@ class AspectRatioController(
 
     fun getZoomRatio(): Float = 1.0f / cropScale
 
+    fun getCropScale(): Float = cropScale
+
+    fun setRatio(ratio: Float) {
+        cropRatio = ratio
+    }
+
+    fun setInitialCropScale(scale: Float) {
+        cropScale = scale.coerceIn(0.001f, 1.0f)
+    }
+
     fun setCropScale(scale: Float) {
         // We will constrain this later in updateCropUI based on sensor size
         cropScale = (cropScale * scale).coerceIn(0.001f, 1.0f)

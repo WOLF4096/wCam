@@ -277,6 +277,11 @@ class MainActivity : AppCompatActivity(),
         selectedVideoSizeStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RESOLUTION, "1920x1080")
         selectedVideoFps = preferenceManager.getInt(PreferenceManager.KEY_VIDEO_FPS, 30)
         selectedVideoBitrate = preferenceManager.getFloat(PreferenceManager.KEY_VIDEO_BITRATE, 20.0f)
+        isAeAfLocked = preferenceManager.getBoolean(PreferenceManager.KEY_AE_AF_LOCKED, false)
+        
+        val zoomScale = preferenceManager.getFloat(PreferenceManager.KEY_ZOOM_SCALE, 1.0f)
+        aspectController.setInitialCropScale(zoomScale)
+        aspectController.setRatio(cropRatio)
         
         lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
         updateCropOverlayUI()
@@ -419,6 +424,7 @@ class MainActivity : AppCompatActivity(),
     // CoordinatorListener implementation
     override fun onCameraOpened(characteristics: CameraCharacteristics) {
         refreshCameraCapabilities(characteristics)
+        coordinator.toggleAeAfLock(isAeAfLocked)
     }
 
     override fun onSessionConfigured() {
@@ -459,12 +465,14 @@ class MainActivity : AppCompatActivity(),
     
     override fun onLongPress() { 
         isAeAfLocked = !isAeAfLocked
+        preferenceManager.saveBoolean(PreferenceManager.KEY_AE_AF_LOCKED, isAeAfLocked)
         coordinator.toggleAeAfLock(isAeAfLocked)
         showToast(if (isAeAfLocked) getString(R.string.ae_af_locked) else getString(R.string.ae_af_unlocked))
         applyPhotoParamsToPreview() 
     }
     override fun onZoomChanged(scale: Float) { 
         aspectController.setCropScale(scale)
+        preferenceManager.saveFloat(PreferenceManager.KEY_ZOOM_SCALE, aspectController.getCropScale())
         updateCropOverlayUI() 
     }
     override fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) { uiController.showStyledPopup(anchor, options, onSelected) }
