@@ -64,7 +64,6 @@ class MainActivity : AppCompatActivity(),
     private var locationManager: LocationManager? = null
     private var lastLocation: Location? = null
 
-    private lateinit var formatPanelController: FormatPanelController
     private lateinit var rawMediaStore: RawMediaStore
     private lateinit var preferenceManager: PreferenceManager
     private lateinit var deviceOrientationTracker: DeviceOrientationTracker
@@ -176,6 +175,7 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun handleOnResume() {
+        loadSettings()
         coordinator.start()
         startLocationUpdates()
         streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), config, this)
@@ -202,7 +202,6 @@ class MainActivity : AppCompatActivity(),
                 launch { viewModel.isPhotoMode.collect { updateModeUI(it) } }
                 launch { viewModel.isGridVisible.collect { overlayController.setGridVisible(it); uiController.updateGridUi(binding.topToolbar.btnGridLines, it) } }
                 launch { viewModel.isHistogramVisible.collect { overlayController.setHistogramVisible(it); uiController.updateHistogramUi(binding.topToolbar.btnHistogram, it); updateCropOverlayUI() } }
-                launch { viewModel.isFormatPanelOpen.collect { isOpen -> if (isOpen) { updateFormatPanelUI(); binding.panelFormatSettings.visibility = View.VISIBLE } else binding.panelFormatSettings.visibility = View.GONE; uiController.updateFormatButtonUi(binding.topToolbar.btnFormat, isOpen) } }
                 launch { viewModel.photoParamState.collect { refreshParamViews(it) } }
                 launch { viewModel.currentFlashMode.collect { uiController.updateFlashUi(binding.topToolbar.btnFlash, it); applyPhotoParamsToPreview() } }
             }
@@ -215,17 +214,6 @@ class MainActivity : AppCompatActivity(),
         PhotoParamMapper.init(config)
         rawMediaStore = RawMediaStore(this, config)
         deviceOrientationTracker = DeviceOrientationTracker(this)
-        formatPanelController = FormatPanelController(
-            this,
-            binding.spinnerMainFormat,
-            binding.layoutJpgAdvancedOptions,
-            binding.spinnerDemosaicAlgo,
-            binding.layoutVideoAdvancedOptions,
-            binding.spinnerVideoFps,
-            binding.spinnerVideoRes,
-            binding.seekbarVideoBitrate,
-            binding.tvVideoBitrateTitle
-        )
 
         initControllers()
     }
@@ -263,28 +251,13 @@ class MainActivity : AppCompatActivity(),
         binding.topToolbar.btnHistogram.setOnClickListener { viewModel.setHistogramVisible(!viewModel.isHistogramVisible.value) }
         binding.topToolbar.btnGridLines.setOnClickListener { viewModel.setGridVisible(!viewModel.isGridVisible.value) }
         binding.topToolbar.btnResolution.setOnClickListener { view -> onResolutionClick(view) }
-        binding.topToolbar.btnFormat.setOnClickListener { viewModel.setFormatPanelOpen(!viewModel.isFormatPanelOpen.value) }
+        binding.topToolbar.btnSettings.setOnClickListener { 
+            startActivity(android.content.Intent(this, SettingsActivity::class.java))
+        }
         binding.bottomActionBar.btnModeSwitch.setOnClickListener { onModeSwitch() }
         binding.bottomActionBar.btnModeSwitch.setOnLongClickListener { onModeReset(); true }
         binding.bottomActionBar.btnGallery.setOnClickListener { galleryController.openRecentPhotoInGallery() }
-        binding.seekbarJpgQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, p: Int, f: Boolean) {
-                binding.tvJpgQualityTitle.text = getString(R.string.jpg_quality_title, p)
-                if (f) {
-                    preferenceManager.saveInt(PreferenceManager.KEY_JPG_QUALITY, p)
-                    updateCropOverlayUI()
-                }
-            }
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {}
-        })
         binding.cameraPreview.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN && viewModel.isFormatPanelOpen.value) {
-                val loc = IntArray(2); binding.panelFormatSettings.getLocationOnScreen(loc)
-                if (event.rawX < loc[0] || event.rawX > loc[0] + binding.panelFormatSettings.width || event.rawY < loc[1] || event.rawY > loc[1] + binding.panelFormatSettings.height) {
-                    viewModel.setFormatPanelOpen(false); binding.topToolbar.btnFormat.setTextColor(Color.WHITE)
-                }
-            }
             gestureManager.handleTouch(event)
         }
     }
@@ -305,9 +278,6 @@ class MainActivity : AppCompatActivity(),
         selectedVideoSizeStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RESOLUTION, "1920x1080")
         selectedVideoFps = preferenceManager.getInt(PreferenceManager.KEY_VIDEO_FPS, 30)
         selectedVideoBitrate = preferenceManager.getFloat(PreferenceManager.KEY_VIDEO_BITRATE, 20.0f)
-        val jpgQual = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
-        binding.seekbarJpgQuality.progress = jpgQual
-        binding.tvJpgQualityTitle.text = getString(R.string.jpg_quality_title, jpgQual)
         
         lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
         updateCropOverlayUI()
@@ -340,42 +310,6 @@ class MainActivity : AppCompatActivity(),
             binding.bottomActionBar.btnModeSwitch.text = getString(R.string.switch_to) + getString(R.string.mode_photo)
         }
         set.applyTo(binding.main)
-        if (viewModel.isFormatPanelOpen.value) updateFormatPanelUI()
-    }
-
-    private fun updateFormatPanelUI() {
-        val format = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
-        val algo = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
-        formatPanelController.update(viewModel.isPhotoMode.value, format, algo)
-        if (viewModel.isPhotoMode.value) {
-            formatPanelController.setPhotoSettingsListener(object : FormatPanelController.PhotoSettingsListener {
-                override fun onPhotoParamsChanged(f: String, a: String) {
-                    preferenceManager.saveString(PreferenceManager.KEY_OUTPUT_FORMAT, f)
-                    if (a.isNotEmpty()) preferenceManager.saveString(PreferenceManager.KEY_DEMOSAIC_ALGO, a)
-                    updateCropOverlayUI()
-                }
-            })
-        } else {
-            val currentId = activeMetadataCameraId(); val caps = allVideoCapabilities[currentId] ?: emptyList()
-            val availableFps = caps.filter { it.ratioStr == selectedVideoRatioStr }.map { it.maxFps }.distinct().sortedDescending()
-            val availableRes = caps.filter { it.ratioStr == selectedVideoRatioStr && it.maxFps == selectedVideoFps }.map { "${it.width}x${it.height}" }.distinct()
-            formatPanelController.setVideoSettingsListener(object : FormatPanelController.VideoSettingsListener {
-                override fun onVideoParamsChanged(fps: Int, res: String, bitrateMbps: Double) {
-                    var changed = false
-                    if (selectedVideoFps != fps) {
-                        selectedVideoFps = fps; val best = caps.find { it.ratioStr == selectedVideoRatioStr && it.maxFps == fps }; if (best != null) selectedVideoSizeStr = "${best.width}x${best.height}"
-                        preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, fps); preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr); changed = true
-                    } else if (selectedVideoSizeStr != res) {
-                        selectedVideoSizeStr = res; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, res); changed = true
-                    }
-                    if (selectedVideoBitrate != bitrateMbps.toFloat()) { selectedVideoBitrate = bitrateMbps.toFloat(); preferenceManager.saveFloat(PreferenceManager.KEY_VIDEO_BITRATE, selectedVideoBitrate) }
-                    if (changed) { runOnUiThread { binding.topToolbar.btnResolution.text = selectedVideoRatioStr; updateFormatPanelUI() }; openCamera() }
-                }
-                override fun getVideoCapabilities(): List<Any> = caps
-                override fun getCurrentRatio(): String = selectedVideoRatioStr
-            })
-            formatPanelController.setupVideoSpinners(availableFps, availableRes, selectedVideoFps, selectedVideoSizeStr, selectedVideoBitrate.toDouble())
-        }
     }
 
     private fun openCamera() {
@@ -390,7 +324,6 @@ class MainActivity : AppCompatActivity(),
         coordinator.getPreviewRequestBuilder()?.let {
             PhotoParamMapper.applyPhotoParamsToRequest(it, viewModel.photoParamState.value, cameraCapabilities, previewAutoIso, previewAutoShutterNanos, true)
             viewModel.currentFlashMode.value.applyToRequest(it, false)
-            // Zoom logic would go here if needed in coordinator
         }
         resumePreview()
     }
@@ -466,7 +399,6 @@ class MainActivity : AppCompatActivity(),
     override fun onHistogramToggle() { viewModel.setHistogramVisible(!viewModel.isHistogramVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, viewModel.isHistogramVisible.value) }
     override fun onGridToggle() { viewModel.setGridVisible(!viewModel.isGridVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, viewModel.isGridVisible.value) }
     override fun onResolutionClick(view: View) { if (viewModel.isPhotoMode.value) aspectController.showPhotoRatioPopup(view) else showVideoParamsPopup(view) }
-    override fun onFormatPanelToggle() { viewModel.setFormatPanelOpen(!viewModel.isFormatPanelOpen.value) }
     override fun onModeSwitch() {
         viewModel.setPhotoMode(!viewModel.isPhotoMode.value)
         preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, viewModel.isPhotoMode.value)
@@ -499,7 +431,7 @@ class MainActivity : AppCompatActivity(),
     override fun getSensorOrientation(): Int = currentSensorOrientation
     override fun getLensFacing(): Int? = currentLensFacing
     override fun getCurrentCropRect(): Rect? = currentCropRectInSensor
-    override fun getJpgQuality(): Int = binding.seekbarJpgQuality.progress
+    override fun getJpgQuality(): Int = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
     override fun getCameraCapabilities(): CameraCapabilities = cameraCapabilities
     override fun getLocation(): Location? = lastLocation
 
@@ -522,7 +454,6 @@ class MainActivity : AppCompatActivity(),
     }
     override fun onZoomChanged(scale: Float) { 
         aspectController.setCropScale(scale)
-        viewModel.setZoomRatio(aspectController.getZoomRatio())
         updateCropOverlayUI() 
     }
     override fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) { uiController.showStyledPopup(anchor, options, onSelected) }
@@ -546,7 +477,7 @@ class MainActivity : AppCompatActivity(),
 
             saveCurrentLensSettings(); lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
             if (!viewModel.isPhotoMode.value) updateVideoParamsForNewLens()
-            coordinator.closeCamera(); if (viewModel.isFormatPanelOpen.value) updateFormatPanelUI()
+            coordinator.closeCamera()
             if (binding.cameraPreview.isAvailable) openCamera()
         }
     }
@@ -559,7 +490,7 @@ class MainActivity : AppCompatActivity(),
         preferenceManager.saveString(PreferenceManager.KEY_PHOTO_RATIO_STR, selectedPhotoRatioStr)
     }
 
-    override fun onVideoParamsChanged() { /* Handled via FormatPanelController */ }
+    override fun onVideoParamsChanged() { /* Handled via SettingsActivity */ }
 
     private fun activeMetadataCameraId(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) currentPhysicalCameraId ?: currentLogicalCameraId else currentLogicalCameraId
     private fun showToast(msg: String) { runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() } }
@@ -603,7 +534,7 @@ class MainActivity : AppCompatActivity(),
             selectedVideoRatioStr = ratioStr; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
             val ratioCaps = caps.filter { it.ratioStr == ratioStr }; val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }.sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) }).firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
             if (bestFor30 != null) { selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"; selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr); preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps) }
-            binding.topToolbar.btnResolution.text = selectedVideoRatioStr; binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00")); updateFormatPanelUI(); openCamera()
+            binding.topToolbar.btnResolution.text = selectedVideoRatioStr; binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00")); openCamera()
         }
     }
 }

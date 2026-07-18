@@ -287,7 +287,7 @@ class CaptureManager(
         return when {
             savedAlgo.startsWith("RGB通道") -> "RgbCh"
             savedAlgo.startsWith("灰度") -> "Mono"
-            savedAlgo.startsWith("无") -> "None"
+            savedAlgo.startsWith("无") || savedAlgo.startsWith("原始拜尔") -> "None"
             else -> savedAlgo.split('：', ':')[0].trim()
         }
     }

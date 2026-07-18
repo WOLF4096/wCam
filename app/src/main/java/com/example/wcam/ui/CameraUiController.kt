@@ -25,7 +25,6 @@ class CameraUiController(
         fun onHistogramToggle()
         fun onGridToggle()
         fun onResolutionClick(view: View)
-        fun onFormatPanelToggle()
         fun onModeSwitch()
         fun onModeReset()
     }
@@ -43,10 +42,6 @@ class CameraUiController(
 
     fun updateGridUi(btnGrid: TextView, isVisible: Boolean) {
         btnGrid.setTextColor(if (isVisible) Color.parseColor("#FFCC00") else Color.WHITE)
-    }
-
-    fun updateFormatButtonUi(btnFormat: TextView, isOpen: Boolean) {
-        btnFormat.setTextColor(if (isOpen) Color.parseColor("#FFCC00") else Color.WHITE)
     }
 
     fun updateResolutionText(btnResolution: TextView, text: String, isChanged: Boolean = false) {

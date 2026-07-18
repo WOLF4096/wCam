@@ -3,8 +3,8 @@
     <string name="toolbar_flash">闪光灯</string>
     <string name="toolbar_histogram">直方图</string>
     <string name="toolbar_grid_lines">网格线</string>
-    <string name="toolbar_resolution">分辨率</string>
-    <string name="toolbar_format">格式</string>
+    <string name="toolbar_resolution">比例</string>
+    <string name="toolbar_settings">设置</string>
     <string name="action_gallery">相册</string>
     <string name="action_video">录像</string>
     <string name="lens_front">前置</string>

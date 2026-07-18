@@ -11,5 +11,5 @@
     <TextView android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_histogram" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
     <TextView android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_grid_lines" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
     <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_resolution" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
-    <TextView android:id="@+id/btn_format" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_format" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
+    <TextView android:id="@+id/btn_settings" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_settings" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" />
 </LinearLayout>

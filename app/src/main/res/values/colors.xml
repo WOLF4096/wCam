@@ -2,4 +2,10 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="settings_bg">#000000</color>
+    <color name="settings_surface">#1F1F1F</color>
+    <color name="settings_primary">#F5CE40</color>
+    <color name="settings_text_active">#000000</color>
+    <color name="settings_unselected_bg">#333333</color>
+    <color name="settings_text_main">#A7A8A8</color>
 </resources>
