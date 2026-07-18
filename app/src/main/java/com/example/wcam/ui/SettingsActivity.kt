@@ -1,7 +1,6 @@
 package com.example.wcam.ui
 
 import android.os.Bundle
-import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.GridLayout
@@ -13,6 +12,7 @@ import androidx.core.widget.addTextChangedListener
 import com.example.wcam.PreferenceManager
 import com.example.wcam.R
 import com.example.wcam.databinding.ActivitySettingsBinding
+import java.util.Locale
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -37,9 +37,9 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnBack.setOnClickListener { finish() }
 
         // Format Chips (Multi-select)
+        setupFormatChip(binding.chipRaw, "RAW")
         setupFormatChip(binding.chipJpg, "JPG")
         setupFormatChip(binding.chipPng, "PNG")
-        setupFormatChip(binding.chipRaw, "RAW")
 
         // JPG Quality
         binding.seekbarQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -70,11 +70,14 @@ class SettingsActivity : AppCompatActivity() {
         populateAlgoGrid(binding.gridAlgoNone, simpleAlgos, false)
         populateAlgoGrid(binding.gridAlgoDemosaic, demosaicAlgos, true)
 
-        // Countdown
+        // Countdown (0.1s steps)
         binding.seekbarCountdown.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                binding.tvCountdownVal.text = "${progress}s"
-                if (fromUser) preferenceManager.saveInt("countdown_sec", progress)
+                val sec = progress / 10f
+                binding.tvCountdownVal.text = String.format(Locale.US, "%.1fs", sec)
+                if (fromUser) {
+                    preferenceManager.saveInt("countdown_val_x10", progress)
+                }
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -126,9 +129,9 @@ class SettingsActivity : AppCompatActivity() {
         // Load Formats
         val formatString = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
         val formats = formatString.split(",").toSet()
+        binding.chipRaw.isSelected = formats.contains("RAW")
         binding.chipJpg.isSelected = formats.contains("JPG")
         binding.chipPng.isSelected = formats.contains("PNG")
-        binding.chipRaw.isSelected = formats.contains("RAW")
         updateVisibilityByFormats(formats)
 
         // Load JPG Quality
@@ -150,9 +153,9 @@ class SettingsActivity : AppCompatActivity() {
         selectAlgoInGrid(binding.gridAlgoDemosaic, lastDemosaic)
 
         // Countdown
-        val cd = preferenceManager.getInt("countdown_sec", 0)
-        binding.seekbarCountdown.progress = cd
-        binding.tvCountdownVal.text = "${cd}s"
+        val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
+        binding.seekbarCountdown.progress = cdX10
+        binding.tvCountdownVal.text = String.format(Locale.US, "%.1fs", cdX10 / 10f)
 
         // Auto Mode
         selectAutoMode(preferenceManager.getString("auto_capture_mode", "None"))
@@ -268,6 +271,10 @@ class SettingsActivity : AppCompatActivity() {
         val hasJpg = formats.contains("JPG")
         binding.layoutJpgQuality.visibility = if (hasJpg) View.VISIBLE else View.GONE
         
+        // Hide location if ONLY PNG is selected
+        val onlyPng = formats.size == 1 && formats.contains("PNG")
+        binding.layoutLocation.visibility = if (onlyPng) View.GONE else View.VISIBLE
+
         val isRawOnly = formats.size == 1 && formats.contains("RAW")
         binding.cardAlgo.visibility = if (isRawOnly) View.GONE else View.VISIBLE
     }

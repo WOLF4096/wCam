@@ -280,7 +280,7 @@ class CaptureManager(
                 showText = preferenceManager.getBoolean("wm_show_text", false),
                 customText = preferenceManager.getString("wm_custom_text", "wCam")
             )
-            val watermarkedBitmap = WatermarkProcessor().applyWatermark(bitmap, wmConfig, chars, result)
+            val watermarkedBitmap = WatermarkProcessor().applyWatermark(bitmap, wmConfig, chars, result, task.rotationDegrees)
 
             if (formats.contains("JPG")) {
                 val uri = captureProcessor.saveJpegBitmap(watermarkedBitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location)

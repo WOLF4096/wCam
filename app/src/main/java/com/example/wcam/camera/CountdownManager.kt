@@ -1,10 +1,8 @@
 package com.example.wcam.camera
 
 import android.os.Handler
-import android.os.Looper
 import android.view.View
 import android.widget.TextView
-
 import java.util.Locale
 
 class CountdownManager(
@@ -27,12 +25,12 @@ class CountdownManager(
         }
     }
 
-    fun start(seconds: Int) {
-        if (seconds <= 0) {
+    fun start(secondsX10: Int) {
+        if (secondsX10 <= 0) {
             onFinish()
             return
         }
-        remainingMs = seconds * 1000L
+        remainingMs = secondsX10 * 100L
         tvDisplay.visibility = View.VISIBLE
         tvDisplay.text = String.format(Locale.US, "%.1fs", remainingMs / 1000.0)
         uiHandler.postDelayed(countdownRunnable, 100)

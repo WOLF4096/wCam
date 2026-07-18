@@ -4,7 +4,6 @@ import android.graphics.*
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
-import android.os.Build
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -22,7 +21,8 @@ class WatermarkProcessor {
         bitmap: Bitmap,
         config: WatermarkConfig,
         characteristics: CameraCharacteristics?,
-        result: TotalCaptureResult?
+        result: TotalCaptureResult?,
+        rotationDegrees: Int
     ): Bitmap {
         if (config.type == "None") return bitmap
 
@@ -50,7 +50,8 @@ class WatermarkProcessor {
             
             val expStr = if (exp != null && exp > 0) {
                 val seconds = exp / 1_000_000_000.0
-                if (seconds >= 1.0) String.format("%.1fs", seconds) else "1/${(1.0 / seconds).toInt()}s"
+                if (seconds >= 1.0) String.format(Locale.US, "%.1fs", seconds) 
+                else "1/${(1.0 / seconds).toInt()}s"
             } else "N/A"
             
             parts.add("ISO$iso | $expStr | f/$aperture")
@@ -66,32 +67,43 @@ class WatermarkProcessor {
     private fun drawInternalWatermark(bitmap: Bitmap, text: String): Bitmap {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
+        
+        // Font size relative to height, but at least a reasonable absolute size
+        val textSize = (bitmap.height / 40f).coerceAtLeast(40f)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = bitmap.height / 50f
-            setShadowLayer(2f, 1f, 1f, Color.BLACK)
+            this.textSize = textSize
+            setShadowLayer(3f, 2f, 2f, Color.BLACK)
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
-        // Position: 100px from bottom-left
+        // Position: 100px from bottom-left (absolute pixels)
+        // Since the bitmap is already rotated to its final orientation, bottom-left is always bottom-left.
         canvas.drawText(text, 100f, bitmap.height - 100f, paint)
         return mutableBitmap
     }
 
     private fun drawExternalWatermark(bitmap: Bitmap, text: String): Bitmap {
-        val watermarkHeight = 200 // Total height for external area
-        val newHeight = bitmap.height + watermarkHeight
+        val padding = 200 // Total height for external area
+        val newHeight = bitmap.height + padding
         val newBitmap = Bitmap.createBitmap(bitmap.width, newHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(newBitmap)
         
         canvas.drawColor(Color.WHITE)
+        // Draw original photo at top
         canvas.drawBitmap(bitmap, 0f, 0f, null)
 
+        val textSize = (bitmap.height / 40f).coerceAtLeast(40f)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
-            textSize = bitmap.height / 50f
+            this.textSize = textSize
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
-        // Position: 100px from the original bottom (start of external area)
+        // Measure text to center or align? Requirements say "left-bottom 100, -100px"
+        // This means inside the white area.
+        // Base of photo is y = bitmap.height. 
+        // 100px below that is y = bitmap.height + 100px.
         canvas.drawText(text, 100f, bitmap.height + 120f, paint)
         return newBitmap
     }
