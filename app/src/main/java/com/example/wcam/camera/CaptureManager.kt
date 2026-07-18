@@ -294,7 +294,10 @@ class CaptureManager(
         return when {
             savedAlgo.startsWith("RGB通道") -> "RgbCh"
             savedAlgo.startsWith("灰度") -> "Mono"
-            savedAlgo.startsWith("简单处理") || savedAlgo.startsWith("无") || savedAlgo.startsWith("原始拜尔") -> "None"
+            savedAlgo.startsWith("原始拜尔") || savedAlgo.startsWith("无") -> "None"
+            savedAlgo.startsWith("4合1") -> "Bin4"
+            savedAlgo.startsWith("9合1") -> "Bin9"
+            savedAlgo.startsWith("16合1") -> "Bin16"
             else -> savedAlgo.split('：', ':')[0].trim()
         }
     }

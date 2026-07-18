@@ -71,7 +71,43 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     int rotH = (rotation % 180 == 0) ? cropHeight : cropWidth;
 
     try {
-        if (algo == "RgbCh") {
+        if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16") {
+            int step = (algo == "Bin4") ? 2 : (algo == "Bin9" ? 3 : 4);
+            int outW = cropWidth / step;
+            int outH = cropHeight / step;
+            int rotOutW = (rotation % 180 == 0) ? outW : outH;
+            int rotOutH = (rotation % 180 == 0) ? outH : outW;
+
+            #pragma omp parallel for schedule(dynamic, 16)
+            for (int y = 0; y < outH; ++y) {
+                for (int x = 0; x < outW; ++x) {
+                    float sumR = 0, sumG = 0, sumB = 0;
+                    int countR = 0, countG = 0, countB = 0;
+
+                    for (int dy = 0; dy < step; ++dy) {
+                        for (int dx = 0; dx < step; ++dx) {
+                            int sx = cropLeft + x * step + dx;
+                            int sy = cropTop + y * step + dy;
+                            float val = get_raw(p, sx, sy);
+                            int channel = get_channel_type(sx, sy, p.bayerPattern);
+
+                            if (channel == 0) { sumR += val * wb[0]; countR++; }
+                            else if (channel == 1 || channel == 2) { sumG += val * ((channel == 1) ? wb[1] : wb[2]); countG++; }
+                            else { sumB += val * wb[3]; countB++; }
+                        }
+                    }
+
+                    float rLin = (countR > 0) ? (sumR / countR) : 0;
+                    float gLin = (countG > 0) ? (sumG / countG) : 0;
+                    float bLin = (countB > 0) ? (sumB / countB) : 0;
+
+                    uint32_t mixed = rgb_to_pixel(rLin, gLin, bLin);
+                    int tx, ty;
+                    get_rotated_idx(x, y, outW, outH, rotation, tx, ty);
+                    pixels[ty * rotOutW + tx] = mixed;
+                }
+            }
+        } else if (algo == "RgbCh") {
             int gridW = rotW;
             int halfRotW = rotW / 2;
             int halfRotH = rotH / 2;

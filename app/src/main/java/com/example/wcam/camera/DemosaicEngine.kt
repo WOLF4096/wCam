@@ -56,14 +56,26 @@ object DemosaicEngine {
         // 确保坐标在范围内并对齐 2x2
         val left = (cRect.left.coerceIn(0, width - 2) / 2) * 2
         val top = (cRect.top.coerceIn(0, height - 2) / 2) * 2
-        val cropW = (cRect.width().coerceAtMost(width - left) / 2) * 2
-        val cropH = (cRect.height().coerceAtMost(height - top) / 2) * 2
         
+        var step = 1
+        when (algorithm) {
+            "Bin4" -> step = 2
+            "Bin9" -> step = 3
+            "Bin16" -> step = 4
+        }
+        
+        // Ensure crop dimensions are multiples of the binning step and 2 for Bayer
+        val rawCropW = (cRect.width().coerceAtMost(width - left) / (2 * step)) * (2 * step)
+        val rawCropH = (cRect.height().coerceAtMost(height - top) / (2 * step)) * (2 * step)
+        
+        var outW = rawCropW / step
+        var outH = rawCropH / step
+
         val resW: Int
         val resH: Int
         
-        resW = if (rotation % 180 == 0) cropW else cropH
-        resH = if (rotation % 180 == 0) cropH else cropW
+        resW = if (rotation % 180 == 0) outW else outH
+        resH = if (rotation % 180 == 0) outH else outW
         
         val bitmap = Bitmap.createBitmap(resW, resH, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(resW * resH)
@@ -75,7 +87,7 @@ object DemosaicEngine {
                 shadingMap, shadingMapSize?.width ?: 0, shadingMapSize?.height ?: 0,
                 bayerPattern, blackLevel, whiteLevel,
                 lscStrength,
-                left, top, cropW, cropH, rotation
+                left, top, rawCropW, rawCropH, rotation
             )
         } catch (e: Exception) {
             Log.e("DemosaicEngine", "Native process failed", e)
