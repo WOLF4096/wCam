@@ -144,13 +144,15 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                     uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
 
                     int tx, ty;
-                    // 对降采样后的坐标 (x/2, y/2) 应用旋转
+                    // 对降采样后的坐标 (x/2, y/2) 应用旋转，得到旋转后象限内的坐标
                     get_rotated_idx(x / 2, y / 2, halfCropW, halfCropH, rotation, tx, ty);
 
-                    pixels[ty * gridW + tx] = mixed;
-                    pixels[ty * gridW + (tx + halfRotW)] = gGray;
-                    pixels[(ty + halfRotH) * gridW + tx] = rGray;
-                    pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;
+                    // 无论如何旋转，tx/ty 都是相对于旋转后画布的坐标
+                    // 核心排列逻辑：物理位置永久固定
+                    pixels[ty * gridW + tx] = mixed;                                // 左上角：彩色图
+                    pixels[ty * gridW + (tx + halfRotW)] = gGray;                   // 右上角：绿色
+                    pixels[(ty + halfRotH) * gridW + tx] = rGray;                   // 左下角：红色
+                    pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;      // 右下角：蓝色
                 }
             }
         } else {

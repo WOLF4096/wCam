@@ -266,12 +266,13 @@ class CaptureManager(
 
     private fun executeCaptureTask(task: CaptureTask, chars: CameraCharacteristics, result: TotalCaptureResult, formats: Set<String>) {
         try {
+            // 将旋转角度传递给 JNI，让 JNI 处理像素旋转
             val bitmap = DemosaicEngine.processFromBuffer(
                 task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
                 task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
                 task.metadata.shadingMap, task.metadata.shadingMapSize,
                 task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
-                task.cropRect, 0
+                task.cropRect, task.rotationDegrees
             )
 
             val wmMode = preferenceManager.getString("wm_mode", "None")
@@ -283,13 +284,15 @@ class CaptureManager(
                 customText = preferenceManager.getString("wm_custom_text", "wCam")
             )
 
+            // 由于 bitmap 已经在 JNI 中根据 rotationDegrees 旋转好了，
+            // 传给 saveJpegBitmap 的旋转角度改为 0
             if (formats.contains("JPG")) {
-                val uri = captureProcessor.saveJpegBitmap(bitmap, task.rotationDegrees, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
+                val uri = captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
                 listener.onCaptureCompleted(uri)
             }
             
             if (formats.contains("PNG")) {
-                val uri = captureProcessor.savePngBitmap(bitmap, "", task.rotationDegrees, task.captureStartTime, chars, result, wmConfig)
+                val uri = captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime, chars, result, wmConfig)
                 listener.onCaptureCompleted(uri)
             }
             
