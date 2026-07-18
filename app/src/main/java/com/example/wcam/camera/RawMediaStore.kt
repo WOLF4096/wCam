@@ -64,6 +64,7 @@ class RawMediaStore(
         val uri = resolver.insert(collection, contentValues)
             ?: throw IOException("Unable to create MediaStore record")
 
+        val saveStart = System.currentTimeMillis()
         val dngCreator = DngCreator(characteristics, captureResult).apply {
             setOrientation(exifOrientation)
             if (preferenceManager?.getBoolean("save_location", true) == true) {
@@ -83,6 +84,7 @@ class RawMediaStore(
             } else if (outputPathForScan != null) {
                 MediaScannerConnection.scanFile(context, arrayOf(outputPathForScan), arrayOf(RAW_MIME_TYPE), null)
             }
+            android.util.Log.d("CaptureTimer", "[$timestamp] RAW save finished in ${System.currentTimeMillis() - saveStart}ms")
             return uri
         } catch (e: Exception) {
             resolver.delete(uri, null, null)

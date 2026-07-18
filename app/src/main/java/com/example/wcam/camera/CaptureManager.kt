@@ -116,6 +116,10 @@ class CaptureManager(
                     )
                 }
 
+                val startTime = System.currentTimeMillis()
+                builder.setTag(startTime)
+                Log.d("CaptureTimer", "[$startTime] Shutter pressed, submitting request...")
+
                 session.stopRepeating()
                 session.capture(builder.build(), stillCaptureCallback, backgroundHandler)
             } catch (e: Exception) {
@@ -139,9 +143,10 @@ class CaptureManager(
 
     private val stillCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-            val sensorTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: 0L
             val wallTime = request.tag as? Long ?: System.currentTimeMillis()
+            Log.d("CaptureTimer", "[$wallTime] Hardware capture completed in ${System.currentTimeMillis() - wallTime}ms")
             
+            val sensorTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: 0L
             pendingCaptureResults[sensorTimestamp] = result
             captureStartTimeMap[sensorTimestamp] = wallTime
             
@@ -265,7 +270,9 @@ class CaptureManager(
     }
 
     private fun executeCaptureTask(task: CaptureTask, chars: CameraCharacteristics, result: TotalCaptureResult, formats: Set<String>) {
+        val wallTime = task.captureStartTime
         try {
+            val demosaicStart = System.currentTimeMillis()
             // 将旋转角度传递给 JNI，让 JNI 处理像素旋转
             val bitmap = DemosaicEngine.processFromBuffer(
                 task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
@@ -274,6 +281,7 @@ class CaptureManager(
                 task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
                 task.cropRect, task.rotationDegrees
             )
+            Log.d("CaptureTimer", "[$wallTime] Demosaic (${task.algoKey}) finished in ${System.currentTimeMillis() - demosaicStart}ms")
 
             val wmMode = preferenceManager.getString("wm_mode", "None")
             val wmConfig = WatermarkProcessor.WatermarkConfig(
@@ -287,15 +295,20 @@ class CaptureManager(
             // 由于 bitmap 已经在 JNI 中根据 rotationDegrees 旋转好了，
             // 传给 saveJpegBitmap 的旋转角度改为 0
             if (formats.contains("JPG")) {
+                val saveStart = System.currentTimeMillis()
                 val uri = captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
+                Log.d("CaptureTimer", "[$wallTime] JPEG save (with watermark if enabled) finished in ${System.currentTimeMillis() - saveStart}ms")
                 listener.onCaptureCompleted(uri)
             }
             
             if (formats.contains("PNG")) {
+                val saveStart = System.currentTimeMillis()
                 val uri = captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime, chars, result, wmConfig)
+                Log.d("CaptureTimer", "[$wallTime] PNG save (with watermark if enabled) finished in ${System.currentTimeMillis() - saveStart}ms")
                 listener.onCaptureCompleted(uri)
             }
             
+            Log.d("CaptureTimer", "[$wallTime] TOTAL process time: ${System.currentTimeMillis() - wallTime}ms")
             bitmap.recycle()
         } catch (e: Exception) {
             Log.e("CaptureManager", "Execute task failed", e)

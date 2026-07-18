@@ -30,11 +30,14 @@ class WatermarkProcessor {
         val text = buildWatermarkText(config, result, characteristics)
         if (text.isEmpty()) return bitmap
 
-        return if (config.type == "Internal") {
+        val wmStart = System.currentTimeMillis()
+        val resultBitmap = if (config.type == "Internal") {
             drawInternalWatermark(bitmap, text, configManager)
         } else {
             drawExternalWatermark(bitmap, text, configManager)
         }
+        android.util.Log.d("CaptureTimer", "Watermark drawing took ${System.currentTimeMillis() - wmStart}ms")
+        return resultBitmap
     }
 
     private fun buildWatermarkText(config: WatermarkConfig, result: TotalCaptureResult?, chars: CameraCharacteristics?): String {
