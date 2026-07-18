@@ -262,7 +262,9 @@ object PhotoParamMapper {
             val isoToApply = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower ?: 100
             var shutterToApply = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower ?: 10_000_000L
             
-            val shutterCap = config?.getLong("preview_shutter_cap_nanos", 200_000_000L) ?: 200_000_000L
+            // 移除 1/5s (200ms) 的强制上限，允许根据用户设置“强制”预览
+            // 如果用户确实设置了超长曝光（如 1s），预览会变卡但亮度正确，这符合“强制”的需求
+            val shutterCap = config?.getLong("preview_shutter_cap_nanos", 1_000_000_000L) ?: 1_000_000_000L
             if (isStream && shutterToApply > shutterCap) {
                 shutterToApply = shutterCap
             }
@@ -271,8 +273,15 @@ object PhotoParamMapper {
             builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterToApply)
             builder.set(CaptureRequest.SENSOR_FRAME_DURATION, shutterToApply)
 
-            capabilities.aeFpsRanges?.minByOrNull { it.lower }?.let { range ->
-                builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
+            // 关键：针对手动快门动态选择 FPS 范围
+            // 如果快门是 1/10s (100ms)，我们需要一个下限 <= 10fps 的范围
+            val requiredFps = (1_000_000_000L / shutterToApply).toInt().coerceAtMost(30)
+            val bestRange = capabilities.aeFpsRanges?.filter { it.lower <= requiredFps }
+                ?.maxByOrNull { it.lower } // 尽量选择最接近的下限
+                ?: capabilities.aeFpsRanges?.minByOrNull { it.lower }
+            
+            bestRange?.let {
+                builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it)
             }
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)

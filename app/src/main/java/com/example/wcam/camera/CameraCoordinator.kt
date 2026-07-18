@@ -238,6 +238,18 @@ class CameraCoordinator(
             previewRequestBuilder = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surf)
                 
+                // 强制：在创建预览请求时立即应用手动参数，解决切换镜头后参数丢失的问题
+                PhotoParamMapper.applyPhotoParamsToRequest(
+                    builder = this,
+                    state = viewModel.photoParamState.value,
+                    capabilities = getCameraCapabilities(),
+                    fallbackAutoIso = listener.getPreviewAutoValues().iso,
+                    fallbackAutoShutterNanos = listener.getPreviewAutoValues().shutterNanos,
+                    isStream = true
+                )
+                
+                viewModel.currentFlashMode.value.applyToRequest(this, false)
+
                 // Apply current digital zoom
                 applyZoomToRequest(this, currentZoomRatio)
                 
