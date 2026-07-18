@@ -16,9 +16,8 @@ enum class FlashMode(val iconRes: Int) {
             }
             SINGLE -> {
                 if (isStillCapture) {
-                    // Try to trigger flash using AE mode
-                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH)
-                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
+                    // 只管灯，不管曝光模式。由 PhotoParamMapper 决定 AE_MODE。
+                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
                 } else {
                     builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
                 }

@@ -73,6 +73,7 @@ class CameraCoordinator(
     private var activeCharacteristics: CameraCharacteristics? = null
     private var currentLogicalId = ""
     private var currentPhysicalId: String? = null
+    private var coordinatorCaptureLock = false
     private var currentZoomRatio = 1.0f
 
     private var countdownManager: CountdownManager? = null
@@ -309,6 +310,9 @@ class CameraCoordinator(
     }
 
     fun capturePhoto() {
+        if (isCaptureInProgress() || coordinatorCaptureLock) return
+        coordinatorCaptureLock = true
+
         // Handle Auto Capture first-time trigger
         val autoMode = preferenceManager.getString("auto_capture_mode", "None")
         if (autoCaptureManager != null && autoMode != "None") {
@@ -341,8 +345,28 @@ class CameraCoordinator(
         val cam = cameraDevice ?: return
         val session = captureSession ?: return
         val surf = previewSurface ?: return
+        val handler = backgroundHandler ?: return
         
-        captureManager?.capturePhoto(cam, session, surf)
+        if (viewModel.currentFlashMode.value == FlashMode.SINGLE) {
+            // Manual flash pulse logic:
+            // 1. Turn on Flash (using TORCH)
+            previewRequestBuilder?.let { builder ->
+                builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+                // 关键：不修改 AE_MODE，保持当前预览或手动的曝光状态
+                try {
+                    session.setRepeatingRequest(builder.build(), null, handler)
+                } catch (e: Exception) {
+                    Log.e("CameraCoordinator", "Failed to start flash pulse", e)
+                }
+            }
+
+            // 2. Wait 10ms and capture
+            handler.postDelayed({
+                captureManager?.capturePhoto(cam, session, surf)
+            }, 10)
+        } else {
+            captureManager?.capturePhoto(cam, session, surf)
+        }
     }
 
     fun triggerFocus(x: Float, y: Float, textureView: TextureView, callback: CameraCaptureSession.CaptureCallback) {
@@ -364,12 +388,34 @@ class CameraCoordinator(
     }
 
     override fun onCaptureCompleted(uri: Uri?) {
+        coordinatorCaptureLock = false
+        // If we were in a manual flash pulse, turn it off
+        if (viewModel.currentFlashMode.value == FlashMode.SINGLE) {
+            stopFlashPulse()
+        }
         listener.onCaptureCompleted(uri)
         autoCaptureManager?.onFrameProcessed()
     }
 
     override fun onCaptureFailed(message: String) {
+        coordinatorCaptureLock = false
+        if (viewModel.currentFlashMode.value == FlashMode.SINGLE) {
+            stopFlashPulse()
+        }
         listener.onCaptureFailed(message)
+    }
+
+    private fun stopFlashPulse() {
+        val session = captureSession ?: return
+        val handler = backgroundHandler ?: return
+        previewRequestBuilder?.let { builder ->
+            builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+            try {
+                session.setRepeatingRequest(builder.build(), null, handler)
+            } catch (e: Exception) {
+                Log.e("CameraCoordinator", "Failed to stop flash pulse", e)
+            }
+        }
     }
 
     override fun onReadyToResumePreview() {
