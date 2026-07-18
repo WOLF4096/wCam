@@ -22,7 +22,8 @@ class WatermarkProcessor {
         config: WatermarkConfig,
         characteristics: CameraCharacteristics?,
         result: TotalCaptureResult?,
-        rotationDegrees: Int // Note: bitmap passed here should be ALREADY ROTATED
+        rotationDegrees: Int, // Note: bitmap passed here should be ALREADY ROTATED
+        configManager: com.example.wcam.util.ConfigManager
     ): Bitmap {
         if (config.type == "None") return bitmap
 
@@ -30,9 +31,9 @@ class WatermarkProcessor {
         if (text.isEmpty()) return bitmap
 
         return if (config.type == "Internal") {
-            drawInternalWatermark(bitmap, text)
+            drawInternalWatermark(bitmap, text, configManager)
         } else {
-            drawExternalWatermark(bitmap, text)
+            drawExternalWatermark(bitmap, text, configManager)
         }
     }
 
@@ -64,27 +65,53 @@ class WatermarkProcessor {
         return parts.joinToString(" | ")
     }
 
-    private fun drawInternalWatermark(bitmap: Bitmap, text: String): Bitmap {
+    private fun getTypeface(config: com.example.wcam.util.ConfigManager): Typeface {
+        val family = config.getString("wm_font_family", "DEFAULT")
+        val styleStr = config.getString("wm_font_style", "BOLD")
+        
+        val baseTypeface = when (family.uppercase(Locale.US)) {
+            "MONOSPACE" -> Typeface.MONOSPACE
+            "SERIF" -> Typeface.SERIF
+            "SANS_SERIF" -> Typeface.SANS_SERIF
+            else -> Typeface.DEFAULT
+        }
+        
+        val style = when (styleStr.uppercase(Locale.US)) {
+            "BOLD" -> Typeface.BOLD
+            "ITALIC" -> Typeface.ITALIC
+            "BOLD_ITALIC" -> Typeface.BOLD_ITALIC
+            else -> Typeface.NORMAL
+        }
+        
+        return Typeface.create(baseTypeface, style)
+    }
+
+    private fun drawInternalWatermark(bitmap: Bitmap, text: String, config: com.example.wcam.util.ConfigManager): Bitmap {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
         
         // Font size relative to height
-        val textSize = (bitmap.height / 40f).coerceAtLeast(40f)
+        val sizeRatio = config.getFloat("wm_font_size_ratio", 40f)
+        val minSize = config.getFloat("wm_min_font_size", 40f)
+        val textSize = (bitmap.height / sizeRatio).coerceAtLeast(minSize)
+        
+        val paddingX = config.getFloat("wm_padding_x", 100f)
+        val paddingY = config.getFloat("wm_padding_y", 100f)
+
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             this.textSize = textSize
             setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = getTypeface(config)
         }
 
         // Draw at bottom left.
-        // We use 100px padding from the bottom and left edges of the final rotated bitmap.
-        canvas.drawText(text, 100f, bitmap.height - 100f, paint)
+        canvas.drawText(text, paddingX, bitmap.height - paddingY, paint)
         return mutableBitmap
     }
 
-    private fun drawExternalWatermark(bitmap: Bitmap, text: String): Bitmap {
-        val padding = 200 // White area height
+    private fun drawExternalWatermark(bitmap: Bitmap, text: String, config: com.example.wcam.util.ConfigManager): Bitmap {
+        val padding = config.getInt("wm_external_padding", 200) // White area height
         val newHeight = bitmap.height + padding
         val newBitmap = Bitmap.createBitmap(bitmap.width, newHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(newBitmap)
@@ -93,16 +120,20 @@ class WatermarkProcessor {
         // Original photo on top
         canvas.drawBitmap(bitmap, 0f, 0f, null)
 
-        val textSize = (bitmap.height / 40f).coerceAtLeast(40f)
+        val sizeRatio = config.getFloat("wm_font_size_ratio", 40f)
+        val minSize = config.getFloat("wm_min_font_size", 40f)
+        val textSize = (bitmap.height / sizeRatio).coerceAtLeast(minSize)
+        
+        val paddingX = config.getFloat("wm_padding_x", 100f)
+
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             this.textSize = textSize
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = getTypeface(config)
         }
 
-        // Draw in the middle of the white area vertically, 100px from left
-        // White area starts at bitmap.height
-        canvas.drawText(text, 100f, bitmap.height + (padding / 2f) + (textSize / 2f), paint)
+        // Draw in the middle of the white area vertically
+        canvas.drawText(text, paddingX, bitmap.height + (padding / 2f) + (textSize / 2f), paint)
         return newBitmap
     }
 }

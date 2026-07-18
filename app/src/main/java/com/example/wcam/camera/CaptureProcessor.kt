@@ -70,7 +70,7 @@ class CaptureProcessor(
         
         // 2. Apply Watermark to rotated bitmap
         val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
-            WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0)
+            WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0, config)
         } else {
             rotatedBitmap
         }
@@ -148,7 +148,7 @@ class CaptureProcessor(
 
         // 2. Apply Watermark to rotated bitmap
         val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
-            WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0)
+            WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0, config)
         } else {
             rotatedBitmap
         }
