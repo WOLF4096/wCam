@@ -75,9 +75,9 @@ class ManualParamController(
                             ParamKey.AF -> state.af
                         }
 
-                        if (paramVal.isAuto) {
+                        val currentDisplay = if (paramVal.isAuto) {
                             val autoVals = listener.getPreviewAutoValues()
-                            val currentDisplay = when (key) {
+                            when (key) {
                                 ParamKey.EV -> autoVals.evCompensation?.let { 
                                     PhotoParamMapper.formatEvDisplay(it, autoVals.evStep) 
                                 }
@@ -86,9 +86,11 @@ class ManualParamController(
                                 ParamKey.SHUTTER -> autoVals.shutterNanos?.let { PhotoParamMapper.formatShutterDisplay(it) }
                                 ParamKey.AF -> autoVals.afDistance?.let { PhotoParamMapper.formatFocusDistanceDisplay(it) }
                             } ?: paramVal.displayValue
-                            
-                            currentIndex = findClosestIndex(currentDisplay, values)
+                        } else {
+                            paramVal.displayValue
                         }
+                        
+                        currentIndex = findClosestIndex(currentDisplay, values)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {

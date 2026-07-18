@@ -58,8 +58,15 @@ class CaptureManager(
     var isCaptureInProgress = false
         private set
 
+    private val MAX_PENDING_TASKS = 3 // Limit to prevent OOM
+    private val pendingTaskCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     fun capturePhoto(camera: CameraDevice, session: CameraCaptureSession, previewSurface: Surface?) {
         if (isCaptureInProgress) return
+        if (pendingTaskCount.get() >= MAX_PENDING_TASKS) {
+            Log.w("CaptureManager", "Too many pending tasks, dropping capture request")
+            return
+        }
         
         val shutterNanos = calculateShutterNanos()
         isCaptureInProgress = true
@@ -177,6 +184,7 @@ class CaptureManager(
         
         val task = prepareCaptureTask(image, result, chars, formatString, wallTime)
         
+        pendingTaskCount.incrementAndGet()
         captureExecutor.submit {
             try {
                 if (formats.contains("RAW")) {
@@ -189,6 +197,7 @@ class CaptureManager(
                 }
             } finally {
                 image.close()
+                pendingTaskCount.decrementAndGet()
             }
         }
     }
