@@ -22,8 +22,10 @@ struct DemosaicParams {
     int rowStride;
     int pixelStride;
     float* wbGains;
-    float* ccm; // 新增 CCM 矩阵 (9 elements)
-    float* shadingMap; // 新增 Lens Shading Map
+    float* ccm;
+    float combinedCCM[9]; // 新增：预乘后的 Sensor-to-sRGB 矩阵
+    bool hasCombinedCCM;  // 新增：标记是否已计算
+    float* shadingMap;
     int smWidth;
     int smHeight;
     int bayerPattern;
@@ -69,50 +71,46 @@ inline int get_channel_type(int x, int y, int bayerPattern) {
 
 inline float get_raw(const DemosaicParams& p, int x, int y) {
     // Fast path for in-bounds
-    int cur_x = std::clamp(x, 0, p.width - 1);
-    int cur_y = std::clamp(y, 0, p.height - 1);
+    int cur_x = (x < 0) ? 0 : (x >= p.width ? p.width - 1 : x);
+    int cur_y = (y < 0) ? 0 : (y >= p.height ? p.height - 1 : y);
 
     uint64_t offset = (uint64_t)cur_y * (uint64_t)p.rowStride + (uint64_t)cur_x * (uint64_t)p.pixelStride;
     const uint8_t* ptr = p.rawData + offset;
-    uint16_t val;
-    std::memcpy(&val, ptr, 2);
-    float val_f = std::max(0.0f, (float)val - p.blackLevel);
+
+    // Using simple pointer dereference instead of memcpy for speed,
+    // assuming rawData is 2-byte aligned which is standard for Camera2 RAW
+    uint16_t val = *reinterpret_cast<const uint16_t*>(ptr);
+    float val_f = (val > p.blackLevel) ? (float)(val - p.blackLevel) : 0.0f;
 
     // --- 新版 LSC: 硬件 LensShadingMap 双线性插值 ---
     if (p.shadingMap != nullptr && p.smWidth > 1 && p.smHeight > 1) {
-        // 计算在网格中的相对位置 (0.0 到 smWidth-1.0)
-        float gx = ((float)cur_x / (p.width - 1)) * (p.smWidth - 1);
-        float gy = ((float)cur_y / (p.height - 1)) * (p.smHeight - 1);
+        // 计算在网格中的相对位置
+        float gx = ((float)cur_x * (p.smWidth - 1)) / (p.width - 1);
+        float gy = ((float)cur_y * (p.smHeight - 1)) / (p.height - 1);
 
         int x0 = (int)gx;
         int y0 = (int)gy;
-        int x1 = std::min(x0 + 1, p.smWidth - 1);
-        int y1 = std::min(y0 + 1, p.smHeight - 1);
+        int x1 = (x0 < p.smWidth - 1) ? x0 + 1 : x0;
+        int y1 = (y0 < p.smHeight - 1) ? y0 + 1 : y0;
 
         float dx = gx - x0;
         float dy = gy - y0;
 
-        // 获取当前像素的 Bayer 通道类型 (0:R, 1:Gr, 2:Gb, 3:B)
         int c = get_channel_type(cur_x, cur_y, p.bayerPattern);
+        int sm_row_stride = p.smWidth * 4;
+        float* sm_row0 = &p.shadingMap[y0 * sm_row_stride];
+        float* sm_row1 = &p.shadingMap[y1 * sm_row_stride];
 
-        // 从 4通道网格中提取对应通道的四个角点增益
-        auto get_gain = [&](int grid_x, int grid_y) {
-            return p.shadingMap[(grid_y * p.smWidth + grid_x) * 4 + c];
-        };
+        float g00 = sm_row0[x0 * 4 + c];
+        float g10 = sm_row0[x1 * 4 + c];
+        float g01 = sm_row1[x0 * 4 + c];
+        float g11 = sm_row1[x1 * 4 + c];
 
-        float g00 = get_gain(x0, y0);
-        float g10 = get_gain(x1, y0);
-        float g01 = get_gain(x0, y1);
-        float g11 = get_gain(x1, y1);
-
-        // 双线性插值
         float raw_gain = (1.0f - dx) * (1.0f - dy) * g00 +
                          dx * (1.0f - dy) * g10 +
                          (1.0f - dx) * dy * g01 +
                          dx * dy * g11;
 
-        // 应用用户强度系数: 1.0 + (gain - 1.0) * strength
-        // 这允许用户在 UI 上微调硬件去暗角的力度
         float gain = 1.0f + (raw_gain - 1.0f) * p.lscStrength;
         val_f *= gain;
     }
@@ -177,29 +175,16 @@ inline float tonemap(float x) {
 }
 
 inline uint32_t rgb_to_pixel_impl(float r, float g, float b, const DemosaicParams& p) {
-    // 1. 基础增益微调 (略微提升以增强画面通透度)
+    // 1. 基础增益微调
     float exposure = 1.06f;
     r *= exposure; g *= exposure; b *= exposure;
 
-    // 2. 核心色彩转换
+    // 2. 核心色彩转换 (使用预计算矩阵，减少 18 次乘法)
     float rr, gg, bb;
-    if (p.ccm != nullptr && (p.ccm[0] != 0.0f || p.ccm[4] != 0.0f)) {
-        // A. 转换到 CIE XYZ 空间 (应用硬件 ForwardMatrix)
-        // 注意：ForwardMatrix 通常输出的是 D50 XYZ
-        float X50 = p.ccm[0] * r + p.ccm[1] * g + p.ccm[2] * b;
-        float Y50 = p.ccm[3] * r + p.ccm[4] * g + p.ccm[5] * b;
-        float Z50 = p.ccm[6] * r + p.ccm[7] * g + p.ccm[8] * b;
-
-        // B. 色彩适配转换 (Chromatic Adaptation: D50 to D65)
-        // 这是修复“白色偏黄”的关键，使用 Bradford 转换矩阵
-        float X =  0.9555766f * X50 - 0.0230393f * Y50 + 0.0631636f * Z50;
-        float Y = -0.0282895f * X50 + 1.0099416f * Y50 + 0.0210077f * Z50;
-        float Z =  0.0122982f * X50 - 0.0204830f * Y50 + 1.3299098f * Z50;
-
-        // C. 从 CIE XYZ (D65) 转换到 Linear sRGB
-        rr =  3.2404542f * X - 1.5371385f * Y - 0.4985314f * Z;
-        gg = -0.9692660f * X + 1.8760108f * Y + 0.0415560f * Z;
-        bb =  0.0556434f * X - 0.2040259f * Y + 1.0572252f * Z;
+    if (p.hasCombinedCCM) {
+        rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
+        gg = p.combinedCCM[3] * r + p.combinedCCM[4] * g + p.combinedCCM[5] * b;
+        bb = p.combinedCCM[6] * r + p.combinedCCM[7] * g + p.combinedCCM[8] * b;
     } else {
         // 兜底：Sensor-to-sRGB 经验矩阵
         rr =  1.65f * r - 0.55f * g - 0.10f * b;
@@ -207,8 +192,10 @@ inline uint32_t rgb_to_pixel_impl(float r, float g, float b, const DemosaicParam
         bb = -0.05f * r - 0.65f * g + 1.70f * b;
     }
 
-    // 3. 负值剪裁与初步饱和度保护
-    rr = std::max(0.0f, rr); gg = std::max(0.0f, gg); bb = std::max(0.0f, bb);
+    // 3. 负值剪裁
+    rr = (rr > 0.0f) ? rr : 0.0f;
+    gg = (gg > 0.0f) ? gg : 0.0f;
+    bb = (bb > 0.0f) ? bb : 0.0f;
 
     // 4. 应用 Tonemap (ACES Filmic)
     rr = tonemap(rr);

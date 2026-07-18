@@ -60,6 +60,43 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     float diff = (float)(whiteLevel - blackLevel);
     p.normFactor = (diff > 0) ? (1.0f / diff) : 1.0f;
 
+    // --- 预计算色彩转换矩阵 ---
+    p.hasCombinedCCM = false;
+    if (ccm != nullptr && (ccm[0] != 0.0f || ccm[4] != 0.0f)) {
+        // A: Bradford D50 to D65
+        const float bradford[] = {
+             0.9555766f, -0.0230393f,  0.0631636f,
+            -0.0282895f,  1.0099416f,  0.0210077f,
+             0.0122982f, -0.0204830f,  1.3299098f
+        };
+        // B: XYZ(D65) to sRGB
+        const float xyz2srgb[] = {
+             3.2404542f, -1.5371385f, -0.4985314f,
+            -0.9692660f,  1.8760108f,  0.0415560f,
+             0.0556434f, -0.2040259f,  1.0572252f
+        };
+
+        // M_temp = B * A
+        float mTemp[9];
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                mTemp[i * 3 + j] = xyz2srgb[i * 3 + 0] * bradford[0 * 3 + j] +
+                                   xyz2srgb[i * 3 + 1] * bradford[1 * 3 + j] +
+                                   xyz2srgb[i * 3 + 2] * bradford[2 * 3 + j];
+            }
+        }
+
+        // combinedCCM = M_temp * CCM
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                p.combinedCCM[i * 3 + j] = mTemp[i * 3 + 0] * ccm[0 * 3 + j] +
+                                           mTemp[i * 3 + 1] * ccm[1 * 3 + j] +
+                                           mTemp[i * 3 + 2] * ccm[2 * 3 + j];
+            }
+        }
+        p.hasCombinedCCM = true;
+    }
+
     auto get_rotated_idx = [&](int x, int y, int w, int h, int rot, int& outX, int& outY) {
         if (rot == 90) { outX = h - 1 - y; outY = x; }
         else if (rot == 180) { outX = w - 1 - x; outY = h - 1 - y; }
@@ -156,9 +193,10 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                 }
             }
         } else {
-            // 对其他算法，先执行完整解拜耳到临时缓冲区，再进行裁剪旋转
-            // 这种方式能保证边缘质量
-            std::vector<uint32_t> temp(width * height);
+            // 使用 unique_ptr 且不进行 0 初始化以节省时间
+            auto temp_ptr = std::unique_ptr<uint32_t[]>(new uint32_t[width * height]);
+            uint32_t* temp = temp_ptr.get();
+
             if (algo == "None") {
                 #pragma omp parallel for schedule(dynamic, 16)
                 for (int y = 0; y < height; ++y) {
@@ -180,14 +218,14 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                         temp[y * width + x] = 0xFF000000 | (v << 16) | (v << 8) | v;
                     }
                 }
-            } else if (algo == "Fast") { demosaic_bilinear(p, (int*)temp.data()); }
-            else if (algo == "AHD" || algo == "EAHD" || algo == "HPHD") { demosaic_ahd(p, (int*)temp.data()); }
-            else if (algo == "VNG4") { demosaic_vng(p, (int*)temp.data()); }
-            else if (algo == "RCD") { demosaic_rcd(p, (int*)temp.data()); }
-            else if (algo == "AMaZE") { demosaic_amaze(p, (int*)temp.data()); }
-            else if (algo == "LMMSE") { demosaic_lmmse(p, (int*)temp.data()); }
-            else if (algo == "DCB") { demosaic_dcb(p, (int*)temp.data()); }
-            else { demosaic_bilinear(p, (int*)temp.data()); }
+            } else if (algo == "Fast") { demosaic_bilinear(p, (int*)temp); }
+            else if (algo == "AHD" || algo == "EAHD" || algo == "HPHD") { demosaic_ahd(p, (int*)temp); }
+            else if (algo == "VNG4") { demosaic_vng(p, (int*)temp); }
+            else if (algo == "RCD") { demosaic_rcd(p, (int*)temp); }
+            else if (algo == "AMaZE") { demosaic_amaze(p, (int*)temp); }
+            else if (algo == "LMMSE") { demosaic_lmmse(p, (int*)temp); }
+            else if (algo == "DCB") { demosaic_dcb(p, (int*)temp); }
+            else { demosaic_bilinear(p, (int*)temp); }
 
             // 裁剪旋转到输出
             #pragma omp parallel for schedule(dynamic, 16)

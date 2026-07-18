@@ -1,46 +1,68 @@
 #include "demosaic_common.h"
+#include <vector>
+#include <algorithm>
+#include <cmath>
 
 void demosaic_ahd(const DemosaicParams& p, int* pixels) {
+    const int width = p.width;
+    const int height = p.height;
+    const int size = width * height;
+
+    std::vector<float> wb_raw(size);
+
+    // Step 0: Pre-apply LSC and WB
     #pragma omp parallel for schedule(dynamic, 16)
-    for (int y = 0; y < p.height; ++y) {
-        int out_row = y * p.width;
-        for (int x = 0; x < p.width; ++x) {
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            wb_raw[y * width + x] = get_pixel_wb(p, x, y);
+        }
+    }
+
+    auto get_wb_fast = [&](int x, int y) {
+        int cx = (x < 0) ? 0 : (x >= width ? width - 1 : x);
+        int cy = (y < 0) ? 0 : (y >= height ? height - 1 : y);
+        return wb_raw[cy * width + cx];
+    };
+
+    #pragma omp parallel for schedule(dynamic, 16)
+    for (int y = 0; y < height; ++y) {
+        int out_row = y * width;
+        for (int x = 0; x < width; ++x) {
             float r, g, b;
             int channel = get_channel_type(x, y, p.bayerPattern);
 
             if (channel == 0 || channel == 3) { // R or B center
-                float center = get_pixel_wb(p, x, y);
+                float center = wb_raw[out_row + x];
 
-                // Adaptive Green interpolation based on gradients
-                float g_h = (get_pixel_wb(p, x-1, y) + get_pixel_wb(p, x+1, y)) * 0.5f;
-                float g_v = (get_pixel_wb(p, x, y-1) + get_pixel_wb(p, x, y+1)) * 0.5f;
+                float g_h = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
+                float g_v = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
 
-                float dh = std::abs(get_pixel_wb(p, x-2, y) - get_pixel_wb(p, x+2, y)) +
-                           std::abs(get_pixel_wb(p, x, y) - get_pixel_wb(p, x-1, y)) +
-                           std::abs(get_pixel_wb(p, x, y) - get_pixel_wb(p, x+1, y));
-                float dv = std::abs(get_pixel_wb(p, x, y-2) - get_pixel_wb(p, x, y+2)) +
-                           std::abs(get_pixel_wb(p, x, y) - get_pixel_wb(p, x, y-1)) +
-                           std::abs(get_pixel_wb(p, x, y) - get_pixel_wb(p, x, y+1));
+                float dh = std::abs(get_wb_fast(x - 2, y) - get_wb_fast(x + 2, y)) +
+                           std::abs(center - get_wb_fast(x - 1, y)) +
+                           std::abs(center - get_wb_fast(x + 1, y));
+                float dv = std::abs(get_wb_fast(x, y - 2) - get_wb_fast(x, y + 2)) +
+                           std::abs(center - get_wb_fast(x, y - 1)) +
+                           std::abs(center - get_wb_fast(x, y + 1));
 
                 g = (dh < dv) ? g_h : g_v;
 
                 if (channel == 0) {
                     r = center;
-                    b = (get_pixel_wb(p, x-1, y-1) + get_pixel_wb(p, x+1, y-1) +
-                         get_pixel_wb(p, x-1, y+1) + get_pixel_wb(p, x+1, y+1)) * 0.25f;
+                    b = (get_wb_fast(x - 1, y - 1) + get_wb_fast(x + 1, y - 1) +
+                         get_wb_fast(x - 1, y + 1) + get_wb_fast(x + 1, y + 1)) * 0.25f;
                 } else {
                     b = center;
-                    r = (get_pixel_wb(p, x-1, y-1) + get_pixel_wb(p, x+1, y-1) +
-                         get_pixel_wb(p, x-1, y+1) + get_pixel_wb(p, x+1, y+1)) * 0.25f;
+                    r = (get_wb_fast(x - 1, y - 1) + get_wb_fast(x + 1, y - 1) +
+                         get_wb_fast(x - 1, y + 1) + get_wb_fast(x + 1, y + 1)) * 0.25f;
                 }
             } else { // G center
-                g = get_pixel_wb(p, x, y);
+                g = wb_raw[out_row + x];
                 if (channel == 1) { // Gr
-                    r = (get_pixel_wb(p, x-1, y) + get_pixel_wb(p, x+1, y)) * 0.5f;
-                    b = (get_pixel_wb(p, x, y-1) + get_pixel_wb(p, x, y+1)) * 0.5f;
+                    r = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
+                    b = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
                 } else { // Gb
-                    b = (get_pixel_wb(p, x-1, y) + get_pixel_wb(p, x+1, y)) * 0.5f;
-                    r = (get_pixel_wb(p, x, y-1) + get_pixel_wb(p, x, y+1)) * 0.5f;
+                    b = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
+                    r = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
                 }
             }
             pixels[out_row + x] = rgb_to_pixel(r, g, b);
