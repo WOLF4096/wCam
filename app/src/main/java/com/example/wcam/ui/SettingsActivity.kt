@@ -277,5 +277,6 @@ class SettingsActivity : AppCompatActivity() {
 
         val isRawOnly = formats.size == 1 && formats.contains("RAW")
         binding.cardAlgo.visibility = if (isRawOnly) View.GONE else View.VISIBLE
+        binding.cardWatermark.visibility = if (isRawOnly) View.GONE else View.VISIBLE
     }
 }
