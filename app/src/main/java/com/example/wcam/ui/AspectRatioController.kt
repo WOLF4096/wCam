@@ -112,7 +112,10 @@ class AspectRatioController(
                 "1:1" -> updateRatio(1.0f, "1:1")
                 "3:4" -> updateRatio(4f / 3f, "3:4")
                 "9:16" -> updateRatio(16f / 9f, "9:16")
+                "9:20" -> updateRatio(20f / 9f, "9:20")
                 "1:2" -> updateRatio(2.0f, "1:2")
+                "1:3" -> updateRatio(3.0f, "1:3")
+                "1:4" -> updateRatio(4.0f, "1:4")
                 "自定义" -> showCustomRatioDialog()
             }
         }

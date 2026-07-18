@@ -260,18 +260,34 @@ object PhotoParamMapper {
             val isoValue = state.iso.manualValue ?: fallbackAutoIso ?: capabilities.isoRange?.lower
             var shutterValue = state.shutter.manualValue ?: fallbackAutoShutterNanos ?: capabilities.exposureTimeRange?.lower
             
+            // Critical fix: ensure we only apply values if they are actually manually set
+            // or if the overall exposure is manual.
+            if (!state.iso.isAuto) {
+                isoValue?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
+            } else {
+                fallbackAutoIso?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
+            }
+
+            if (!state.shutter.isAuto) {
+                shutterValue?.let { 
+                    builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
+                    builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
+                }
+            } else {
+                fallbackAutoShutterNanos?.let { 
+                    builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
+                    builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
+                }
+            }
+
             val shutterCap = config?.getLong("preview_shutter_cap_nanos", 200_000_000L) ?: 200_000_000L
             if (isStream && shutterValue != null && shutterValue > shutterCap) {
-                shutterValue = shutterCap
+                builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterCap)
+                builder.set(CaptureRequest.SENSOR_FRAME_DURATION, shutterCap)
             }
             
-            isoValue?.let { builder.set(CaptureRequest.SENSOR_SENSITIVITY, it) }
-            shutterValue?.let { 
-                builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
-                builder.set(CaptureRequest.SENSOR_FRAME_DURATION, it)
-                capabilities.aeFpsRanges?.minByOrNull { it.lower }?.let { range ->
-                    builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
-                }
+            capabilities.aeFpsRanges?.minByOrNull { it.lower }?.let { range ->
+                builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
             }
         } else {
             builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)

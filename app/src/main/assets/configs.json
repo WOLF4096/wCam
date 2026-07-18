@@ -11,7 +11,7 @@
     "histogram_sample_width": 192,
     "histogram_sample_height": 48,
     "stream_freeze_threshold_ms": 2000,
-    "default_storage_folder": "wCam"
+    "default_storage_folder": "Pictures/wCam"
   },
   "device_configs": {
     "V2509A": {

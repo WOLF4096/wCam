@@ -85,8 +85,7 @@ class WatermarkProcessor {
 
     private fun drawExternalWatermark(bitmap: Bitmap, text: String): Bitmap {
         val padding = 200 // Total height for external area
-        val newHeight = bitmap.height + padding
-        val newBitmap = Bitmap.createBitmap(bitmap.width, newHeight, Bitmap.Config.ARGB_8888)
+        val newBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height + padding, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(newBitmap)
         
         canvas.drawColor(Color.WHITE)
@@ -100,11 +99,9 @@ class WatermarkProcessor {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
-        // Measure text to center or align? Requirements say "left-bottom 100, -100px"
-        // This means inside the white area.
-        // Base of photo is y = bitmap.height. 
-        // 100px below that is y = bitmap.height + 100px.
-        canvas.drawText(text, 100f, bitmap.height + 120f, paint)
+        // Requirements say "bottom-left 100, -100px". 
+        // This means it's 100px up from the bottom of the NEW image.
+        canvas.drawText(text, 100f, newBitmap.height - 100f, paint)
         return newBitmap
     }
 }

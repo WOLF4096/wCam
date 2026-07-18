@@ -42,7 +42,7 @@ class RawMediaStore(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, RAW_MIME_TYPE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$folderName")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/$folderName")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 val folder = File(

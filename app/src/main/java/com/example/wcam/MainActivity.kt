@@ -509,7 +509,7 @@ class MainActivity : AppCompatActivity(),
     private fun showToast(msg: String) { runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() } }
 
     private fun rotateUiElements(degrees: Int) {
-        val rotation = when (degrees) {
+        val targetRotation = when (degrees) {
             90 -> 270f
             180 -> 180f
             270 -> 90f
@@ -532,13 +532,28 @@ class MainActivity : AppCompatActivity(),
         )
 
         viewsToRotate.forEach { view ->
-            view.animate().rotation(rotation).setDuration(300).start()
+            var currentRotation = view.rotation
+            // Normalize current rotation to [0, 360)
+            currentRotation = (currentRotation % 360 + 360) % 360
+            
+            var delta = targetRotation - currentRotation
+            // Find the shortest path for rotation
+            if (delta > 180) delta -= 360
+            if (delta < -180) delta += 360
+            
+            view.animate().rotationBy(delta).setDuration(300).start()
         }
         
         // Lens selector buttons
         val lensContainer = binding.lensSelector.lensSelectorContainer
         for (i in 0 until lensContainer.childCount) {
-            lensContainer.getChildAt(i).animate().rotation(rotation).setDuration(300).start()
+            val view = lensContainer.getChildAt(i)
+            var currentRotation = view.rotation
+            currentRotation = (currentRotation % 360 + 360) % 360
+            var delta = targetRotation - currentRotation
+            if (delta > 180) delta -= 360
+            if (delta < -180) delta += 360
+            view.animate().rotationBy(delta).setDuration(300).start()
         }
     }
     
