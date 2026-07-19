@@ -284,12 +284,31 @@ class CaptureProcessor(
             if (it > 0) {
                 val exposureInSeconds = it / 1_000_000_000.0
                 exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.format(Locale.US, "%.6f", exposureInSeconds))
+                
+                // APEX ShutterSpeedValue: Tv = -log2(t)
+                val tv = -(Math.log(exposureInSeconds) / Math.log(2.0))
+                exif.setAttribute(ExifInterface.TAG_SHUTTER_SPEED_VALUE, String.format(Locale.US, "%.4f", tv))
             }
         }
         
-        aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
-        focalLength?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
+        aperture?.let { 
+            exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString())
+            // APEX ApertureValue: Av = 2 * log2(FNumber)
+            val av = 2.0 * (Math.log(it.toDouble()) / Math.log(2.0))
+            exif.setAttribute(ExifInterface.TAG_APERTURE_VALUE, String.format(Locale.US, "%.4f", av))
+        }
+        focalLength?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, it.toString()) }
         
+        // 35mm Equivalent Focal Length
+        val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        if (sensorSize != null && focalLength != null) {
+            val diagonal = Math.sqrt((sensorSize.width * sensorSize.width + sensorSize.height * sensorSize.height).toDouble())
+            if (diagonal > 0) {
+                val focal35mm = (focalLength * (43.27 / diagonal) + 0.5).toInt()
+                exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, focal35mm.toString())
+            }
+        }
+
         if (evIndex != null && evStep != null) {
             val ev = evIndex * evStep
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, String.format(Locale.US, "%.1f", ev))
@@ -301,13 +320,41 @@ class CaptureProcessor(
             false
         }
         exif.setAttribute(ExifInterface.TAG_FLASH, if (flashFired) "1" else "0")
+
+        // Metadata Richness Improvements
         
+        // White Balance (0 = Auto, 1 = Manual)
+        val awbMode = result.get(CaptureResult.CONTROL_AWB_MODE)
+        exif.setAttribute(ExifInterface.TAG_WHITE_BALANCE, 
+            if (awbMode == CaptureResult.CONTROL_AWB_MODE_OFF) "1" else "0")
+
+        // Exposure Mode & Program
+        val aeMode = result.get(CaptureResult.CONTROL_AE_MODE)
+        val isManual = aeMode == CaptureResult.CONTROL_AE_MODE_OFF
+        exif.setAttribute(ExifInterface.TAG_EXPOSURE_MODE, if (isManual) "1" else "0")
+        exif.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, if (isManual) "1" else "2")
+
+        // Sensing Method
+        exif.setAttribute(ExifInterface.TAG_SENSING_METHOD, "2") // One-chip color area sensor
+
+        // Metering Mode (2 = Center-weighted average as default)
+        exif.setAttribute(ExifInterface.TAG_METERING_MODE, "2")
+        
+        // Color Space (1 = sRGB)
+        exif.setAttribute(ExifInterface.TAG_COLOR_SPACE, "1")
+
         val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
         val now = Date()
         val dateStr = sdf.format(now)
         exif.setAttribute(ExifInterface.TAG_DATETIME, dateStr)
         exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateStr)
         exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, dateStr)
+
+        // SubSecTime for high precision
+        val subSec = String.format(Locale.US, "%03d", System.currentTimeMillis() % 1000)
+        exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME, subSec)
+        exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, subSec)
+        exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED, subSec)
     }
 
     private fun createPhotoDisplayName(timestampMillis: Long, extension: String): String {
