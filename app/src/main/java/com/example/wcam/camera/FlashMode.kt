@@ -4,10 +4,10 @@ import android.graphics.Color
 import android.hardware.camera2.CaptureRequest
 import com.example.wcam.R
 
-enum class FlashMode(val iconRes: Int) {
-    OFF(R.drawable.ic_flash_off),
-    SINGLE(R.drawable.ic_flash_on),
-    TORCH(R.drawable.ic_flash_torch);
+enum class FlashMode(val iconRes: Int, val label: String) {
+    OFF(R.drawable.ic_flash_off, "关闭"),
+    SINGLE(R.drawable.ic_flash_on, "打开"),
+    TORCH(R.drawable.ic_flash_torch, "常亮");
 
     fun applyToRequest(builder: CaptureRequest.Builder, isStillCapture: Boolean) {
         when (this) {

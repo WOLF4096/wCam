@@ -52,7 +52,7 @@ object PhotoParamMapper {
     }
 
     fun parseShutterLabel(label: String): Long {
-        val normalized = label.uppercase(Locale.US)
+        val normalized = label.uppercase(Locale.US).replace("S", "")
         return if (normalized.contains("/")) {
             val parts = normalized.split("/")
             if (parts.size == 2) {
@@ -71,6 +71,20 @@ object PhotoParamMapper {
             val seconds = normalized.toDoubleOrNull() ?: 0.1
             (seconds * 1_000_000_000L).toLong()
         }
+    }
+
+    fun clampIso(value: Int, range: IntRange): Int = value.coerceIn(range)
+
+    fun clampExposureTime(value: Long, range: LongRange): Long = value.coerceIn(range)
+
+    fun mapAfProgressToDistance(progress: Float, minFocusDistance: Float): Float {
+        if (minFocusDistance <= 0f) return 0f
+        return (1.0f - progress.coerceIn(0f, 1f)) * minFocusDistance
+    }
+
+    fun evLabelToCompensationIndex(label: String, step: Float, range: IntRange): Int {
+        val ev = label.toFloatOrNull() ?: 0f
+        return (ev / step).roundToInt().coerceIn(range)
     }
 
     fun formatEvDisplay(compensationIndex: Int, step: Float): String {
