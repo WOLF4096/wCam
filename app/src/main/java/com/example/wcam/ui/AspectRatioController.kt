@@ -117,7 +117,7 @@ class AspectRatioController(
     }
 
     fun showPhotoRatioPopup(anchor: View) {
-        val options = listOf("1:1", "3:4", "9:16", "9:20", "1:2", "1:3", "1:4")
+        val options = listOf("1:1", "4:3", "16:9", "20:9", "2:1", "3:1", "4:1")
         val currentLabel = preferenceManager.getString(PreferenceManager.KEY_PHOTO_RATIO_STR, "4:3")
         listener.showRatioPanel(anchor, options, currentLabel, true) { selected ->
             if (selected.contains(":")) {

@@ -4,15 +4,9 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.ImageButton
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.ListPopupWindow
-import android.widget.GridLayout
-import android.widget.SeekBar
 import com.example.wcam.R
 import com.example.wcam.camera.FlashMode
 import java.util.Locale
@@ -39,7 +33,6 @@ class CameraUiController(
 
     fun updateFlashUi(btnFlash: ImageButton, mode: FlashMode) {
         btnFlash.setImageResource(mode.iconRes)
-        // Tint gold if not OFF
         if (mode != FlashMode.OFF) {
             btnFlash.setColorFilter(Color.parseColor("#FFCC00"))
         } else {
@@ -57,7 +50,7 @@ class CameraUiController(
 
     fun showTimerPanel(anchor: View, preferenceManager: com.example.wcam.PreferenceManager) {
         val popupView = activity.layoutInflater.inflate(R.layout.layout_timer_panel, null)
-        val popupWindow = android.widget.PopupWindow(
+        val popupWindow = PopupWindow(
             popupView,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -73,11 +66,10 @@ class CameraUiController(
         val segAutoContinuous = popupView.findViewById<TextView>(R.id.seg_auto_continuous)
         val panelInterval = popupView.findViewById<View>(R.id.panel_auto_interval)
         val panelContinuous = popupView.findViewById<View>(R.id.panel_auto_continuous)
-        val etIntervalSec = popupView.findViewById<android.widget.EditText>(R.id.et_interval_sec)
-        val etIntervalDuration = popupView.findViewById<android.widget.EditText>(R.id.et_interval_duration)
-        val etContinuousCount = popupView.findViewById<android.widget.EditText>(R.id.et_continuous_count)
+        val etIntervalSec = popupView.findViewById<EditText>(R.id.et_interval_sec)
+        val etIntervalDuration = popupView.findViewById<EditText>(R.id.et_interval_duration)
+        val etContinuousCount = popupView.findViewById<EditText>(R.id.et_continuous_count)
 
-        // Load current values
         val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
         seekbarCountdown.progress = cdX10
         tvCountdownVal.text = if (cdX10 % 10 == 0) "${cdX10 / 10}s" else String.format(Locale.US, "%.1fs", cdX10 / 10f)
@@ -89,7 +81,6 @@ class CameraUiController(
         etIntervalDuration.setText(preferenceManager.getString("auto_interval_duration", "60"))
         etContinuousCount.setText(preferenceManager.getString("auto_continuous_count", "10"))
 
-        // Listeners
         seekbarCountdown.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 tvCountdownVal.text = if (progress % 10 == 0) "${progress / 10}s" else String.format(Locale.US, "%.1fs", progress / 10f)
@@ -114,26 +105,25 @@ class CameraUiController(
             updateAutoModeSelection("Continuous", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
         }
 
-        etIntervalSec.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_interval_sec", s.toString()) }
+        val textWatcher = object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val view = activity.currentFocus
+                val key = when(view?.id) {
+                    R.id.et_interval_sec -> "auto_interval_sec"
+                    R.id.et_interval_duration -> "auto_interval_duration"
+                    R.id.et_continuous_count -> "auto_continuous_count"
+                    else -> return
+                }
+                preferenceManager.saveString(key, s.toString())
+            }
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-        etIntervalDuration.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_interval_duration", s.toString()) }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-        etContinuousCount.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_continuous_count", s.toString()) }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-
-        popupWindow.setOnDismissListener {
-            listener.onTimerPanelDismissed()
         }
+        etIntervalSec.addTextChangedListener(textWatcher)
+        etIntervalDuration.addTextChangedListener(textWatcher)
+        etContinuousCount.addTextChangedListener(textWatcher)
 
+        popupWindow.setOnDismissListener { listener.onTimerPanelDismissed() }
         popupWindow.showAsDropDown(anchor, 0, 10)
     }
 
@@ -145,68 +135,9 @@ class CameraUiController(
         panelC.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
     }
 
-    fun updateGridUi(btnGrid: ImageButton, isVisible: Boolean) {
-        if (isVisible) {
-            btnGrid.setColorFilter(Color.parseColor("#FFCC00"))
-        } else {
-            btnGrid.clearColorFilter()
-        }
-    }
-
-    fun updateSettingsUi(btnSettings: ImageButton) {
-        // Just clear any filters if needed, usually remains white
-        btnSettings.clearColorFilter()
-    }
-
-    fun updateResolutionText(btnResolution: TextView, text: String, isChanged: Boolean = false) {
-        btnResolution.text = text
-        if (isChanged) {
-            btnResolution.setTextColor(Color.parseColor("#FFCC00"))
-        } else {
-            btnResolution.setTextColor(Color.WHITE)
-        }
-    }
-
-    fun startShutterCountdown(shutterNanos: Long, pbShutterProgress: ProgressBar, tvShutterCountdown: TextView) {
-        val durationMs = shutterNanos / 1_000_000L
-        if (durationMs < 500) return
-
-        pbShutterProgress.visibility = View.VISIBLE
-        tvShutterCountdown.visibility = View.VISIBLE
-        pbShutterProgress.progress = 0
-        tvShutterCountdown.text = String.format(Locale.US, "%.1fs", durationMs / 1000.0)
-
-        countdownTimer?.cancel()
-        countdownTimer = object : android.os.CountDownTimer(durationMs, 50) {
-            override fun onTick(millisUntilFinished: Long) {
-                val elapsed = durationMs - millisUntilFinished
-                val progress = (elapsed.toFloat() / durationMs * 1000).toInt()
-                pbShutterProgress.progress = progress
-                tvShutterCountdown.text = String.format(Locale.US, "%.1fs", millisUntilFinished / 1000.0)
-            }
-
-            override fun onFinish() {
-                pbShutterProgress.progress = 1000
-                tvShutterCountdown.text = "0.0s"
-            }
-        }.start()
-    }
-
-    fun stopShutterCountdown(pbShutterProgress: ProgressBar, tvShutterCountdown: TextView) {
-        countdownTimer?.cancel()
-        countdownTimer = null
-        pbShutterProgress.visibility = View.GONE
-        tvShutterCountdown.visibility = View.GONE
-    }
-
     fun showRatioPanel(anchor: View, options: List<String>, currentLabel: String, showCustom: Boolean, onSelected: (String) -> Unit) {
         val popupView = activity.layoutInflater.inflate(R.layout.layout_ratio_panel, null)
-        val popupWindow = android.widget.PopupWindow(
-            popupView,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            true
-        )
+        val popupWindow = PopupWindow(popupView, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true)
         popupWindow.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         popupWindow.elevation = 20f
 
@@ -230,79 +161,85 @@ class CameraUiController(
 
         if (showCustom) {
             val customView = activity.layoutInflater.inflate(R.layout.item_ratio_custom, grid, false)
-            val etW = customView.findViewById<android.widget.EditText>(R.id.et_custom_w)
-            val etH = customView.findViewById<android.widget.EditText>(R.id.et_custom_h)
+            val etW = customView.findViewById<EditText>(R.id.et_custom_w)
+            val etH = customView.findViewById<EditText>(R.id.et_custom_h)
             
             if (!isFixedSelected && currentLabel.contains(":")) {
                 customView.isSelected = true
                 val parts = currentLabel.split(":")
                 if (parts.size == 2) {
-                    etW.setText(parts[0])
-                    etH.setText(parts[1])
+                    etW.setText(parts[0]); etH.setText(parts[1])
                 }
             }
 
             customView.setOnClickListener {
-                val w = etW.text.toString()
-                val h = etH.text.toString()
+                val w = etW.text.toString(); val h = etH.text.toString()
                 if (w.isNotEmpty() && h.isNotEmpty()) {
-                    onSelected("$w:$h")
-                    popupWindow.dismiss()
+                    onSelected("$w:$h"); popupWindow.dismiss()
                 } else {
                     etW.requestFocus()
+                    val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    imm.showSoftInput(etW, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
                 }
             }
+
+            val editorListener = TextView.OnEditorActionListener { _, _, _ ->
+                val w = etW.text.toString(); val h = etH.text.toString()
+                if (w.isNotEmpty() && h.isNotEmpty()) {
+                    onSelected("$w:$h"); popupWindow.dismiss(); true
+                } else false
+            }
+            etW.setOnEditorActionListener(editorListener)
+            etH.setOnEditorActionListener(editorListener)
             grid.addView(customView)
         }
 
         popupWindow.showAsDropDown(anchor, 0, 10, android.view.Gravity.END)
     }
 
+    fun updateGridUi(btnGrid: ImageButton, isVisible: Boolean) {
+        if (isVisible) btnGrid.setColorFilter(Color.parseColor("#FFCC00"))
+        else btnGrid.clearColorFilter()
+    }
+
+    fun updateResolutionText(btnResolution: TextView, text: String, isChanged: Boolean = false) {
+        btnResolution.text = text
+        btnResolution.setTextColor(if (isChanged) Color.parseColor("#FFCC00") else Color.WHITE)
+    }
+
+    fun startShutterCountdown(shutterNanos: Long, pbShutterProgress: ProgressBar, tvShutterCountdown: TextView) {
+        val durationMs = shutterNanos / 1_000_000L
+        if (durationMs < 500) return
+        pbShutterProgress.visibility = View.VISIBLE; tvShutterCountdown.visibility = View.VISIBLE
+        pbShutterProgress.progress = 0; tvShutterCountdown.text = String.format(Locale.US, "%.1fs", durationMs / 1000.0)
+        countdownTimer?.cancel()
+        countdownTimer = object : android.os.CountDownTimer(durationMs, 50) {
+            override fun onTick(millisUntilFinished: Long) {
+                val elapsed = durationMs - millisUntilFinished
+                pbShutterProgress.progress = (elapsed.toFloat() / durationMs * 1000).toInt()
+                tvShutterCountdown.text = String.format(Locale.US, "%.1fs", millisUntilFinished / 1000.0)
+            }
+            override fun onFinish() { pbShutterProgress.progress = 1000; tvShutterCountdown.text = "0.0s" }
+        }.start()
+    }
+
+    fun stopShutterCountdown(pbShutterProgress: ProgressBar, tvShutterCountdown: TextView) {
+        countdownTimer?.cancel(); countdownTimer = null
+        pbShutterProgress.visibility = View.GONE; tvShutterCountdown.visibility = View.GONE
+    }
+
     fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) {
         val listPopupWindow = ListPopupWindow(activity)
-        listPopupWindow.animationStyle = 0
         listPopupWindow.anchorView = anchor
         val adapter = object : ArrayAdapter<String>(activity, android.R.layout.simple_list_item_1, options) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val layout = (convertView as? LinearLayout) ?: LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL
-                    setPadding(32, 24, 32, 24)
-                    setBackgroundColor(Color.parseColor("#CC1A1A1A"))
+                    orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(32, 24, 32, 24); setBackgroundColor(Color.parseColor("#CC1A1A1A"))
                 }
                 layout.removeAllViews()
-
-                val ratioStr = options[position]
-                if (ratioStr.contains(":")) {
-                    val ratioView = View(context).apply {
-                        val parts = ratioStr.split(":")
-                        val w = parts[0].toFloatOrNull() ?: 1f
-                        val h = parts[1].toFloatOrNull() ?: 1f
-                        val baseSize = 40f
-                        val finalW: Float
-                        val finalH: Float
-                        if (w > h) {
-                            finalW = baseSize
-                            finalH = baseSize * (h / w)
-                        } else {
-                            finalH = baseSize
-                            finalW = baseSize * (w / h)
-                        }
-                        layoutParams = LinearLayout.LayoutParams(finalW.toInt(), finalH.toInt()).apply {
-                            marginEnd = 24
-                        }
-                        background = android.graphics.drawable.GradientDrawable().apply {
-                            setStroke(2, Color.WHITE)
-                            setColor(Color.TRANSPARENT)
-                        }
-                    }
-                    layout.addView(ratioView)
-                }
-
                 val textView = TextView(context).apply {
-                    text = ratioStr
-                    setTextColor(Color.WHITE)
-                    textSize = 14f
+                    text = options[position]; setTextColor(Color.WHITE); textSize = 14f
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 }
                 layout.addView(textView)
@@ -311,11 +248,7 @@ class CameraUiController(
         }
         listPopupWindow.setAdapter(adapter)
         listPopupWindow.setBackgroundDrawable(ColorDrawable(Color.parseColor("#CC1A1A1A")))
-        listPopupWindow.setOnItemClickListener { _, _, position, _ ->
-            onSelected(options[position])
-            listPopupWindow.dismiss()
-        }
-        listPopupWindow.width = 960
-        listPopupWindow.show()
+        listPopupWindow.setOnItemClickListener { _, _, position, _ -> onSelected(options[position]); listPopupWindow.dismiss() }
+        listPopupWindow.width = 960; listPopupWindow.show()
     }
 }

@@ -619,14 +619,56 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun showVideoParamsPopup(view: View) {
-        val currentId = activeMetadataCameraId(); val caps = allVideoCapabilities[currentId] ?: emptyList(); if (caps.isEmpty()) { showToast(getString(R.string.toast_video_caps_failed)); return }
-        val common = listOf("3:4", "9:16"); val ratioMap = caps.groupBy { it.ratioStr }.mapValues { it.value.first().ratio }
-        val sortedRatios = ratioMap.keys.toList().sortedWith { a, b -> val aIn = common.indexOf(a); val bIn = common.indexOf(b); if (aIn != -1 || bIn != -1) { if (aIn != -1 && bIn != -1) aIn.compareTo(bIn) else if (aIn != -1) -1 else 1 } else ratioMap[a]!!.compareTo(ratioMap[b]!!) }
+        val currentId = activeMetadataCameraId()
+        val caps = allVideoCapabilities[currentId] ?: emptyList()
+        if (caps.isEmpty()) {
+            showToast(getString(R.string.toast_video_caps_failed))
+            return
+        }
+
+        // Standardize labels: ensure larger number comes first (e.g., 4:3 instead of 3:4)
+        val ratioMap = caps.groupBy { info ->
+            val parts = info.ratioStr.split(":")
+            if (parts.size == 2) {
+                val a = parts[0].toIntOrNull() ?: 1
+                val b = parts[1].toIntOrNull() ?: 1
+                if (a < b) "$b:$a" else info.ratioStr
+            } else info.ratioStr
+        }
+
+        val common = listOf("4:3", "16:9")
+        val sortedRatios = ratioMap.keys.toList().sortedWith { a, b ->
+            val aIn = common.indexOf(a)
+            val bIn = common.indexOf(b)
+            if (aIn != -1 || bIn != -1) {
+                if (aIn != -1 && bIn != -1) aIn.compareTo(bIn)
+                else if (aIn != -1) -1 else 1
+            } else a.compareTo(b)
+        }
+
         uiController.showRatioPanel(view, sortedRatios, selectedVideoRatioStr, false) { ratioStr ->
-            selectedVideoRatioStr = ratioStr; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
-            val ratioCaps = caps.filter { it.ratioStr == ratioStr }; val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }.sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }.thenBy { Math.abs(it.maxFps - 30) }).firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
-            if (bestFor30 != null) { selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"; selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps; preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr); preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps) }
-            binding.topToolbar.btnResolution.text = selectedVideoRatioStr; binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00")); openCamera()
+            selectedVideoRatioStr = ratioStr
+            preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RATIO, ratioStr)
+            
+            // Map back to original cap (try both W:H and H:W)
+            val ratioCaps = caps.filter { 
+                it.ratioStr == ratioStr || it.ratioStr == ratioStr.split(":").reversed().joinToString(":")
+            }
+            
+            val bestFor30 = ratioCaps.filter { it.maxFps >= 30 }
+                .sortedWith(compareByDescending<VideoSizeInfo> { it.width * it.height }
+                .thenBy { Math.abs(it.maxFps - 30) })
+                .firstOrNull() ?: ratioCaps.maxByOrNull { it.width * it.height }
+
+            if (bestFor30 != null) {
+                selectedVideoSizeStr = "${bestFor30.width}x${bestFor30.height}"
+                selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps
+                preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
+                preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
+            }
+            binding.topToolbar.btnResolution.text = selectedVideoRatioStr
+            binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00"))
+            openCamera()
         }
     }
 }
