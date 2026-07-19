@@ -84,6 +84,7 @@ class CameraCoordinator(
     }
 
     fun stop() {
+        countdownManager?.cancel()
         autoCaptureManager?.stop()
         autoCaptureManager = null
         closeCamera()
@@ -325,39 +326,51 @@ class CameraCoordinator(
         if (isCaptureInProgress() || coordinatorCaptureLock) return
         coordinatorCaptureLock = true
 
-        // Handle Auto Capture first-time trigger
-        val autoMode = preferenceManager.getString("auto_capture_mode", "None")
-        if (autoCaptureManager != null && autoMode != "None") {
-            if (autoMode == "Interval") {
-                val interval = preferenceManager.getString("auto_interval_sec", "5").toIntOrNull() ?: 5
-                val duration = preferenceManager.getString("auto_interval_duration", "60").toIntOrNull() ?: 60
-                autoCaptureManager?.startInterval(interval, duration)
-            } else if (autoMode == "Continuous") {
-                val count = preferenceManager.getString("auto_continuous_count", "10").toIntOrNull() ?: 10
-                autoCaptureManager?.startContinuous(count)
+        val countdownX10 = preferenceManager.getInt("countdown_val_x10", 0)
+
+        val onTrigger = {
+            val autoMode = preferenceManager.getString("auto_capture_mode", "None")
+            if (autoCaptureManager != null && autoMode != "None") {
+                if (autoMode == "Interval") {
+                    val interval = preferenceManager.getString("auto_interval_sec", "5").toIntOrNull() ?: 5
+                    val duration = preferenceManager.getString("auto_interval_duration", "60").toIntOrNull() ?: 60
+                    autoCaptureManager?.startInterval(interval, duration)
+                } else if (autoMode == "Continuous") {
+                    val count = preferenceManager.getString("auto_continuous_count", "10").toIntOrNull() ?: 10
+                    autoCaptureManager?.startContinuous(count)
+                }
+            } else {
+                executeCaptureAction()
             }
-            return
         }
 
-        val countdownX10 = preferenceManager.getInt("countdown_val_x10", 0)
-        
         listener.getCountdownTextView()?.let { tv ->
             if (countdownManager == null) {
                 countdownManager = CountdownManager(Handler(android.os.Looper.getMainLooper()), tv) {
-                    executeCaptureAction()
+                    onTrigger()
+                }
+            } else {
+                // Update callback in case it captured previous context
+                countdownManager = CountdownManager(Handler(android.os.Looper.getMainLooper()), tv) {
+                    onTrigger()
                 }
             }
             countdownManager?.start(countdownX10)
         } ?: run {
-            executeCaptureAction()
+            onTrigger()
         }
     }
 
     private fun executeCaptureAction() {
-        val cam = cameraDevice ?: return
-        val session = captureSession ?: return
-        val surf = previewSurface ?: return
-        val handler = backgroundHandler ?: return
+        val cam = cameraDevice
+        val session = captureSession
+        val surf = previewSurface
+        val handler = backgroundHandler
+
+        if (cam == null || session == null || surf == null || handler == null) {
+            coordinatorCaptureLock = false
+            return
+        }
         
         if (viewModel.currentFlashMode.value == FlashMode.SINGLE) {
             // Manual flash pulse logic:
