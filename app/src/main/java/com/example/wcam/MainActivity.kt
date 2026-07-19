@@ -122,6 +122,8 @@ class MainActivity : AppCompatActivity(),
         Log.d("PerfLog", "MainActivity.onCreate finished, took ${System.currentTimeMillis() - startTime}ms")
     }
 
+    private var isColdStartCameraOpened = false
+
     private fun initApp() {
         val startTime = System.currentTimeMillis()
         Log.d("PerfLog", "initApp started")
@@ -146,7 +148,8 @@ class MainActivity : AppCompatActivity(),
         
         coordinator.start()
         Log.d("PerfLog", "Triggering hardware openCamera EARLY")
-        openCamera() // 硬件抢跑：不等待布局，直接给相机发 Open 指令
+        isColdStartCameraOpened = true
+        openCamera() // 硬件抢跑
 
         // 2. 将非核心组件移出主路径
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
@@ -163,7 +166,7 @@ class MainActivity : AppCompatActivity(),
             hide(WindowInsetsCompat.Type.systemBars())
         }
 
-        initViews() // 处理剩余 UI 逻辑（如果还有）
+        initViews() 
         setupListeners()
         setupParamGestures()
         observeViewModel()
@@ -218,7 +221,7 @@ class MainActivity : AppCompatActivity(),
         val startTime = System.currentTimeMillis()
         Log.d("PerfLog", "handleOnResume started")
         
-        // coordinator.start() 已在 initApp 抢跑
+        coordinator.start() 
         startLocationUpdates()
         streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), config, this)
         streamMonitor.start()
@@ -233,7 +236,17 @@ class MainActivity : AppCompatActivity(),
         updateModeUI(viewModel.isPhotoMode.value)
         updateCropOverlayUI()
 
-        // 仅在 Surface 已经就绪时触发 Session（openCamera 已经在 initApp 抢跑）
+        // 逻辑修复：
+        // 1. 如果是冷启动，initApp 已经 openCamera 了，我们只需要等 Surface
+        // 2. 如果是热启动（返回），isColdStartCameraOpened 为 false，我们需要在这里 openCamera
+        if (!isColdStartCameraOpened) {
+            Log.d("PerfLog", "Not a cold start or camera was closed, re-opening camera")
+            openCamera()
+        }
+        
+        // 消耗掉冷启动标记，后续的所有 Resume 都视为热启动返回
+        isColdStartCameraOpened = false
+
         if (binding.cameraPreview.isAvailable) {
             Log.d("PerfLog", "Surface available in onResume, triggering createSession")
             coordinator.createPreviewSession()
