@@ -8,7 +8,7 @@
     android:paddingHorizontal="16dp">
 
     <ImageButton android:id="@+id/btn_flash" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_flash_off" android:background="@android:color/transparent" android:contentDescription="Flash" />
-    <ImageButton android:id="@+id/btn_histogram" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_histogram" android:background="@android:color/transparent" android:contentDescription="Histogram" />
+    <ImageButton android:id="@+id/btn_timer" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_timer" android:background="@android:color/transparent" android:contentDescription="Timer" />
     <ImageButton android:id="@+id/btn_grid_lines" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_grid_lines" android:background="@android:color/transparent" android:contentDescription="Grid Lines" />
     <TextView android:id="@+id/btn_resolution" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/toolbar_resolution" android:textColor="#FFFFFF" android:textSize="12sp" android:gravity="center" android:background="@android:color/transparent" />
     <ImageButton android:id="@+id/btn_settings" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:src="@drawable/ic_settings" android:background="@android:color/transparent" android:contentDescription="Settings" />

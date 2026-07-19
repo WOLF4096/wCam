@@ -11,6 +11,8 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.ListPopupWindow
+import android.widget.SeekBar
+import com.example.wcam.R
 import com.example.wcam.camera.FlashMode
 import java.util.Locale
 
@@ -24,7 +26,8 @@ class CameraUiController(
 
     interface UiEventListener {
         fun onFlashModeChanged(mode: FlashMode)
-        fun onHistogramToggle()
+        fun onTimerClick(view: View)
+        fun onTimerPanelDismissed()
         fun onGridToggle()
         fun onResolutionClick(view: View)
         fun onModeSwitch()
@@ -43,12 +46,102 @@ class CameraUiController(
         }
     }
 
-    fun updateHistogramUi(btnHistogram: ImageButton, isVisible: Boolean) {
-        if (isVisible) {
-            btnHistogram.setColorFilter(Color.parseColor("#FFCC00"))
+    fun updateTimerUi(btnTimer: ImageButton, hasActiveTimer: Boolean) {
+        if (hasActiveTimer) {
+            btnTimer.setColorFilter(Color.parseColor("#FFCC00"))
         } else {
-            btnHistogram.clearColorFilter()
+            btnTimer.clearColorFilter()
         }
+    }
+
+    fun showTimerPanel(anchor: View, preferenceManager: com.example.wcam.PreferenceManager) {
+        val popupView = activity.layoutInflater.inflate(R.layout.layout_timer_panel, null)
+        val popupWindow = android.widget.PopupWindow(
+            popupView,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        )
+        popupWindow.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popupWindow.elevation = 10f
+
+        val seekbarCountdown = popupView.findViewById<SeekBar>(R.id.seekbar_countdown)
+        val tvCountdownVal = popupView.findViewById<TextView>(R.id.tv_countdown_val)
+        val segAutoNone = popupView.findViewById<TextView>(R.id.seg_auto_none)
+        val segAutoInterval = popupView.findViewById<TextView>(R.id.seg_auto_interval)
+        val segAutoContinuous = popupView.findViewById<TextView>(R.id.seg_auto_continuous)
+        val panelInterval = popupView.findViewById<View>(R.id.panel_auto_interval)
+        val panelContinuous = popupView.findViewById<View>(R.id.panel_auto_continuous)
+        val etIntervalSec = popupView.findViewById<android.widget.EditText>(R.id.et_interval_sec)
+        val etIntervalDuration = popupView.findViewById<android.widget.EditText>(R.id.et_interval_duration)
+        val etContinuousCount = popupView.findViewById<android.widget.EditText>(R.id.et_continuous_count)
+
+        // Load current values
+        val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
+        seekbarCountdown.progress = cdX10
+        tvCountdownVal.text = String.format(Locale.US, "%.1fs", cdX10 / 10f)
+
+        val autoMode = preferenceManager.getString("auto_capture_mode", "None")
+        updateAutoModeSelection(autoMode, segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+        
+        etIntervalSec.setText(preferenceManager.getString("auto_interval_sec", "5"))
+        etIntervalDuration.setText(preferenceManager.getString("auto_interval_duration", "60"))
+        etContinuousCount.setText(preferenceManager.getString("auto_continuous_count", "10"))
+
+        // Listeners
+        seekbarCountdown.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                tvCountdownVal.text = String.format(Locale.US, "%.1fs", progress / 10f)
+                if (fromUser) {
+                    preferenceManager.saveInt("countdown_val_x10", progress)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        segAutoNone.setOnClickListener {
+            preferenceManager.saveString("auto_capture_mode", "None")
+            updateAutoModeSelection("None", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+        }
+        segAutoInterval.setOnClickListener {
+            preferenceManager.saveString("auto_capture_mode", "Interval")
+            updateAutoModeSelection("Interval", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+        }
+        segAutoContinuous.setOnClickListener {
+            preferenceManager.saveString("auto_capture_mode", "Continuous")
+            updateAutoModeSelection("Continuous", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+        }
+
+        etIntervalSec.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_interval_sec", s.toString()) }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        etIntervalDuration.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_interval_duration", s.toString()) }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        etContinuousCount.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_continuous_count", s.toString()) }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+
+        popupWindow.setOnDismissListener {
+            listener.onTimerPanelDismissed()
+        }
+
+        popupWindow.showAsDropDown(anchor, 0, 10)
+    }
+
+    private fun updateAutoModeSelection(mode: String, none: TextView, interval: TextView, continuous: TextView, panelI: View, panelC: View) {
+        none.isSelected = mode == "None"
+        interval.isSelected = mode == "Interval"
+        continuous.isSelected = mode == "Continuous"
+        panelI.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
+        panelC.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
     }
 
     fun updateGridUi(btnGrid: ImageButton, isVisible: Boolean) {

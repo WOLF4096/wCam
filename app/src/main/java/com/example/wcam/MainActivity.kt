@@ -175,6 +175,13 @@ class MainActivity : AppCompatActivity(),
         ))
     }
 
+    private fun updateTimerButtonHighlight() {
+        val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
+        val autoMode = preferenceManager.getString("auto_capture_mode", "None")
+        val hasActiveTimer = cdX10 > 0 || autoMode != "None"
+        uiController.updateTimerUi(binding.topToolbar.btnTimer, hasActiveTimer)
+    }
+
     private fun handleOnResume() {
         loadSettings()
         coordinator.start()
@@ -205,7 +212,13 @@ class MainActivity : AppCompatActivity(),
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.isPhotoMode.collect { updateModeUI(it) } }
                 launch { viewModel.isGridVisible.collect { overlayController.setGridVisible(it); uiController.updateGridUi(binding.topToolbar.btnGridLines, it) } }
-                launch { viewModel.isHistogramVisible.collect { overlayController.setHistogramVisible(it); uiController.updateHistogramUi(binding.topToolbar.btnHistogram, it); updateCropOverlayUI() } }
+                launch { viewModel.isHistogramVisible.collect { overlayController.setHistogramVisible(it); updateCropOverlayUI() } }
+                launch { 
+                    // Highlight timer button if any timer or auto mode is active
+                    // Since these are in PreferenceManager, we should check them whenever they might change.
+                    // For now, we update it in handleOnResume and when returning from Settings.
+                    updateTimerButtonHighlight()
+                }
                 launch { viewModel.photoParamState.collect { refreshParamViews(it) } }
                 launch { viewModel.currentFlashMode.collect { uiController.updateFlashUi(binding.topToolbar.btnFlash, it); applyPhotoParamsToPreview() } }
             }
@@ -252,7 +265,7 @@ class MainActivity : AppCompatActivity(),
     private fun setupListeners() {
         binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
         binding.topToolbar.btnFlash.setOnClickListener { cycleFlashMode() }
-        binding.topToolbar.btnHistogram.setOnClickListener { viewModel.setHistogramVisible(!viewModel.isHistogramVisible.value) }
+        binding.topToolbar.btnTimer.setOnClickListener { onTimerClick(it) }
         binding.topToolbar.btnGridLines.setOnClickListener { viewModel.setGridVisible(!viewModel.isGridVisible.value) }
         binding.topToolbar.btnResolution.setOnClickListener { view -> onResolutionClick(view) }
         binding.topToolbar.btnSettings.setOnClickListener { 
@@ -289,6 +302,7 @@ class MainActivity : AppCompatActivity(),
         aspectController.setRatio(cropRatio)
         
         lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
+        updateTimerButtonHighlight()
         updateCropOverlayUI()
         restorePhotoParamState()
     }
@@ -416,7 +430,12 @@ class MainActivity : AppCompatActivity(),
         viewModel.setFlashMode(next)
     }
 
-    override fun onHistogramToggle() { viewModel.setHistogramVisible(!viewModel.isHistogramVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, viewModel.isHistogramVisible.value) }
+    override fun onTimerClick(view: View) {
+        uiController.showTimerPanel(view, preferenceManager)
+    }
+    override fun onTimerPanelDismissed() {
+        updateTimerButtonHighlight()
+    }
     override fun onGridToggle() { viewModel.setGridVisible(!viewModel.isGridVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, viewModel.isGridVisible.value) }
     override fun onResolutionClick(view: View) { if (viewModel.isPhotoMode.value) aspectController.showPhotoRatioPopup(view) else showVideoParamsPopup(view) }
     override fun onModeSwitch() {
@@ -529,7 +548,7 @@ class MainActivity : AppCompatActivity(),
         
         val viewsToRotate = listOf(
             binding.topToolbar.btnFlash,
-            binding.topToolbar.btnHistogram,
+            binding.topToolbar.btnTimer,
             binding.topToolbar.btnGridLines,
             binding.topToolbar.btnResolution,
             binding.topToolbar.btnSettings,

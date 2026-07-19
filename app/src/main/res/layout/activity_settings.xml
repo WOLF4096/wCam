@@ -224,162 +224,32 @@
                     android:columnOrderPreserved="false"
                     android:visibility="gone">
                 </GridLayout>
-            </LinearLayout>
 
-            <!-- 3. Countdown Card -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_settings_card"
-                android:orientation="vertical"
-                android:padding="14dp"
-                android:layout_marginBottom="12dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="倒计时"
-                    android:textColor="@color/settings_text_main"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="10dp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/settings_unselected_bg"
+                    android:layout_marginTop="12dp" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:paddingVertical="10dp">
-                    <SeekBar
-                        android:id="@+id/seekbar_countdown"
+                    android:layout_marginTop="12dp">
+                    <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:max="100"
-                        android:progress="0"
-                        android:paddingVertical="12dp"
-                        android:splitTrack="false" />
-                    <TextView
-                        android:id="@+id/tv_countdown_val"
+                        android:text="直方图"
+                        android:textColor="@color/settings_text_main"
+                        android:textSize="13sp" />
+                    <Switch
+                        android:id="@+id/switch_histogram"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0.0s"
-                        android:textColor="@color/settings_primary"
-                        android:textSize="14sp"
-                        android:minWidth="45dp"
-                        android:gravity="end" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- 4. Auto Capture Card -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_settings_card"
-                android:orientation="vertical"
-                android:padding="14dp"
-                android:layout_marginBottom="12dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="自动拍摄"
-                    android:textColor="@color/settings_text_main"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="10dp" />
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-                    <TextView
-                        android:id="@+id/seg_auto_none"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:background="@drawable/sl_settings_chip"
-                        android:text="无"
-                        android:textColor="@color/sl_settings_chip_text"
-                        android:gravity="center"
-                        android:paddingVertical="8dp"
-                        android:layout_marginEnd="4dp" />
-                    <TextView
-                        android:id="@+id/seg_auto_interval"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:background="@drawable/sl_settings_chip"
-                        android:text="间隔"
-                        android:textColor="@color/sl_settings_chip_text"
-                        android:gravity="center"
-                        android:paddingVertical="8dp"
-                        android:layout_marginHorizontal="4dp" />
-                    <TextView
-                        android:id="@+id/seg_auto_continuous"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:background="@drawable/sl_settings_chip"
-                        android:text="连续"
-                        android:textColor="@color/sl_settings_chip_text"
-                        android:gravity="center"
-                        android:paddingVertical="8dp"
-                        android:layout_marginStart="4dp" />
-                </LinearLayout>
-
-                <!-- New Single Line Interval Panel -->
-                <LinearLayout
-                    android:id="@+id/panel_auto_interval"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:background="@color/settings_unselected_bg"
-                    android:padding="8dp"
-                    android:gravity="center"
-                    android:orientation="horizontal"
-                    android:visibility="gone">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="间隔" android:textColor="@color/white" />
-                    <EditText
-                        android:id="@+id/et_interval_sec"
-                        android:layout_width="40dp"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="number"
-                        android:gravity="center"
-                        android:text="5"
-                        android:textColor="@color/settings_primary"
-                        android:textStyle="bold" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="s拍一张，持续" android:textColor="@color/white" />
-                    <EditText
-                        android:id="@+id/et_interval_duration"
-                        android:layout_width="50dp"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="number"
-                        android:gravity="center"
-                        android:text="60"
-                        android:textColor="@color/settings_primary"
-                        android:textStyle="bold" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="s" android:textColor="@color/white" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/panel_auto_continuous"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="10dp"
-                    android:background="@color/settings_unselected_bg"
-                    android:padding="8dp"
-                    android:gravity="center"
-                    android:visibility="gone">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="连续拍" android:textColor="@color/white" />
-                    <EditText
-                        android:id="@+id/et_continuous_count"
-                        android:layout_width="60dp"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="number"
-                        android:gravity="center"
-                        android:text="10"
-                        android:textColor="@color/settings_primary"
-                        android:textStyle="bold" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="张" android:textColor="@color/white" />
+                        android:thumbTint="@color/white"
+                        android:trackTint="@drawable/sl_switch_track" />
                 </LinearLayout>
             </LinearLayout>
 

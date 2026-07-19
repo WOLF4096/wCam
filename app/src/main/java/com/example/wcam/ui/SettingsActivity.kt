@@ -70,27 +70,10 @@ class SettingsActivity : AppCompatActivity() {
         populateAlgoGrid(binding.gridAlgoNone, simpleAlgos, false)
         populateAlgoGrid(binding.gridAlgoDemosaic, demosaicAlgos, true)
 
-        // Countdown (0.1s steps)
-        binding.seekbarCountdown.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val sec = progress / 10f
-                binding.tvCountdownVal.text = String.format(Locale.US, "%.1fs", sec)
-                if (fromUser) {
-                    preferenceManager.saveInt("countdown_val_x10", progress)
-                }
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
-
-        // Auto Capture Segments
-        binding.segAutoNone.setOnClickListener { selectAutoMode("None") }
-        binding.segAutoInterval.setOnClickListener { selectAutoMode("Interval") }
-        binding.segAutoContinuous.setOnClickListener { selectAutoMode("Continuous") }
-
-        binding.etIntervalSec.addTextChangedListener { preferenceManager.saveString("auto_interval_sec", it.toString()) }
-        binding.etIntervalDuration.addTextChangedListener { preferenceManager.saveString("auto_interval_duration", it.toString()) }
-        binding.etContinuousCount.addTextChangedListener { preferenceManager.saveString("auto_continuous_count", it.toString()) }
+        // Histogram Switch
+        binding.switchHistogram.setOnCheckedChangeListener { _, isChecked ->
+            preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isChecked)
+        }
 
         // Watermark
         binding.segWmNone.setOnClickListener { selectWmMode("None") }
@@ -152,16 +135,8 @@ class SettingsActivity : AppCompatActivity() {
         selectAlgoInGrid(binding.gridAlgoNone, lastSimple)
         selectAlgoInGrid(binding.gridAlgoDemosaic, lastDemosaic)
 
-        // Countdown
-        val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
-        binding.seekbarCountdown.progress = cdX10
-        binding.tvCountdownVal.text = String.format(Locale.US, "%.1fs", cdX10 / 10f)
-
-        // Auto Mode
-        selectAutoMode(preferenceManager.getString("auto_capture_mode", "None"))
-        binding.etIntervalSec.setText(preferenceManager.getString("auto_interval_sec", "5"))
-        binding.etIntervalDuration.setText(preferenceManager.getString("auto_interval_duration", "60"))
-        binding.etContinuousCount.setText(preferenceManager.getString("auto_continuous_count", "10"))
+        // Histogram
+        binding.switchHistogram.isChecked = preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false)
 
         // Watermark
         selectWmMode(preferenceManager.getString("wm_mode", "None"))
@@ -239,16 +214,6 @@ class SettingsActivity : AppCompatActivity() {
         for (i in 0 until grid.childCount) {
             grid.getChildAt(i).isSelected = false
         }
-    }
-
-    private fun selectAutoMode(mode: String) {
-        binding.segAutoNone.isSelected = mode == "None"
-        binding.segAutoInterval.isSelected = mode == "Interval"
-        binding.segAutoContinuous.isSelected = mode == "Continuous"
-        
-        binding.panelAutoInterval.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
-        binding.panelAutoContinuous.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
-        preferenceManager.saveString("auto_capture_mode", mode)
     }
 
     private fun selectWmMode(mode: String) {
