@@ -37,15 +37,18 @@ class CaptureSessionManager(
         rawSurface: Surface? = null // For special OutputConfig
     ) {
         try {
+            Log.d("PerfLog", "createSession started")
             captureSession?.close()
 
             val previewStateCallback = object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
+                    Log.d("PerfLog", "CameraCaptureSession.StateCallback.onConfigured")
                     captureSession = session
                     listener.onSessionConfigured(session)
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
+                    Log.d("PerfLog", "CameraCaptureSession.StateCallback.onConfigureFailed")
                     listener.onSessionConfigureFailed()
                 }
             }

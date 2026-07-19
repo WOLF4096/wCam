@@ -95,6 +95,7 @@ class CameraCoordinator(
         currentLogicalId = logicalId
         currentPhysicalId = physicalId
         
+        Log.d("PerfLog", "openCamera called for logical=$logicalId, physical=$physicalId")
         val handler = backgroundHandler ?: return
         cameraManager.openCamera(logicalId, handler)
     }
@@ -148,6 +149,8 @@ class CameraCoordinator(
 
     // CameraManager.CameraListener implementation
     override fun onCameraOpened(camera: CameraDevice) {
+        val startTime = System.currentTimeMillis()
+        Log.d("PerfLog", "onCameraOpened received")
         cameraDevice = camera
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
         
@@ -162,6 +165,7 @@ class CameraCoordinator(
         
         listener.onCameraOpened(characteristics)
         createPreviewSession()
+        Log.d("PerfLog", "onCameraOpened handling finished, took ${System.currentTimeMillis() - startTime}ms")
     }
 
     override fun onCameraDisconnected() {
@@ -188,6 +192,8 @@ class CameraCoordinator(
     }
 
     fun createPreviewSession() {
+        val startTime = System.currentTimeMillis()
+        Log.d("PerfLog", "createPreviewSession started")
         val cam = cameraDevice ?: return
         val raw = cameraManager.rawImageReader ?: return
         val handler = backgroundHandler ?: return
@@ -279,6 +285,7 @@ class CameraCoordinator(
                 handler,
                 raw.surface
             )
+            Log.d("PerfLog", "createPreviewSession call finished, took ${System.currentTimeMillis() - startTime}ms")
         } catch (e: Exception) {
             Log.e("CameraCoordinator", "Failed to create preview session", e)
             listener.onError("Preview error: ${e.message}")
@@ -291,6 +298,7 @@ class CameraCoordinator(
         val handler = backgroundHandler ?: return
         
         try {
+            Log.d("PerfLog", "resumePreview (setRepeatingRequest) start")
             session.setRepeatingRequest(request.build(), callback, handler)
         } catch (e: CameraAccessException) {
             Log.e("CameraCoordinator", "Failed to resume preview", e)

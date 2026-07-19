@@ -37,6 +37,7 @@ class CameraManager(
     @SuppressLint("MissingPermission")
     fun openCamera(logicalId: String, backgroundHandler: Handler) {
         try {
+            Log.d("PerfLog", "manager.openCamera start for $logicalId")
             manager.openCamera(logicalId, stateCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
             FileLogger.e("CameraManager", "Failed to open camera", e)
@@ -56,6 +57,7 @@ class CameraManager(
 
     private val stateCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
+            Log.d("PerfLog", "CameraDevice.StateCallback.onOpened")
             cameraDevice = camera
             listener.onCameraOpened(camera)
         }

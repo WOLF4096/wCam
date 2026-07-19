@@ -105,6 +105,8 @@ class MainActivity : AppCompatActivity(),
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val startTime = System.currentTimeMillis()
+        Log.d("PerfLog", "MainActivity.onCreate started")
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -117,31 +119,61 @@ class MainActivity : AppCompatActivity(),
         } else {
             permissionHelper.requestPermissions(permissionLauncher)
         }
+        Log.d("PerfLog", "MainActivity.onCreate finished, took ${System.currentTimeMillis() - startTime}ms")
     }
 
     private fun initApp() {
+        val startTime = System.currentTimeMillis()
+        Log.d("PerfLog", "initApp started")
         com.example.wcam.util.FileLogger.init(this)
-        CameraDebugger.logDetailedCameraInfo(this)
-        CameraDebugger.logAllCameraStreams(this, allVideoCapabilities)
-        CameraDebugger.verifyHighResRawSupport(this)
-        CameraDebugger.dumpVendorKeys(this)
+        
+        // 1. 抢跑关键路径：初始化基础配置并立即开启相机硬件上电
+        preferenceManager = PreferenceManager(this)
+        config = com.example.wcam.util.ConfigManager(this)
+        
+        // 关键：必须先初始化这些组件，因为 initControllers 会用到它们
+        PhotoParamMapper.init(config)
+        rawMediaStore = RawMediaStore(this, config, preferenceManager)
+        deviceOrientationTracker = DeviceOrientationTracker(this)
+        deviceOrientationTracker.setRotationListener(object : DeviceOrientationTracker.RotationListener {
+            override fun onRotationStepChanged(degrees: Int) {
+                runOnUiThread { rotateUiElements(degrees) }
+            }
+        })
+
+        initControllers() // 包含 coordinator 初始化
+        loadSettings() 
+        
+        coordinator.start()
+        Log.d("PerfLog", "Triggering hardware openCamera EARLY")
+        openCamera() // 硬件抢跑：不等待布局，直接给相机发 Open 指令
+
+        // 2. 将非核心组件移出主路径
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            initLocation()
+            kotlinx.coroutines.delay(5000)
+            CameraDebugger.logDetailedCameraInfo(this@MainActivity)
+            CameraDebugger.logAllCameraStreams(this@MainActivity, allVideoCapabilities)
+            CameraDebugger.verifyHighResRawSupport(this@MainActivity)
+            CameraDebugger.dumpVendorKeys(this@MainActivity)
+        }
 
         WindowCompat.getInsetsController(window, window.decorView).apply {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             hide(WindowInsetsCompat.Type.systemBars())
         }
 
-        initViews()
+        initViews() // 处理剩余 UI 逻辑（如果还有）
         setupListeners()
         setupParamGestures()
-        loadSettings()
         observeViewModel()
         setupLifecycleObserver()
-        initLocation()
+        
+        Log.d("PerfLog", "initApp core finished, total took ${System.currentTimeMillis() - startTime}ms")
     }
 
-    private fun initLocation() {
-        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+    private fun initViews() {
+        // 大部分核心 View 相关逻辑已移至 initApp 抢跑
     }
 
     @SuppressLint("MissingPermission")
@@ -183,22 +215,32 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun handleOnResume() {
-        loadSettings()
-        coordinator.start()
+        val startTime = System.currentTimeMillis()
+        Log.d("PerfLog", "handleOnResume started")
+        
+        // coordinator.start() 已在 initApp 抢跑
         startLocationUpdates()
         streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), config, this)
         streamMonitor.start()
         deviceOrientationTracker.enable()
         
-        // 修正：每次恢复时尝试重新扫描目录下最新的照片，防止文件被外部删除后预览失效
-        galleryController.updateRecentPhotoPreview(rawMediaStore.findLatestRecentPhotoUri())
+        // 异步更新相册预览
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val uri = rawMediaStore.findLatestRecentPhotoUri()
+            runOnUiThread { galleryController.updateRecentPhotoPreview(uri) }
+        }
 
         updateModeUI(viewModel.isPhotoMode.value)
         updateCropOverlayUI()
-        binding.cameraPreview.post {
-            if (binding.cameraPreview.isAvailable) openCamera()
-            else binding.cameraPreview.surfaceTextureListener = surfaceTextureListener
+
+        // 仅在 Surface 已经就绪时触发 Session（openCamera 已经在 initApp 抢跑）
+        if (binding.cameraPreview.isAvailable) {
+            Log.d("PerfLog", "Surface available in onResume, triggering createSession")
+            coordinator.createPreviewSession()
+        } else {
+            binding.cameraPreview.surfaceTextureListener = surfaceTextureListener
         }
+        Log.d("PerfLog", "handleOnResume finished, took ${System.currentTimeMillis() - startTime}ms")
     }
 
     private fun handleOnPause() {
@@ -225,19 +267,8 @@ class MainActivity : AppCompatActivity(),
         }
     }
 
-    private fun initViews() {
-        preferenceManager = PreferenceManager(this)
-        config = com.example.wcam.util.ConfigManager(this)
-        PhotoParamMapper.init(config)
-        rawMediaStore = RawMediaStore(this, config, preferenceManager)
-        deviceOrientationTracker = DeviceOrientationTracker(this)
-        deviceOrientationTracker.setRotationListener(object : DeviceOrientationTracker.RotationListener {
-            override fun onRotationStepChanged(degrees: Int) {
-                runOnUiThread { rotateUiElements(degrees) }
-            }
-        })
-
-        initControllers()
+    private fun initLocation() {
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
     }
 
     private fun initControllers() {
@@ -600,7 +631,14 @@ class MainActivity : AppCompatActivity(),
     private fun saveCurrentLensSettings() { preferenceManager.saveString(PreferenceManager.KEY_LENS_ID, currentLogicalCameraId); currentPhysicalCameraId?.let { preferenceManager.saveString(PreferenceManager.KEY_PHYSICAL_LENS_ID, it) } }
 
     private val previewCaptureCallback = object : CameraCaptureSession.CaptureCallback() {
-        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) { streamMonitor.notifyFrameReceived(); updateAutoValuesFromResult(result); runOnUiThread { refreshParamViews(viewModel.photoParamState.value) } }
+        private var isFirstFrame = true
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            if (isFirstFrame) {
+                Log.d("PerfLog", ">>> FIRST PREVIEW FRAME RECEIVED! <<<")
+                isFirstFrame = false
+            }
+            streamMonitor.notifyFrameReceived(); updateAutoValuesFromResult(result); runOnUiThread { refreshParamViews(viewModel.photoParamState.value) } 
+        }
     }
 
     private fun updateAutoValuesFromResult(result: CaptureResult) {
@@ -612,8 +650,13 @@ class MainActivity : AppCompatActivity(),
     }
 
     private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-        override fun onSurfaceTextureAvailable(t: SurfaceTexture, w: Int, h: Int) { openCamera() }
-        override fun onSurfaceTextureSizeChanged(t: SurfaceTexture, w: Int, h: Int) {}
+        override fun onSurfaceTextureAvailable(t: SurfaceTexture, w: Int, h: Int) { 
+            Log.d("PerfLog", "onSurfaceTextureAvailable")
+            coordinator.createPreviewSession() 
+        }
+        override fun onSurfaceTextureSizeChanged(t: SurfaceTexture, w: Int, h: Int) {
+            configureTransform(w, h)
+        }
         override fun onSurfaceTextureDestroyed(t: SurfaceTexture): Boolean = true
         override fun onSurfaceTextureUpdated(t: SurfaceTexture) {}
     }

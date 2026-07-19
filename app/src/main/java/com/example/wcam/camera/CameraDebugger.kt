@@ -19,6 +19,7 @@ object CameraDebugger {
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         
         Log.i(TAG, "--- Starting comprehensive video capability detection ---")
+        val totalStart = System.currentTimeMillis()
         
         val allPossibleIds = mutableSetOf<String>()
         allPossibleIds.addAll(manager.cameraIdList)
@@ -26,6 +27,7 @@ object CameraDebugger {
 
         for (id in allPossibleIds.sortedBy { it.toIntOrNull() ?: 999 }) {
             try {
+                val start = System.currentTimeMillis()
                 val chars = manager.getCameraCharacteristics(id)
                 val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: continue
 
@@ -46,13 +48,14 @@ object CameraDebugger {
                         capabilities.add(VideoSizeInfo(hsSize.width, hsSize.height, maxFps = maxHsFps, isHighSpeed = true))
                     }
                 }
-                
+
                 outVideoCapabilities[id] = capabilities
-                Log.i(TAG, "Camera ID: $id - Detected ${capabilities.size} stream configurations")
+                Log.i(TAG, "Camera ID: $id - Detected ${capabilities.size} configs in ${System.currentTimeMillis() - start}ms")
             } catch (e: Exception) {
                 // Not an accessible ID
             }
         }
+        Log.i(TAG, "logAllCameraStreams total took ${System.currentTimeMillis() - totalStart}ms")
     }
 
     fun verifyHighResRawSupport(context: Context) {
