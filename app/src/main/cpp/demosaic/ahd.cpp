@@ -3,14 +3,13 @@
 #include <algorithm>
 #include <cmath>
 
-void demosaic_ahd(const DemosaicParams& p, int* pixels) {
+void demosaic_ahd(const DemosaicParams& p, void* pixels) {
     const int width = p.width;
     const int height = p.height;
     const int size = width * height;
 
     std::vector<float> wb_raw(size);
 
-    // Step 0: Pre-apply LSC and WB
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -31,21 +30,17 @@ void demosaic_ahd(const DemosaicParams& p, int* pixels) {
             float r, g, b;
             int channel = get_channel_type(x, y, p.bayerPattern);
 
-            if (channel == 0 || channel == 3) { // R or B center
+            if (channel == 0 || channel == 3) {
                 float center = wb_raw[out_row + x];
-
                 float g_h = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
                 float g_v = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-
                 float dh = std::abs(get_wb_fast(x - 2, y) - get_wb_fast(x + 2, y)) +
                            std::abs(center - get_wb_fast(x - 1, y)) +
                            std::abs(center - get_wb_fast(x + 1, y));
-                float dv = std::abs(get_wb_fast(x, y - 2) - get_wb_fast(x, y + 2)) +
+                float dv = std::abs(get_wb_fast(x, y - 2) - get_wb_fast(x + 2, y)) +
                            std::abs(center - get_wb_fast(x, y - 1)) +
                            std::abs(center - get_wb_fast(x, y + 1));
-
                 g = (dh < dv) ? g_h : g_v;
-
                 if (channel == 0) {
                     r = center;
                     b = (get_wb_fast(x - 1, y - 1) + get_wb_fast(x + 1, y - 1) +
@@ -55,17 +50,17 @@ void demosaic_ahd(const DemosaicParams& p, int* pixels) {
                     r = (get_wb_fast(x - 1, y - 1) + get_wb_fast(x + 1, y - 1) +
                          get_wb_fast(x - 1, y + 1) + get_wb_fast(x + 1, y + 1)) * 0.25f;
                 }
-            } else { // G center
+            } else {
                 g = wb_raw[out_row + x];
-                if (channel == 1) { // Gr
+                if (channel == 1) {
                     r = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
                     b = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-                } else { // Gb
+                } else {
                     b = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
                     r = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
                 }
             }
-            pixels[out_row + x] = rgb_to_pixel(r, g, b);
+            write_pixel(p, pixels, out_row + x, r, g, b);
         }
     }
 }

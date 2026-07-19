@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-void demosaic_rcd(const DemosaicParams& p, int* pixels) {
+void demosaic_rcd(const DemosaicParams& p, void* pixels) {
     const int width = p.width;
     const int height = p.height;
     const int size = width * height;
@@ -11,7 +11,6 @@ void demosaic_rcd(const DemosaicParams& p, int* pixels) {
     std::vector<float> wb_raw(size);
     std::vector<float> full_g(size);
 
-    // Step 0: Pre-apply LSC and WB
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -25,7 +24,6 @@ void demosaic_rcd(const DemosaicParams& p, int* pixels) {
         return wb_raw[cy * width + cx];
     };
 
-    // Step 1: Interpolate Green channel using ratios
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -35,16 +33,13 @@ void demosaic_rcd(const DemosaicParams& p, int* pixels) {
             } else {
                 float g_h = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
                 float g_v = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-
                 float dh = std::abs(get_wb_fast(x - 2, y) - get_wb_fast(x + 2, y));
                 float dv = std::abs(get_wb_fast(x, y - 2) - get_wb_fast(x, y + 2));
-
                 full_g[y * width + x] = (dh < dv) ? g_h : g_v;
             }
         }
     }
 
-    // Step 2: Interpolate R and B using ratios
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         int out_row = y * width;
@@ -78,7 +73,7 @@ void demosaic_rcd(const DemosaicParams& p, int* pixels) {
                     r = (get_ratio_r(x, y-1) + get_ratio_r(x, y+1)) * 0.5f * g;
                 }
             }
-            pixels[out_row + x] = rgb_to_pixel(r, g, b);
+            write_pixel(p, pixels, out_row + x, r, g, b);
         }
     }
 }

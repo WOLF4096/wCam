@@ -2,14 +2,13 @@
 #include <vector>
 #include <algorithm>
 
-void demosaic_bilinear(const DemosaicParams& p, int* pixels) {
+void demosaic_bilinear(const DemosaicParams& p, void* pixels) {
     const int width = p.width;
     const int height = p.height;
     const int size = width * height;
 
     std::vector<float> wb_raw(size);
 
-    // Step 0: Pre-apply LSC and WB
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -48,7 +47,7 @@ void demosaic_bilinear(const DemosaicParams& p, int* pixels) {
                     r = (get_wb_fast(x, y-1) + get_wb_fast(x, y+1)) * 0.5f;
                 }
             }
-            pixels[out_row + x] = rgb_to_pixel(r, g, b);
+            write_pixel(p, pixels, out_row + x, r, g, b);
         }
     }
 }
