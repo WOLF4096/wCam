@@ -22,6 +22,7 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.content.Context
 import android.media.MediaScannerConnection
+import androidx.heifwriter.HeifWriter
 
 /**
  * Handles image processing, metadata writing, and saving to MediaStore.
@@ -128,13 +129,14 @@ class CaptureProcessor(
         return uri
     }
 
-    fun savePngBitmap(
-        bitmap: Bitmap, 
-        suffix: String, 
-        rotationDegrees: Int, 
+    fun saveHeifBitmap(
+        bitmap: Bitmap,
+        rotationDegrees: Int,
         timestamp: Long,
-        characteristics: CameraCharacteristics? = null,
-        captureResult: TotalCaptureResult? = null,
+        quality: Int,
+        characteristics: CameraCharacteristics?,
+        captureResult: TotalCaptureResult?,
+        location: android.location.Location? = null,
         wmConfig: WatermarkProcessor.WatermarkConfig? = null
     ): Uri {
         val folderName = config.getString("default_storage_folder", "wCam")
@@ -146,20 +148,18 @@ class CaptureProcessor(
         } else {
             bitmap
         }
-
+        
         // 2. Apply Watermark to rotated bitmap
         val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
             WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0, config)
         } else {
             rotatedBitmap
         }
-        
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(timestamp))
-        val fileName = if (suffix.isEmpty()) "$ts.png" else "${ts}_$suffix.png"
-        
+
+        val fileName = createPhotoDisplayName(timestamp, "heic")
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/heic")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + folderName + "/")
             } else {
@@ -172,15 +172,56 @@ class CaptureProcessor(
 
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore entry")
+        
+        FileLogger.d("CaptureProcessor", "HEIF URI created: $uri, format: ${finalBitmap.config}")
 
-        contentResolver.openOutputStream(uri)?.use { os ->
-            finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
-        } ?: throw IOException("Failed to open output stream")
+        try {
+            contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                FileLogger.d("CaptureProcessor", "Starting HeifWriter for ${finalBitmap.width}x${finalBitmap.height}")
+                // Use HeifWriter for hardware accelerated HEIF encoding
+                val builder = HeifWriter.Builder(pfd.fileDescriptor, finalBitmap.width, finalBitmap.height, HeifWriter.INPUT_MODE_BITMAP)
+                    .setQuality(quality)
+                    .setMaxImages(1)
+                
+                val writer = builder.build()
+                
+                writer.start()
+                writer.addBitmap(finalBitmap)
+                writer.stop(5000) // 5 seconds timeout
+                // writer.close() is restricted, but WriterBase.close() is called by stop() or finalizer?
+                // Actually HeifWriter is AutoCloseable, let's try to cast or just trust stop().
+                // To be safe, we call close if we can via reflection or just hope stop() is enough.
+                try {
+                    val closeMethod = writer.javaClass.getMethod("close")
+                    closeMethod.invoke(writer)
+                } catch (e: Exception) {
+                    FileLogger.w("CaptureProcessor", "Could not call close() on HeifWriter via reflection")
+                }
 
+                FileLogger.d("CaptureProcessor", "HeifWriter finished successfully")
+                
+                // Write EXIF
+                val exif = ExifInterface(pfd.fileDescriptor)
+                writeExifMetadata(exif, characteristics, captureResult)
+                exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+                
+                if (preferenceManager.getBoolean("save_location", true)) {
+                    location?.let { exif.setGpsInfo(it) }
+                }
+                
+                exif.saveAttributes()
+            }
+        } catch (e: Exception) {
+            FileLogger.e("CaptureProcessor", "Failed to save HEIF image", e)
+            contentResolver.delete(uri, null, null)
+            throw e
+        }
+        
+        // Scan for legacy versions
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val path = values.getAsString(MediaStore.Images.Media.DATA)
             if (path != null) {
-                MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/png"), null)
+                MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/heic"), null)
             }
         }
         

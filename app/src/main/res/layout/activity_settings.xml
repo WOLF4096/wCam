@@ -87,12 +87,12 @@
                         android:layout_marginHorizontal="4dp"
                         android:clickable="true" />
                     <TextView
-                        android:id="@+id/chip_png"
+                        android:id="@+id/chip_heif"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:background="@drawable/sl_settings_chip"
-                        android:text="PNG"
+                        android:text="HEIF"
                         android:textColor="@color/sl_settings_chip_text"
                         android:gravity="center"
                         android:paddingVertical="8dp"

@@ -207,7 +207,7 @@ class CaptureManager(
                     listener.onCaptureCompleted(uri)
                 }
 
-                if (formats.contains("JPG") || formats.contains("PNG")) {
+                if (formats.contains("JPG") || formats.contains("HEIF")) {
                     executeCaptureTask(task, chars, result, formats)
                 }
             } finally {
@@ -283,15 +283,33 @@ class CaptureManager(
         val wallTime = task.captureStartTime
         try {
             val demosaicStart = System.currentTimeMillis()
-            // 将旋转角度传递给 JNI，让 JNI 处理像素旋转
-            val bitmap = DemosaicEngine.processFromBuffer(
-                task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
-                task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
-                task.metadata.shadingMap, task.metadata.shadingMapSize,
-                task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
-                task.cropRect, task.rotationDegrees
-            )
-            Log.d("CaptureTimer", "[$wallTime] Demosaic (${task.algoKey}) finished in ${System.currentTimeMillis() - demosaicStart}ms")
+            
+            // 8-bit Bitmap for JPEG
+            var bitmap8: Bitmap? = null
+            if (formats.contains("JPG")) {
+                bitmap8 = DemosaicEngine.processFromBuffer(
+                    task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                    task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
+                    task.metadata.shadingMap, task.metadata.shadingMapSize,
+                    task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
+                    task.cropRect, task.rotationDegrees,
+                    highBitDepth = false
+                )
+            }
+
+            // 16-bit Bitmap for HEIF
+            var bitmap16: Bitmap? = null
+            if (formats.contains("HEIF")) {
+                bitmap16 = DemosaicEngine.processFromBuffer(
+                    task.rawBuffer, task.width, task.height, task.rowStride, task.pixelStride,
+                    task.algoKey, task.metadata.wbArray, task.metadata.ccm, 
+                    task.metadata.shadingMap, task.metadata.shadingMapSize,
+                    task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
+                    task.cropRect, task.rotationDegrees,
+                    highBitDepth = true
+                )
+            }
+            Log.d("CaptureTimer", "[$wallTime] Demosaic finished in ${System.currentTimeMillis() - demosaicStart}ms")
 
             val wmMode = preferenceManager.getString("wm_mode", "None")
             val wmConfig = WatermarkProcessor.WatermarkConfig(
@@ -302,24 +320,23 @@ class CaptureManager(
                 customText = preferenceManager.getString("wm_custom_text", "wCam")
             )
 
-            // 由于 bitmap 已经在 JNI 中根据 rotationDegrees 旋转好了，
-            // 传给 saveJpegBitmap 的旋转角度改为 0
-            if (formats.contains("JPG")) {
+            if (formats.contains("JPG") && bitmap8 != null) {
                 val saveStart = System.currentTimeMillis()
-                val uri = captureProcessor.saveJpegBitmap(bitmap, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
-                Log.d("CaptureTimer", "[$wallTime] JPEG save (with watermark if enabled) finished in ${System.currentTimeMillis() - saveStart}ms")
+                val uri = captureProcessor.saveJpegBitmap(bitmap8, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
+                Log.d("CaptureTimer", "[$wallTime] JPEG save finished in ${System.currentTimeMillis() - saveStart}ms")
                 listener.onCaptureCompleted(uri)
+                bitmap8.recycle()
             }
             
-            if (formats.contains("PNG")) {
+            if (formats.contains("HEIF") && bitmap16 != null) {
                 val saveStart = System.currentTimeMillis()
-                val uri = captureProcessor.savePngBitmap(bitmap, "", 0, task.captureStartTime, chars, result, wmConfig)
-                Log.d("CaptureTimer", "[$wallTime] PNG save (with watermark if enabled) finished in ${System.currentTimeMillis() - saveStart}ms")
+                val uri = captureProcessor.saveHeifBitmap(bitmap16, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
+                Log.d("CaptureTimer", "[$wallTime] HEIF save finished in ${System.currentTimeMillis() - saveStart}ms")
                 listener.onCaptureCompleted(uri)
+                bitmap16.recycle()
             }
             
             Log.d("CaptureTimer", "[$wallTime] TOTAL process time: ${System.currentTimeMillis() - wallTime}ms")
-            bitmap.recycle()
         } catch (e: Exception) {
             FileLogger.e("CaptureManager", "Execute task failed", e)
         }

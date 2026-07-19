@@ -39,7 +39,7 @@ class SettingsActivity : AppCompatActivity() {
         // Format Chips (Multi-select)
         setupFormatChip(binding.chipRaw, "RAW")
         setupFormatChip(binding.chipJpg, "JPG")
-        setupFormatChip(binding.chipPng, "PNG")
+        setupFormatChip(binding.chipHeif, "HEIF")
 
         // JPG Quality
         binding.seekbarQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -114,7 +114,7 @@ class SettingsActivity : AppCompatActivity() {
         val formats = formatString.split(",").toSet()
         binding.chipRaw.isSelected = formats.contains("RAW")
         binding.chipJpg.isSelected = formats.contains("JPG")
-        binding.chipPng.isSelected = formats.contains("PNG")
+        binding.chipHeif.isSelected = formats.contains("HEIF")
         updateVisibilityByFormats(formats)
 
         // Load JPG Quality
@@ -236,9 +236,9 @@ class SettingsActivity : AppCompatActivity() {
         val hasJpg = formats.contains("JPG")
         binding.layoutJpgQuality.visibility = if (hasJpg) View.VISIBLE else View.GONE
         
-        // Hide location if ONLY PNG is selected
-        val onlyPng = formats.size == 1 && formats.contains("PNG")
-        binding.layoutLocation.visibility = if (onlyPng) View.GONE else View.VISIBLE
+        // Hide location if ONLY HEIF is selected
+        val onlyHeif = formats.size == 1 && formats.contains("HEIF")
+        binding.layoutLocation.visibility = if (onlyHeif) View.GONE else View.VISIBLE
 
         val isRawOnly = formats.size == 1 && formats.contains("RAW")
         binding.cardAlgo.visibility = if (isRawOnly) View.GONE else View.VISIBLE

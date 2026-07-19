@@ -225,10 +225,72 @@ inline uint32_t rgb_to_pixel_impl(float r, float g, float b, const DemosaicParam
     gg = luma + sat * (gg - luma);
     bb = luma + sat * (bb - luma);
 
-    return 0xFF000000 | (to_srgb(rr) << 16) | (to_srgb(gg) << 8) | to_srgb(bb);
+    // Byte order for ARGB_8888 (RGBA in memory on Little Endian): [R, G, B, A]
+    // Bits: 0-7:R, 8-15:G, 16-23:B, 24-31:A
+    return 0xFF000000 | (to_srgb(bb) << 16) | (to_srgb(gg) << 8) | to_srgb(rr);
 }
 
 // Wrapper to match previous calls if any
 #define rgb_to_pixel(r,g,b) rgb_to_pixel_impl(r,g,b,p)
+
+// FP16 support for high bit depth
+inline uint16_t float_to_half(float f) {
+    // Basic IEEE 754 float to half conversion
+    uint32_t i = *(uint32_t*)&f;
+    uint32_t s = (i >> 16) & 0x00008000;
+    int32_t e = ((i >> 23) & 0x000000ff) - (127 - 15);
+    uint32_t m = i & 0x007fffff;
+    if (e <= 0) {
+        if (e < -10) return s;
+        m |= 0x00800000;
+        int32_t t = 14 - e;
+        uint32_t a = (1 << (t - 1)) - 1;
+        uint32_t b = (m >> t) & 1;
+        m = (m + a + b) >> t;
+        return s | m;
+    } else if (e >= 31) {
+        return s | 0x7c00;
+    }
+    uint32_t a = 0x00000fff;
+    uint32_t b = (m >> 13) & 1;
+    m = (m + a + b) >> 13;
+    return s | (e << 10) | (m & 0x03ff);
+}
+
+inline uint64_t rgb_to_pixel_f16_impl(float r, float g, float b, const DemosaicParams& p) {
+    // 1. Exposure
+    float exposure = 1.06f;
+    r *= exposure; g *= exposure; b *= exposure;
+
+    // 2. CCM
+    float rr, gg, bb;
+    if (p.hasCombinedCCM) {
+        rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
+        gg = p.combinedCCM[3] * r + p.combinedCCM[4] * g + p.combinedCCM[5] * b;
+        bb = p.combinedCCM[6] * r + p.combinedCCM[7] * g + p.combinedCCM[8] * b;
+    } else {
+        rr = 1.65f * r - 0.55f * g - 0.10f * b;
+        gg = -0.25f * r + 1.55f * g - 0.30f * b;
+        bb = -0.05f * r - 0.65f * g + 1.70f * b;
+    }
+
+    // 3. Clip and Tonemap (ACES Filmic but result in linear-ish space for F16 if preferred,
+    // but Android Bitmap.Config.RGBA_F16 expects linear values usually, or SRGB encoded in half-float.
+    // However, most 10-bit+ paths prefer linear or PQ/HLG. For simplicity, we'll keep ACES.
+    rr = tonemap(std::max(0.0f, rr));
+    gg = tonemap(std::max(0.0f, gg));
+    bb = tonemap(std::max(0.0f, bb));
+
+    // Convert to half-float (FP16)
+    // Android RGBA_F16 is R-G-B-A in memory
+    uint16_t hR = float_to_half(rr);
+    uint16_t hG = float_to_half(gg);
+    uint16_t hB = float_to_half(bb);
+    uint16_t hA = float_to_half(1.0f);
+
+    return (uint64_t)hR | ((uint64_t)hG << 16) | ((uint64_t)hB << 32) | ((uint64_t)hA << 48);
+}
+
+#define rgb_to_pixel_f16(r,g,b) rgb_to_pixel_f16_impl(r,g,b,p)
 
 #endif // WCAM_DEMOSAIC_COMMON_H

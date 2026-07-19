@@ -6,6 +6,18 @@ import android.content.SharedPreferences
 class PreferenceManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("wcam_prefs", Context.MODE_PRIVATE)
 
+    init {
+        migratePngToHeif()
+    }
+
+    private fun migratePngToHeif() {
+        val formats = getString(KEY_OUTPUT_FORMAT, "JPG")
+        if (formats.contains("PNG")) {
+            val newFormats = formats.replace("PNG", "HEIF")
+            saveString(KEY_OUTPUT_FORMAT, newFormats)
+        }
+    }
+
     companion object {
         const val KEY_LENS_ID = "lens_id"
         const val KEY_PHYSICAL_LENS_ID = "physical_lens_id"

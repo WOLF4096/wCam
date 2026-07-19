@@ -90,7 +90,12 @@ class WatermarkProcessor {
     }
 
     private fun drawInternalWatermark(bitmap: Bitmap, text: String, config: com.example.wcam.util.ConfigManager): Bitmap {
-        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val configToUse = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && bitmap.config == Bitmap.Config.RGBA_F16) {
+            Bitmap.Config.RGBA_F16
+        } else {
+            Bitmap.Config.ARGB_8888
+        }
+        val mutableBitmap = bitmap.copy(configToUse, true)
         val canvas = Canvas(mutableBitmap)
         
         val baseFontSize = config.getFloat("wm_font_size", 64f)
@@ -152,7 +157,7 @@ class WatermarkProcessor {
         val externalPadding = (fontHeight + finalPaddingY * 2).toInt()
 
         val newHeight = bitmap.height + externalPadding
-        val newBitmap = Bitmap.createBitmap(bitmap.width, newHeight, Bitmap.Config.ARGB_8888)
+        val newBitmap = createCompatibleBitmap(bitmap.width, newHeight, bitmap)
         val canvas = Canvas(newBitmap)
         
         canvas.drawColor(Color.WHITE)
@@ -165,5 +170,13 @@ class WatermarkProcessor {
         val centerY = bitmap.height + (externalPadding / 2f) - (fontMetrics.ascent + fontMetrics.descent) / 2f
         canvas.drawText(text, finalPaddingX, centerY, paint)
         return newBitmap
+    }
+
+    private fun createCompatibleBitmap(width: Int, height: Int, sourceBitmap: Bitmap): Bitmap {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && sourceBitmap.config == Bitmap.Config.RGBA_F16) {
+            Bitmap.createBitmap(width, height, Bitmap.Config.RGBA_F16)
+        } else {
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        }
     }
 }

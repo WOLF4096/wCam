@@ -10,6 +10,7 @@ activityKtx = "1.13.0"
 constraintlayout = "2.2.1"
 exifinterface = "1.3.7"
 lifecycle = "2.9.0"
+heifwriter = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -23,6 +24,7 @@ androidx-constraintlayout = { group = "androidx.constraintlayout", name = "const
 androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
 androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-heifwriter = { group = "androidx.heifwriter", name = "heifwriter", version.ref = "heifwriter" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

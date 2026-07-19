@@ -17,7 +17,7 @@ object DemosaicEngine {
         height: Int,
         rowStride: Int,
         pixelStride: Int,
-        outputPixels: IntArray,
+        outputBuffer: ByteBuffer, 
         algorithm: String,
         wbGainsArray: FloatArray,
         ccmArray: FloatArray,
@@ -28,11 +28,12 @@ object DemosaicEngine {
         blackLevel: Int,
         whiteLevel: Int,
         lscStrength: Float,
-        cropLeft: Int,      // 新增
-        cropTop: Int,       // 新增
-        cropWidth: Int,     // 新增
-        cropHeight: Int,    // 新增
-        rotation: Int       // 新增
+        cropLeft: Int,
+        cropTop: Int,
+        cropWidth: Int,
+        cropHeight: Int,
+        rotation: Int,
+        highBitDepth: Boolean 
     )
 
     fun processFromBuffer(
@@ -50,11 +51,11 @@ object DemosaicEngine {
         blackLevel: Int,
         whiteLevel: Int,
         lscStrength: Float = 0.0f,
-        cropRect: android.graphics.Rect? = null, // 新增
-        rotation: Int = 0 // 新增
+        cropRect: android.graphics.Rect? = null,
+        rotation: Int = 0,
+        highBitDepth: Boolean = false
     ): Bitmap {
         val cRect = cropRect ?: android.graphics.Rect(0, 0, width, height)
-        // 确保坐标在范围内并对齐 2x2
         val left = (cRect.left.coerceIn(0, width - 2) / 2) * 2
         val top = (cRect.top.coerceIn(0, height - 2) / 2) * 2
         
@@ -65,37 +66,40 @@ object DemosaicEngine {
             "Bin16", "Bright4" -> step = 4
         }
         
-        // Ensure crop dimensions are multiples of the binning step and 2 for Bayer
         val rawCropW = (cRect.width().coerceAtMost(width - left) / (2 * step)) * (2 * step)
         val rawCropH = (cRect.height().coerceAtMost(height - top) / (2 * step)) * (2 * step)
         
         var outW = rawCropW / step
         var outH = rawCropH / step
 
-        val resW: Int
-        val resH: Int
+        val resW = if (rotation % 180 == 0) outW else outH
+        val resH = if (rotation % 180 == 0) outH else outW
         
-        resW = if (rotation % 180 == 0) outW else outH
-        resH = if (rotation % 180 == 0) outH else outW
+        val actualHighBitDepth = if (algorithm == "RgbCh") false else highBitDepth
+        val config = if (actualHighBitDepth) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+        val bitmap = Bitmap.createBitmap(resW, resH, config)
         
-        val bitmap = Bitmap.createBitmap(resW, resH, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(resW * resH)
+        val pixelSize = if (actualHighBitDepth) 8 else 4
+        val outputBuffer = ByteBuffer.allocateDirect(resW * resH * pixelSize)
+        outputBuffer.order(java.nio.ByteOrder.nativeOrder())
         
         try {
             nativeProcess(
                 buffer, width, height, rowStride, pixelStride,
-                pixels, algorithm, wbGains, ccm, 
+                outputBuffer, algorithm, wbGains, ccm, 
                 shadingMap, shadingMapSize?.width ?: 0, shadingMapSize?.height ?: 0,
                 bayerPattern, blackLevel, whiteLevel,
                 lscStrength,
-                left, top, rawCropW, rawCropH, rotation
+                left, top, rawCropW, rawCropH, rotation,
+                actualHighBitDepth
             )
+            outputBuffer.rewind()
+            bitmap.copyPixelsFromBuffer(outputBuffer)
         } catch (e: Exception) {
             FileLogger.e("DemosaicEngine", "Native process failed", e)
             throw e
         }
         
-        bitmap.setPixels(pixels, 0, resW, 0, 0, resW, resH)
         return bitmap
     }
 }
