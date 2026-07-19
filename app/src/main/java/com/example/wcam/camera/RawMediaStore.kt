@@ -115,15 +115,38 @@ class RawMediaStore(
     }
 
     fun findLatestRecentPhotoUri(): Uri? {
+        val folderName = config?.getString("default_storage_folder", "wCam") ?: "wCam"
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Images.Media._ID)
+        
+        // Filter by folder name
+        val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+        } else {
+            "${MediaStore.Images.Media.DATA} LIKE ?"
+        }
+        val selectionArgs = arrayOf("%$folderName%")
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
-        context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                val id = cursor.getLong(idColumn)
-                return Uri.withAppendedPath(collection, id.toString())
+        
+        try {
+            context.contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val id = cursor.getLong(idColumn)
+                    val uri = Uri.withAppendedPath(collection, id.toString())
+                    
+                    // Verify if file still exists and is accessible
+                    try {
+                        context.contentResolver.openFileDescriptor(uri, "r")?.use {
+                            return uri
+                        }
+                    } catch (e: Exception) {
+                        // File might be deleted, continue searching
+                    }
+                }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("RawMediaStore", "Failed to query latest photo in $folderName", e)
         }
         return null
     }

@@ -22,8 +22,16 @@ class GalleryController(
 
     private var recentPhotoUri: Uri? = null
 
-    fun updateRecentPhotoPreview(uri: Uri) {
+    fun updateRecentPhotoPreview(uri: Uri?) {
         recentPhotoUri = uri
+        if (uri == null) {
+            runOnUiThread {
+                btnGallery.setBackgroundResource(R.drawable.bg_gallery_modern)
+                btnGallery.text = "相册"
+            }
+            return
+        }
+
         captureExecutor.submit {
             val thumbnail = rawMediaStore.loadThumbnailBitmap(uri)
             runOnUiThread {

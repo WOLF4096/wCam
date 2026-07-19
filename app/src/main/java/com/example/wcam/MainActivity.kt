@@ -180,7 +180,10 @@ class MainActivity : AppCompatActivity(),
         streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), config, this)
         streamMonitor.start()
         deviceOrientationTracker.enable()
-        galleryController.getRecentUri() ?: rawMediaStore.findLatestRecentPhotoUri()?.let { galleryController.updateRecentPhotoPreview(it) }
+        
+        // 修正：每次恢复时尝试重新扫描目录下最新的照片，防止文件被外部删除后预览失效
+        galleryController.updateRecentPhotoPreview(rawMediaStore.findLatestRecentPhotoUri())
+
         updateModeUI(viewModel.isPhotoMode.value)
         updateCropOverlayUI()
         binding.cameraPreview.post {
