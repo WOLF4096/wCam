@@ -82,6 +82,7 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + folderName + "/")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), folderName)
                 if (!folder.exists()) folder.mkdirs()
@@ -97,18 +98,18 @@ class CaptureProcessor(
             finalBitmap.compress(Bitmap.CompressFormat.JPEG, quality, os)
             os.flush()
         } ?: throw IOException("Failed to open output stream")
-        
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            val path = values.getAsString(MediaStore.Images.Media.DATA)
-            if (path != null) {
-                MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/jpeg"), null)
-            }
-        }
 
         try {
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val exif = ExifInterface(pfd.fileDescriptor)
                 writeExifMetadata(exif, characteristics, captureResult)
+                
+                // 显式写入分辨率，防止扫描器识别延迟
+                exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, finalBitmap.width.toString())
+                exif.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, finalBitmap.height.toString())
+                exif.setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, finalBitmap.width.toString())
+                exif.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, finalBitmap.height.toString())
+                
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
                 
                 if (preferenceManager.getBoolean("save_location", true)) {
@@ -119,6 +120,18 @@ class CaptureProcessor(
             }
         } catch (e: Exception) {
             FileLogger.e("CaptureProcessor", "Failed to write EXIF metadata", e)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val publishValues = ContentValues().apply {
+                put(MediaStore.Images.Media.IS_PENDING, 0)
+            }
+            contentResolver.update(uri, publishValues, null, null)
+        } else {
+            val path = values.getAsString(MediaStore.Images.Media.DATA)
+            if (path != null) {
+                MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/jpeg"), null)
+            }
         }
         
         if (finalBitmap != rotatedBitmap) finalBitmap.recycle()
@@ -157,6 +170,7 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.MIME_TYPE, "image/heic")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + folderName + "/")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), folderName)
                 if (!folder.exists()) folder.mkdirs()
@@ -196,6 +210,18 @@ class CaptureProcessor(
                     closeMethod.invoke(writer)
                 } catch (e: Exception) {
                     // Ignore close restriction
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val publishValues = ContentValues().apply {
+                    put(MediaStore.Images.Media.IS_PENDING, 0)
+                }
+                contentResolver.update(uri, publishValues, null, null)
+            } else {
+                val path = values.getAsString(MediaStore.Images.Media.DATA)
+                if (path != null) {
+                    MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/heic"), null)
                 }
             }
         } catch (e: Exception) {
