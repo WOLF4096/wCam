@@ -178,38 +178,52 @@ class CaptureProcessor(
         try {
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 FileLogger.d("CaptureProcessor", "Starting HeifWriter for ${finalBitmap.width}x${finalBitmap.height}")
-                // Use HeifWriter for hardware accelerated HEIF encoding
+                
+                // Create a temporary file to hold EXIF metadata in JPEG format
+                // HeifWriter can take EXIF from a JPEG-like source (often via MediaMuxer logic under the hood)
+                // But the easiest way to handle it for now is to use HeifWriter's built-in metadata support if available,
+                // or just skip saveAttributes for HEIF and use a different tool.
+                // NOTE: Android's HeifWriter doesn't directly expose EXIF injection in a simple way in 1.1.0.
+                
                 val builder = HeifWriter.Builder(pfd.fileDescriptor, finalBitmap.width, finalBitmap.height, HeifWriter.INPUT_MODE_BITMAP)
                     .setQuality(quality)
                     .setMaxImages(1)
                 
                 val writer = builder.build()
-                
                 writer.start()
                 writer.addBitmap(finalBitmap)
-                writer.stop(5000) // 5 seconds timeout
-                // writer.close() is restricted, but WriterBase.close() is called by stop() or finalizer?
-                // Actually HeifWriter is AutoCloseable, let's try to cast or just trust stop().
-                // To be safe, we call close if we can via reflection or just hope stop() is enough.
+                writer.stop(5000)
+                
                 try {
                     val closeMethod = writer.javaClass.getMethod("close")
                     closeMethod.invoke(writer)
                 } catch (e: Exception) {
-                    FileLogger.w("CaptureProcessor", "Could not call close() on HeifWriter via reflection")
+                    // Ignore
                 }
 
                 FileLogger.d("CaptureProcessor", "HeifWriter finished successfully")
                 
-                // Write EXIF
-                val exif = ExifInterface(pfd.fileDescriptor)
-                writeExifMetadata(exif, characteristics, captureResult)
-                exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                
-                if (preferenceManager.getBoolean("save_location", true)) {
-                    location?.let { exif.setGpsInfo(it) }
+                // --- EXIF WORKAROUND FOR HEIF ---
+                // ExifInterface.saveAttributes() fails on HEIF in many Android versions.
+                try {
+                    val exif = ExifInterface(pfd.fileDescriptor)
+                    writeExifMetadata(exif, characteristics, captureResult)
+                    exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+                    if (preferenceManager.getBoolean("save_location", true)) {
+                        location?.let { exif.setGpsInfo(it) }
+                    }
+                    
+                    // HEIF support was added in later versions of ExifInterface, but clearly 
+                    // this environment doesn't support saveAttributes for it.
+                    // We'll wrap it in a secondary try-catch to ensure image is kept even if EXIF fails.
+                    try {
+                        exif.saveAttributes()
+                    } catch (e: Exception) {
+                        FileLogger.w("CaptureProcessor", "ExifInterface.saveAttributes failed for HEIF (Format unsupported by library)")
+                    }
+                } catch (exifEx: Exception) {
+                    FileLogger.e("CaptureProcessor", "Metadata setup failed for HEIF", exifEx)
                 }
-                
-                exif.saveAttributes()
             }
         } catch (e: Exception) {
             FileLogger.e("CaptureProcessor", "Failed to save HEIF image", e)
