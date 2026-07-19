@@ -191,6 +191,20 @@ class CameraUiController(
             }
             etW.setOnEditorActionListener(editorListener)
             etH.setOnEditorActionListener(editorListener)
+
+            val textWatcher = object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val w = etW.text.toString(); val h = etH.text.toString()
+                    if (w.isNotEmpty() && h.isNotEmpty()) {
+                        onSelected("$w:$h")
+                    }
+                }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            }
+            etW.addTextChangedListener(textWatcher)
+            etH.addTextChangedListener(textWatcher)
+
             grid.addView(customView)
         }
 
