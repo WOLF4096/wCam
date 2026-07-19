@@ -169,7 +169,7 @@ class CaptureProcessor(
             ?: throw IOException("Failed to create MediaStore entry")
         
         try {
-            val exifBytes = extractExifBytes(characteristics, captureResult, location)
+            val exifBytes = extractExifBytes(finalBitmap.width, finalBitmap.height, characteristics, captureResult, location)
             
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val builder = HeifWriter.Builder(pfd.fileDescriptor, finalBitmap.width, finalBitmap.height, HeifWriter.INPUT_MODE_BITMAP)
@@ -212,7 +212,7 @@ class CaptureProcessor(
         return uri
     }
 
-    private fun extractExifBytes(characteristics: CameraCharacteristics?, result: TotalCaptureResult?, location: android.location.Location?): ByteArray? {
+    private fun extractExifBytes(width: Int, height: Int, characteristics: CameraCharacteristics?, result: TotalCaptureResult?, location: android.location.Location?): ByteArray? {
         if (characteristics == null || result == null) return null
         
         val tempFile = File(context.cacheDir, "temp_exif_${System.currentTimeMillis()}.jpg")
@@ -223,6 +223,13 @@ class CaptureProcessor(
             
             val exif = ExifInterface(tempFile.absolutePath)
             writeExifMetadata(exif, characteristics, result)
+            
+            // Set actual dimensions to fix "1x1px" identification issue in gallery
+            exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, width.toString())
+            exif.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, height.toString())
+            exif.setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, width.toString())
+            exif.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, height.toString())
+
             if (preferenceManager.getBoolean("save_location", true)) {
                 location?.let { exif.setGpsInfo(it) }
             }
