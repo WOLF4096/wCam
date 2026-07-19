@@ -1,11 +1,18 @@
 package com.example.wcam.ui
 
+import android.content.Context
+import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.GridLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.widget.addTextChangedListener
@@ -87,6 +94,145 @@ class SettingsActivity : AppCompatActivity() {
             binding.etWmCustom.visibility = if (newState) View.VISIBLE else View.GONE
         }
         binding.etWmCustom.addTextChangedListener { preferenceManager.saveString("wm_custom_text", it.toString()) }
+
+        // Camera Info
+        binding.btnGetCameraInfo.setOnClickListener { getCameraDetailedInfo() }
+        binding.btnCopyCameraInfo.setOnClickListener {
+            val info = binding.etCameraInfo.text.toString()
+            if (info.isNotEmpty()) {
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("Camera Info", info)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun getCameraDetailedInfo() {
+        val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val sb = StringBuilder()
+        
+        val allIds = mutableSetOf<String>()
+        try { allIds.addAll(cameraManager.cameraIdList) } catch (_: Exception) {}
+        for (i in 0..63) { allIds.add(i.toString()) }
+
+        allIds.sortedBy { it.toIntOrNull() ?: 999 }.forEach { id ->
+            try {
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                val isLogical = capabilities.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
+                
+                sb.append("==============================\n")
+                sb.append("摄像头ID: $id ${if (isLogical) "[逻辑多摄]" else "[物理镜片/独立]"}\n")
+                
+                // 1. 基本方位与硬件等级
+                val facing = when(chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraMetadata.LENS_FACING_BACK -> "后置 (BACK)"
+                    CameraMetadata.LENS_FACING_FRONT -> "前置 (FRONT)"
+                    CameraMetadata.LENS_FACING_EXTERNAL -> "外部 (EXTERNAL)"
+                    else -> "未知"
+                }
+                val hwLevel = when(chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)) {
+                    CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
+                    CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
+                    CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
+                    CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
+                    CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_EXTERNAL -> "EXTERNAL"
+                    else -> "Unknown"
+                }
+                sb.append("    方位: $facing\n")
+                sb.append("    硬件等级: $hwLevel\n")
+                
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    val physicalIds = chars.physicalCameraIds
+                    if (physicalIds.isNotEmpty()) sb.append("    物理子摄列表: ${physicalIds.joinToString(", ")}\n")
+                }
+
+                // 2. 传感器核心参数
+                sb.append("\n    [传感器参数]\n")
+                val pixelArray = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                val sensorSize = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                sb.append("    像素阵列: ${pixelArray?.width}x${pixelArray?.height}\n")
+                sb.append("    有效区域: ${activeArray?.left},${activeArray?.top},${activeArray?.right},${activeArray?.bottom}\n")
+                sb.append("    物理尺寸: ${sensorSize?.width} x ${sensorSize?.height} mm\n")
+                
+                val bayer = chars.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
+                val bayerStr = when(bayer) {
+                    0 -> "RGGB" ; 1 -> "GRBG" ; 2 -> "GBRG" ; 3 -> "BGGR" ; 4 -> "RGB" ; else -> "未知($bayer)"
+                }
+                sb.append("    拜尔阵列 (CFA): $bayerStr\n")
+                
+                val whiteLevel = chars.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL)
+                val blackLevels = chars.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+                sb.append("    白点值: $whiteLevel\n")
+                sb.append("    黑电平阵列: ${blackLevels?.toString() ?: "N/A"}\n")
+
+                // 3. 镜头与曝光参数
+                sb.append("\n    [镜头与曝光]\n")
+                val apertures = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
+                val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                sb.append("    光圈: f/${apertures?.joinToString(", f/") ?: "N/A"}\n")
+                sb.append("    焦距: ${focalLengths?.joinToString(", ") ?: "N/A"} mm\n")
+                
+                val isoRange = chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+                val expRange = chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+                sb.append("    ISO范围: ${isoRange?.lower} ~ ${isoRange?.upper}\n")
+                sb.append("    快门范围: ${expRange?.lower?.div(1000000.0)}ms ~ ${expRange?.upper?.div(1000000000.0)}s\n")
+
+                // 4. 特性能力支持
+                sb.append("\n    [支持特性]\n")
+                capabilities.forEach { cap ->
+                    val capStr = when(cap) {
+                        0 -> "BACKWARD_COMPATIBLE"
+                        1 -> "MANUAL_SENSOR"
+                        2 -> "MANUAL_POST_PROCESSING"
+                        3 -> "RAW"
+                        4 -> "PRIVATE_REPROCESS"
+                        5 -> "READ_SENSOR_SETTINGS"
+                        6 -> "BURST_CAPTURE"
+                        7 -> "YUV_REPROCESS"
+                        8 -> "DEPTH_OUTPUT"
+                        9 -> "CONSTRAINED_HIGH_SPEED_VIDEO"
+                        10 -> "LOGICAL_MULTI_CAMERA"
+                        11 -> "MONOCHROME"
+                        12 -> "SECURE_IMAGE_DATA"
+                        else -> "OTHER($cap)"
+                    }
+                    sb.append("    - $capStr\n")
+                }
+
+                // 5. 完整流配置 (全部分辨率展开)
+                sb.append("\n    [流配置与分辨率详情]\n")
+                val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                map?.outputFormats?.forEach { format ->
+                    val formatName = when (format) {
+                        ImageFormat.JPEG -> "JPEG"
+                        ImageFormat.RAW_SENSOR -> "RAW_SENSOR"
+                        ImageFormat.RAW10 -> "RAW10"
+                        ImageFormat.RAW12 -> "RAW12"
+                        ImageFormat.YUV_420_888 -> "YUV_420_888"
+                        ImageFormat.HEIC -> "HEIF/HEIC"
+                        ImageFormat.PRIVATE -> "PRIVATE/Surface"
+                        else -> "0x${Integer.toHexString(format).uppercase()}"
+                    }
+                    val outputSizes = map.getOutputSizes(format)
+                    sb.append("    ● $formatName:\n")
+                    outputSizes?.forEach { size ->
+                        val fps = map.getOutputMinFrameDuration(format, size)
+                        val fpsStr = if (fps > 0) " (MinDuration: ${String.format(Locale.US, "%.1f", 1e9/fps)}fps)" else ""
+                        sb.append("        - ${size.width} x ${size.height}$fpsStr\n")
+                    }
+                }
+                sb.append("\n")
+            } catch (_: Exception) {}
+        }
+        
+        if (sb.isEmpty()) {
+            binding.etCameraInfo.setText("未获取到任何有效的摄像头信息，请检查权限。")
+        } else {
+            binding.etCameraInfo.setText(sb.toString())
+        }
     }
 
     private fun setupFormatChip(chip: TextView, formatName: String) {
