@@ -24,6 +24,7 @@ class AspectRatioController(
     interface AspectRatioListener {
         fun onRatioChanged(ratio: Float, label: String)
         fun onVideoParamsChanged()
+        fun showRatioPanel(anchor: View, options: List<String>, currentLabel: String, showCustom: Boolean, onSelected: (String) -> Unit)
         fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit)
     }
 
@@ -116,17 +117,14 @@ class AspectRatioController(
     }
 
     fun showPhotoRatioPopup(anchor: View) {
-        val options = listOf("1:1", "3:4", "9:16", "9:20", "1:2", "1:3", "1:4", "自定义")
-        listener.showStyledPopup(anchor, options) { selected ->
-            when (selected) {
-                "1:1" -> updateRatio(1.0f, "1:1")
-                "3:4" -> updateRatio(4f / 3f, "3:4")
-                "9:16" -> updateRatio(16f / 9f, "9:16")
-                "9:20" -> updateRatio(20f / 9f, "9:20")
-                "1:2" -> updateRatio(2.0f, "1:2")
-                "1:3" -> updateRatio(3.0f, "1:3")
-                "1:4" -> updateRatio(4.0f, "1:4")
-                "自定义" -> showCustomRatioDialog()
+        val options = listOf("1:1", "3:4", "9:16", "9:20", "1:2", "1:3", "1:4")
+        val currentLabel = preferenceManager.getString(PreferenceManager.KEY_PHOTO_RATIO_STR, "4:3")
+        listener.showRatioPanel(anchor, options, currentLabel, true) { selected ->
+            if (selected.contains(":")) {
+                val parts = selected.split(":")
+                val w = parts[0].toFloatOrNull() ?: 1f
+                val h = parts[1].toFloatOrNull() ?: 1f
+                updateRatio(w / h, selected)
             }
         }
     }

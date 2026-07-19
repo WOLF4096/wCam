@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_columnWeight="1"
+    android:background="@drawable/sl_settings_chip"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:paddingVertical="12dp"
+    android:layout_margin="3dp"
+    android:clickable="true">
+    <EditText
+        android:id="@+id/et_custom_w"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:background="@null"
+        android:gravity="end"
+        android:hint="_"
+        android:inputType="number"
+        android:textColor="@color/sl_settings_chip_text"
+        android:textColorHint="@color/sl_settings_chip_text"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:paddingEnd="2dp" />
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=":"
+        android:textColor="@color/sl_settings_chip_text"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+    <EditText
+        android:id="@+id/et_custom_h"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:background="@null"
+        android:gravity="start"
+        android:hint="_"
+        android:inputType="number"
+        android:textColor="@color/sl_settings_chip_text"
+        android:textColorHint="@color/sl_settings_chip_text"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:paddingStart="2dp" />
+</LinearLayout>

@@ -11,6 +11,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.ListPopupWindow
+import android.widget.GridLayout
 import android.widget.SeekBar
 import com.example.wcam.R
 import com.example.wcam.camera.FlashMode
@@ -196,6 +197,65 @@ class CameraUiController(
         countdownTimer = null
         pbShutterProgress.visibility = View.GONE
         tvShutterCountdown.visibility = View.GONE
+    }
+
+    fun showRatioPanel(anchor: View, options: List<String>, currentLabel: String, showCustom: Boolean, onSelected: (String) -> Unit) {
+        val popupView = activity.layoutInflater.inflate(R.layout.layout_ratio_panel, null)
+        val popupWindow = android.widget.PopupWindow(
+            popupView,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        )
+        popupWindow.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popupWindow.elevation = 20f
+
+        val grid = popupView.findViewById<GridLayout>(R.id.grid_ratios)
+        grid.removeAllViews()
+
+        var isFixedSelected = false
+        options.forEach { option ->
+            val chip = activity.layoutInflater.inflate(R.layout.item_ratio_chip, grid, false) as TextView
+            chip.text = option
+            val isSelected = (option == currentLabel)
+            chip.isSelected = isSelected
+            if (isSelected) isFixedSelected = true
+            
+            chip.setOnClickListener {
+                onSelected(option)
+                popupWindow.dismiss()
+            }
+            grid.addView(chip)
+        }
+
+        if (showCustom) {
+            val customView = activity.layoutInflater.inflate(R.layout.item_ratio_custom, grid, false)
+            val etW = customView.findViewById<android.widget.EditText>(R.id.et_custom_w)
+            val etH = customView.findViewById<android.widget.EditText>(R.id.et_custom_h)
+            
+            if (!isFixedSelected && currentLabel.contains(":")) {
+                customView.isSelected = true
+                val parts = currentLabel.split(":")
+                if (parts.size == 2) {
+                    etW.setText(parts[0])
+                    etH.setText(parts[1])
+                }
+            }
+
+            customView.setOnClickListener {
+                val w = etW.text.toString()
+                val h = etH.text.toString()
+                if (w.isNotEmpty() && h.isNotEmpty()) {
+                    onSelected("$w:$h")
+                    popupWindow.dismiss()
+                } else {
+                    etW.requestFocus()
+                }
+            }
+            grid.addView(customView)
+        }
+
+        popupWindow.showAsDropDown(anchor, 0, 10, android.view.Gravity.END)
     }
 
     fun showStyledPopup(anchor: View, options: List<String>, onSelected: (String) -> Unit) {

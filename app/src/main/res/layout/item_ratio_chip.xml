@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_columnWeight="1"
+    android:background="@drawable/sl_settings_chip"
+    android:textColor="@color/sl_settings_chip_text"
+    android:gravity="center"
+    android:paddingVertical="12dp"
+    android:layout_margin="3dp"
+    android:clickable="true"
+    android:textSize="14sp"
+    android:textStyle="bold" />
