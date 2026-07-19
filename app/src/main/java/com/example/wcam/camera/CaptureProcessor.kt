@@ -12,6 +12,7 @@ import android.util.Log
 import com.example.wcam.util.FileLogger
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -62,7 +63,6 @@ class CaptureProcessor(
     ): Uri {
         val folderName = config.getString("default_storage_folder", "wCam")
         
-        // 1. Rotate first
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = if (rotationDegrees != 0) {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
@@ -70,7 +70,6 @@ class CaptureProcessor(
             bitmap
         }
         
-        // 2. Apply Watermark to rotated bitmap
         val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
             WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0, config)
         } else {
@@ -99,7 +98,6 @@ class CaptureProcessor(
             os.flush()
         } ?: throw IOException("Failed to open output stream")
         
-        // Scan for legacy versions
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val path = values.getAsString(MediaStore.Images.Media.DATA)
             if (path != null) {
@@ -107,7 +105,6 @@ class CaptureProcessor(
             }
         }
 
-        // Write EXIF
         try {
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val exif = ExifInterface(pfd.fileDescriptor)
@@ -141,7 +138,6 @@ class CaptureProcessor(
     ): Uri {
         val folderName = config.getString("default_storage_folder", "wCam")
         
-        // 1. Rotate first
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
         val rotatedBitmap = if (rotationDegrees != 0) {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
@@ -149,7 +145,6 @@ class CaptureProcessor(
             bitmap
         }
         
-        // 2. Apply Watermark to rotated bitmap
         val finalBitmap = if (wmConfig != null && wmConfig.type != "None") {
             WatermarkProcessor().applyWatermark(rotatedBitmap, wmConfig, characteristics, captureResult, 0, config)
         } else {
@@ -173,18 +168,10 @@ class CaptureProcessor(
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore entry")
         
-        FileLogger.d("CaptureProcessor", "HEIF URI created: $uri, format: ${finalBitmap.config}")
-
         try {
+            val exifBytes = extractExifBytes(characteristics, captureResult, location)
+            
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                FileLogger.d("CaptureProcessor", "Starting HeifWriter for ${finalBitmap.width}x${finalBitmap.height}")
-                
-                // Create a temporary file to hold EXIF metadata in JPEG format
-                // HeifWriter can take EXIF from a JPEG-like source (often via MediaMuxer logic under the hood)
-                // But the easiest way to handle it for now is to use HeifWriter's built-in metadata support if available,
-                // or just skip saveAttributes for HEIF and use a different tool.
-                // NOTE: Android's HeifWriter doesn't directly expose EXIF injection in a simple way in 1.1.0.
-                
                 val builder = HeifWriter.Builder(pfd.fileDescriptor, finalBitmap.width, finalBitmap.height, HeifWriter.INPUT_MODE_BITMAP)
                     .setQuality(quality)
                     .setMaxImages(1)
@@ -192,37 +179,19 @@ class CaptureProcessor(
                 val writer = builder.build()
                 writer.start()
                 writer.addBitmap(finalBitmap)
+                
+                if (exifBytes != null) {
+                    writer.addExifData(0, exifBytes, 0, exifBytes.size)
+                    FileLogger.d("CaptureProcessor", "EXIF data added to HEIF")
+                }
+
                 writer.stop(5000)
                 
                 try {
                     val closeMethod = writer.javaClass.getMethod("close")
                     closeMethod.invoke(writer)
                 } catch (e: Exception) {
-                    // Ignore
-                }
-
-                FileLogger.d("CaptureProcessor", "HeifWriter finished successfully")
-                
-                // --- EXIF WORKAROUND FOR HEIF ---
-                // ExifInterface.saveAttributes() fails on HEIF in many Android versions.
-                try {
-                    val exif = ExifInterface(pfd.fileDescriptor)
-                    writeExifMetadata(exif, characteristics, captureResult)
-                    exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                    if (preferenceManager.getBoolean("save_location", true)) {
-                        location?.let { exif.setGpsInfo(it) }
-                    }
-                    
-                    // HEIF support was added in later versions of ExifInterface, but clearly 
-                    // this environment doesn't support saveAttributes for it.
-                    // We'll wrap it in a secondary try-catch to ensure image is kept even if EXIF fails.
-                    try {
-                        exif.saveAttributes()
-                    } catch (e: Exception) {
-                        FileLogger.w("CaptureProcessor", "ExifInterface.saveAttributes failed for HEIF (Format unsupported by library)")
-                    }
-                } catch (exifEx: Exception) {
-                    FileLogger.e("CaptureProcessor", "Metadata setup failed for HEIF", exifEx)
+                    // Ignore close restriction
                 }
             }
         } catch (e: Exception) {
@@ -231,7 +200,6 @@ class CaptureProcessor(
             throw e
         }
         
-        // Scan for legacy versions
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val path = values.getAsString(MediaStore.Images.Media.DATA)
             if (path != null) {
@@ -242,6 +210,41 @@ class CaptureProcessor(
         if (finalBitmap != rotatedBitmap) finalBitmap.recycle()
         if (rotatedBitmap != bitmap) rotatedBitmap.recycle()
         return uri
+    }
+
+    private fun extractExifBytes(characteristics: CameraCharacteristics?, result: TotalCaptureResult?, location: android.location.Location?): ByteArray? {
+        if (characteristics == null || result == null) return null
+        
+        val tempFile = File(context.cacheDir, "temp_exif_${System.currentTimeMillis()}.jpg")
+        try {
+            val dummy = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            FileOutputStream(tempFile).use { dummy.compress(Bitmap.CompressFormat.JPEG, 10, it) }
+            dummy.recycle()
+            
+            val exif = ExifInterface(tempFile.absolutePath)
+            writeExifMetadata(exif, characteristics, result)
+            if (preferenceManager.getBoolean("save_location", true)) {
+                location?.let { exif.setGpsInfo(it) }
+            }
+            exif.saveAttributes()
+            
+            val bytes = tempFile.readBytes()
+            var i = 0
+            while (i < bytes.size - 3) {
+                if ((bytes[i].toInt() and 0xFF) == 0xFF && (bytes[i+1].toInt() and 0xFF) == 0xE1) {
+                    val length = ((bytes[i+2].toInt() and 0xFF) shl 8) or (bytes[i+3].toInt() and 0xFF)
+                    val exifPayload = ByteArray(length - 2)
+                    System.arraycopy(bytes, i + 4, exifPayload, 0, length - 2)
+                    return exifPayload
+                }
+                i++
+            }
+        } catch (e: Exception) {
+            FileLogger.e("CaptureProcessor", "Failed to extract EXIF bytes", e)
+        } finally {
+            if (tempFile.exists()) tempFile.delete()
+        }
+        return null
     }
 
     private fun writeExifMetadata(exif: ExifInterface, characteristics: CameraCharacteristics?, result: TotalCaptureResult?) {
@@ -274,7 +277,7 @@ class CaptureProcessor(
         }
         
         aperture?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
-        focalLength?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) } // Fallback if focal length missing
+        focalLength?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, it.toString()) }
         
         if (evIndex != null && evStep != null) {
             val ev = evIndex * evStep

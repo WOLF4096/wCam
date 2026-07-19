@@ -15,24 +15,12 @@ object FileLogger {
 
     fun init(context: Context) {
         try {
-            // Attempt to use DCIM/wCam/log
-            val dcim = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-            val wCamDir = File(dcim, "wCam")
-            val dir = File(wCamDir, "log")
-            
-            if (!dir.exists()) {
-                val success = dir.mkdirs()
-                if (!success) {
-                    Log.e(TAG, "Failed to create log directory using File API, might be due to Scoped Storage.")
-                    // Fallback to internal app directory if public one fails
-                    logDir = File(context.getExternalFilesDir(null), "log").also { it.mkdirs() }
-                    return
-                }
-            }
+            // Use app's external files directory by default to avoid Scoped Storage EPERM
+            val dir = File(context.getExternalFilesDir(null), "log")
+            if (!dir.exists()) dir.mkdirs()
             logDir = dir
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize log directory", e)
-            logDir = File(context.getExternalFilesDir(null), "log").also { it.mkdirs() }
         }
     }
 
