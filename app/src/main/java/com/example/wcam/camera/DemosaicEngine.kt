@@ -78,13 +78,10 @@ object DemosaicEngine {
         val actualHighBitDepth = if (algorithm == "RgbCh") false else highBitDepth
         val config = if (actualHighBitDepth) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
         
-        // Use SRGB for F16 because we are now applying sRGB Gamma in NDK 
-        // to protect shadow precision during HEVC encoding.
-        val bitmap = if (actualHighBitDepth) {
-            Bitmap.createBitmap(resW, resH, config, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
-        } else {
-            Bitmap.createBitmap(resW, resH, config)
-        }
+        // Use Display P3 for wide color gamut support.
+        // The NDK process should ideally output linear values or P3-gamma values.
+        val colorSpaceP3 = android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.DISPLAY_P3)
+        val bitmap = Bitmap.createBitmap(resW, resH, config, true, colorSpaceP3)
         
         val pixelSize = if (actualHighBitDepth) 8 else 4
         val outputBuffer = ByteBuffer.allocateDirect(resW * resH * pixelSize)

@@ -366,8 +366,8 @@ class CaptureProcessor(
         // Metering Mode (2 = Center-weighted average as default)
         exif.setAttribute(ExifInterface.TAG_METERING_MODE, "2")
         
-        // Color Space (1 = sRGB)
-        exif.setAttribute(ExifInterface.TAG_COLOR_SPACE, "1")
+        // Color Space (65535 = Uncalibrated/Wide Gamut, such as Display P3)
+        exif.setAttribute(ExifInterface.TAG_COLOR_SPACE, "65535")
 
         val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
         val now = Date()
