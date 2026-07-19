@@ -10,6 +10,7 @@ import android.view.Surface
 import com.example.wcam.PreferenceManager
 import com.example.wcam.ui.ManualParamController
 import java.nio.ByteBuffer
+import com.example.wcam.util.FileLogger
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 
@@ -124,7 +125,7 @@ class CaptureManager(
                 session.stopRepeating()
                 session.capture(builder.build(), stillCaptureCallback, backgroundHandler)
             } catch (e: Exception) {
-                Log.e("CaptureManager", "Capture failed", e)
+                FileLogger.e("CaptureManager", "Capture failed", e)
                 finishWithError("拍照失败")
             }
         }
@@ -320,7 +321,7 @@ class CaptureManager(
             Log.d("CaptureTimer", "[$wallTime] TOTAL process time: ${System.currentTimeMillis() - wallTime}ms")
             bitmap.recycle()
         } catch (e: Exception) {
-            Log.e("CaptureManager", "Execute task failed", e)
+            FileLogger.e("CaptureManager", "Execute task failed", e)
         }
     }
 

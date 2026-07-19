@@ -11,6 +11,7 @@ import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
 import android.util.Log
+import com.example.wcam.util.FileLogger
 
 /**
  * Manages the CameraDevice lifecycle and ImageReaders.
@@ -38,7 +39,7 @@ class CameraManager(
         try {
             manager.openCamera(logicalId, stateCallback, backgroundHandler)
         } catch (e: CameraAccessException) {
-            Log.e("CameraManager", "Failed to open camera", e)
+            FileLogger.e("CameraManager", "Failed to open camera", e)
         }
     }
 

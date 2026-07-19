@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import com.example.wcam.util.FileLogger
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.IOException
@@ -40,7 +41,7 @@ class CaptureProcessor(
             val appLabel = context.applicationInfo.loadLabel(context.packageManager).toString()
             softwareName = "$appLabel ${pInfo.versionName}"
         } catch (e: Exception) {
-            Log.e("CaptureProcessor", "Failed to get version info", e)
+            FileLogger.e("CaptureProcessor", "Failed to get version info", e)
         }
     }
 
@@ -80,9 +81,9 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName + "/")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + folderName + "/")
             } else {
-                val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), folderName)
+                val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), folderName)
                 if (!folder.exists()) folder.mkdirs()
                 val file = File(folder, fileName)
                 put(MediaStore.Images.Media.DATA, file.absolutePath)
@@ -119,7 +120,7 @@ class CaptureProcessor(
                 exif.saveAttributes()
             }
         } catch (e: Exception) {
-            Log.e("CaptureProcessor", "Failed to write EXIF metadata", e)
+            FileLogger.e("CaptureProcessor", "Failed to write EXIF metadata", e)
         }
         
         if (finalBitmap != rotatedBitmap) finalBitmap.recycle()
@@ -160,9 +161,9 @@ class CaptureProcessor(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName + "/")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + folderName + "/")
             } else {
-                val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), folderName)
+                val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), folderName)
                 if (!folder.exists()) folder.mkdirs()
                 val file = File(folder, fileName)
                 put(MediaStore.Images.Media.DATA, file.absolutePath)

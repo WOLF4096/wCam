@@ -3,6 +3,7 @@ package com.example.wcam.camera
 import android.graphics.Bitmap
 import android.media.Image
 import android.util.Log
+import com.example.wcam.util.FileLogger
 import java.nio.ByteBuffer
 
 object DemosaicEngine {
@@ -90,7 +91,7 @@ object DemosaicEngine {
                 left, top, rawCropW, rawCropH, rotation
             )
         } catch (e: Exception) {
-            Log.e("DemosaicEngine", "Native process failed", e)
+            FileLogger.e("DemosaicEngine", "Native process failed", e)
             throw e
         }
         

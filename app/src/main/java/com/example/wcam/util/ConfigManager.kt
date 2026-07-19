@@ -25,7 +25,7 @@ class ConfigManager(context: Context) {
                 }
             }
         } catch (e: Exception) {
-            Log.e("ConfigManager", "Failed to load configs.json", e)
+            FileLogger.e("ConfigManager", "Failed to load configs.json", e)
         }
     }
 

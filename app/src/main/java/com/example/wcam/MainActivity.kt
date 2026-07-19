@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import com.example.wcam.util.FileLogger
 import android.util.Size
 import android.view.TextureView
 import android.view.View
@@ -119,6 +120,7 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun initApp() {
+        com.example.wcam.util.FileLogger.init(this)
         CameraDebugger.logDetailedCameraInfo(this)
         CameraDebugger.logAllCameraStreams(this, allVideoCapabilities)
         CameraDebugger.verifyHighResRawSupport(this)
@@ -151,7 +153,7 @@ class MainActivity : AppCompatActivity(),
                 lastLocation = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER) 
                     ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             } catch (e: Exception) {
-                Log.e("MainActivity", "Failed to start location updates", e)
+                FileLogger.e("MainActivity", "Failed to start location updates", e)
             }
         }
     }

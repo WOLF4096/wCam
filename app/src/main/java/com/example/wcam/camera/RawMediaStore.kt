@@ -9,6 +9,7 @@ import android.hardware.camera2.TotalCaptureResult
 import android.media.Image
 import android.media.MediaScannerConnection
 import android.net.Uri
+import com.example.wcam.util.FileLogger
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -45,11 +46,11 @@ class RawMediaStore(
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, RAW_MIME_TYPE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + folderName + "/")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + folderName + "/")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 val folder = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
                     folderName
                 )
                 if (!folder.exists() && !folder.mkdirs()) {
@@ -146,7 +147,7 @@ class RawMediaStore(
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("RawMediaStore", "Failed to query latest photo in $folderName", e)
+            FileLogger.e("RawMediaStore", "Failed to query latest photo in $folderName", e)
         }
         return null
     }
