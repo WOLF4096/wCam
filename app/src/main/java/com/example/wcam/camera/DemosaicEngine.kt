@@ -78,9 +78,10 @@ object DemosaicEngine {
         val actualHighBitDepth = if (algorithm == "RgbCh") false else highBitDepth
         val config = if (actualHighBitDepth) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
         
-        // Explicitly set linear color space for F16 to maintain 12-bit precision and avoid artifacts
-        val bitmap = if (actualHighBitDepth && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            Bitmap.createBitmap(resW, resH, config, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.LINEAR_EXTENDED_SRGB))
+        // Use SRGB for F16 because we are now applying sRGB Gamma in NDK 
+        // to protect shadow precision during HEVC encoding.
+        val bitmap = if (actualHighBitDepth) {
+            Bitmap.createBitmap(resW, resH, config, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
         } else {
             Bitmap.createBitmap(resW, resH, config)
         }

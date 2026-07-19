@@ -185,14 +185,18 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
         bb = -0.05f * r - 0.65f * g + 1.70f * b;
     }
 
-    // For 12-bit/F16, we STAY LINEAR.
-    // Android's RGBA_F16 expects linear values (Extended sRGB).
-    // Applying gamma here causes double-correction and quantization artifacts.
+    // Apply Tonemap
     rr = tonemap(std::max(0.0f, rr));
     gg = tonemap(std::max(0.0f, gg));
     bb = tonemap(std::max(0.0f, bb));
 
-    return (uint64_t)float_to_half(rr) | ((uint64_t)float_to_half(gg) << 16) | ((uint64_t)float_to_half(bb) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
+    // CRITICAL: Apply sRGB Gamma even for 16-bit path.
+    // This protects shadow precision during the encoder's internal 8-bit YUV conversion.
+    float sR = to_srgb_f(rr);
+    float sG = to_srgb_f(gg);
+    float sB = to_srgb_f(bb);
+
+    return (uint64_t)float_to_half(sR) | ((uint64_t)float_to_half(sG) << 16) | ((uint64_t)float_to_half(sB) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
 }
 
 inline void write_pixel(const DemosaicParams& p, void* pixels, int index, float r, float g, float b) {

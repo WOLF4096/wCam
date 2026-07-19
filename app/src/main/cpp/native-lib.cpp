@@ -24,6 +24,12 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     uint8_t* rawData = (uint8_t*)env->GetDirectBufferAddress(buffer);
     void* pixelsOut = env->GetDirectBufferAddress(outputBuffer);
     jfloat* wb = env->GetFloatArrayElements(wbGainsArray, NULL);
+    // Balance Gr/Gb gains to eliminate high-frequency checkerboard artifacts
+    if (wb != nullptr) {
+        float avgG = (wb[1] + wb[2]) * 0.5f;
+        wb[1] = avgG;
+        wb[2] = avgG;
+    }
     jfloat* ccm = env->GetFloatArrayElements(ccmArray, NULL);
     jfloat* sm = shadingMapArray ? env->GetFloatArrayElements(shadingMapArray, NULL) : nullptr;
 
