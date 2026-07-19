@@ -19,6 +19,8 @@ import androidx.core.widget.addTextChangedListener
 import com.example.wcam.PreferenceManager
 import com.example.wcam.R
 import com.example.wcam.databinding.ActivitySettingsBinding
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 class SettingsActivity : AppCompatActivity() {
@@ -97,14 +99,101 @@ class SettingsActivity : AppCompatActivity() {
 
         // Camera Info
         binding.btnGetCameraInfo.setOnClickListener { getCameraDetailedInfo() }
+        
+        binding.etCameraInfo.setOnTouchListener { v, event ->
+            if (v.id == R.id.et_camera_info) {
+                v.parent.requestDisallowInterceptTouchEvent(true)
+                when (event.action and android.view.MotionEvent.ACTION_MASK) {
+                    android.view.MotionEvent.ACTION_UP -> v.parent.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+            false
+        }
+
         binding.btnCopyCameraInfo.setOnClickListener {
             val info = binding.etCameraInfo.text.toString()
             if (info.isNotEmpty()) {
-                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                val clip = android.content.ClipData.newPlainText("Camera Info", info)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(this, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                checkPermissionAndSave(info)
+            } else {
+                Toast.makeText(this, "请先点击获取参数", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun checkPermissionAndSave(info: String) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            val permission = android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(this, arrayOf(permission), 1001)
+                // We'll just toast for now, the user can click again after granting
+                Toast.makeText(this, "请授予存储权限后再次点击保存", Toast.LENGTH_SHORT).show()
+                return
+            }
+        }
+        saveCameraInfoToFile(info)
+    }
+
+    private fun saveCameraInfoToFile(info: String) {
+        val folderName = preferenceManager.getString("default_storage_folder", "wCam")
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val fileName = "camera_info_$timestamp.txt"
+
+        // For Android 10+, use MediaStore with 'Downloads' or 'Documents' collection for TXT files.
+        // Saving TXT to DCIM is often blocked by system.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            try {
+                val contentUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                } else {
+                    android.provider.MediaStore.Files.getContentUri("external")
+                }
+
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_DOWNLOADS}/$folderName/log")
+                }
+
+                val uri = contentResolver.insert(contentUri, values)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { it.write(info.toByteArray()) }
+                    Toast.makeText(this, "已保存至: Download/$folderName/log/$fileName", Toast.LENGTH_LONG).show()
+                    return
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsActivity", "MediaStore (Download) failed, trying DCIM anyway", e)
+            }
+        }
+
+        // Fallback for older devices or if MediaStore fails
+        try {
+            val dcimDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DCIM)
+            val logDir = java.io.File(dcimDir, "$folderName/log")
+            if (!logDir.exists()) logDir.mkdirs()
+            
+            val file = java.io.File(logDir, fileName)
+            java.io.FileOutputStream(file).use { it.write(info.toByteArray()) }
+            
+            Toast.makeText(this, "已保存至: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+            android.media.MediaScannerConnection.scanFile(this, arrayOf(file.absolutePath), null, null)
+        } catch (e: Exception) {
+            saveToAppSpecificFolder(info)
+        }
+    }
+
+    private fun saveToAppSpecificFolder(info: String) {
+        try {
+            val logDir = java.io.File(getExternalFilesDir(null), "log")
+            if (!logDir.exists()) logDir.mkdirs()
+            
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val file = java.io.File(logDir, "camera_info_$timestamp.txt")
+            
+            java.io.FileOutputStream(file).use { it.write(info.toByteArray()) }
+            Toast.makeText(this, "保存至私有目录 (公共目录失败): Android/data/.../log/${file.name}", Toast.LENGTH_LONG).show()
+            android.util.Log.d("SettingsActivity", "Saved to app-specific: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Toast.makeText(this, "彻底保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -389,5 +478,13 @@ class SettingsActivity : AppCompatActivity() {
         val isRawOnly = formats.size == 1 && formats.contains("RAW")
         binding.cardAlgo.visibility = if (isRawOnly) View.GONE else View.VISIBLE
         binding.cardWatermark.visibility = if (isRawOnly) View.GONE else View.VISIBLE
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1001 && grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            val info = binding.etCameraInfo.text.toString()
+            if (info.isNotEmpty()) saveCameraInfoToFile(info)
+        }
     }
 }

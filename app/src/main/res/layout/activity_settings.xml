@@ -407,7 +407,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/sl_settings_chip"
-                        android:text="复制"
+                        android:text="保存"
                         android:textColor="@color/sl_settings_chip_text"
                         android:paddingHorizontal="16dp"
                         android:paddingVertical="6dp"
@@ -418,18 +418,19 @@
                 <EditText
                     android:id="@+id/et_camera_info"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minLines="5"
-                    android:maxLines="20"
+                    android:layout_height="260dp"
                     android:background="@color/settings_unselected_bg"
                     android:padding="10dp"
                     android:textColor="@color/white"
                     android:textSize="11sp"
                     android:fontFamily="monospace"
                     android:gravity="top|start"
-                    android:clickable="false"
-                    android:focusable="false"
-                    android:scrollbars="vertical" />
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:scrollbars="vertical"
+                    android:fadeScrollbars="false"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine" />
             </LinearLayout>
 
         </LinearLayout>
