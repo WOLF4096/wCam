@@ -79,7 +79,7 @@ class CameraUiController(
         // Load current values
         val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
         seekbarCountdown.progress = cdX10
-        tvCountdownVal.text = String.format(Locale.US, "%.1fs", cdX10 / 10f)
+        tvCountdownVal.text = if (cdX10 % 10 == 0) "${cdX10 / 10}s" else String.format(Locale.US, "%.1fs", cdX10 / 10f)
 
         val autoMode = preferenceManager.getString("auto_capture_mode", "None")
         updateAutoModeSelection(autoMode, segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
@@ -91,7 +91,7 @@ class CameraUiController(
         // Listeners
         seekbarCountdown.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                tvCountdownVal.text = String.format(Locale.US, "%.1fs", progress / 10f)
+                tvCountdownVal.text = if (progress % 10 == 0) "${progress / 10}s" else String.format(Locale.US, "%.1fs", progress / 10f)
                 if (fromUser) {
                     preferenceManager.saveInt("countdown_val_x10", progress)
                 }
