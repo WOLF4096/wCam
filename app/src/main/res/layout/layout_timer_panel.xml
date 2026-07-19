@@ -5,15 +5,14 @@
     android:orientation="vertical"
     android:padding="8dp">
 
-    <!-- Card 1: Countdown -->
     <LinearLayout
         android:layout_width="320dp"
         android:layout_height="wrap_content"
         android:background="@drawable/bg_timer_card"
         android:orientation="vertical"
-        android:padding="16dp"
-        android:layout_marginBottom="12dp">
+        android:padding="16dp">
 
+        <!-- Section 1: Countdown -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -49,16 +48,16 @@
                 android:minWidth="40dp"
                 android:gravity="end" />
         </LinearLayout>
-    </LinearLayout>
 
-    <!-- Card 2: Auto Capture -->
-    <LinearLayout
-        android:layout_width="320dp"
-        android:layout_height="wrap_content"
-        android:background="@drawable/bg_timer_card"
-        android:orientation="vertical"
-        android:padding="16dp">
+        <!-- Semi-transparent thin divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#33FFFFFF"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp" />
 
+        <!-- Section 2: Auto Capture -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -191,5 +190,4 @@
                 android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>
-
 </LinearLayout>
