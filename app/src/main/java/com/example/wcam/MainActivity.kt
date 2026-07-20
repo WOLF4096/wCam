@@ -311,6 +311,7 @@ class MainActivity : AppCompatActivity(),
 
     private fun setupListeners() {
         binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
+        binding.btnStopAutoCapture.setOnClickListener { coordinator.stopAutoCapture() }
         binding.topToolbar.btnFlash.setOnClickListener { cycleFlashMode() }
         binding.topToolbar.btnTimer.setOnClickListener { onTimerClick(it) }
         binding.topToolbar.btnGridLines.setOnClickListener { viewModel.setGridVisible(!viewModel.isGridVisible.value) }
@@ -566,7 +567,54 @@ class MainActivity : AppCompatActivity(),
         runOnUiThread { configureTransform(size.width, size.height) }
     }
 
-    override fun onCaptureStarted(shutterNanos: Long) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = false; uiController.startShutterCountdown(shutterNanos, binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown) } }
+    override fun onCaptureStarted(shutterNanos: Long) {
+        runOnUiThread {
+            showShutterFlash()
+            binding.bottomActionBar.btnShutter.isEnabled = false
+            uiController.startShutterCountdown(shutterNanos, binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown)
+        }
+    }
+
+    private fun showShutterFlash() {
+        binding.shutterFlash.visibility = View.VISIBLE
+        binding.shutterFlash.postDelayed({
+            binding.shutterFlash.visibility = View.GONE
+        }, 100)
+    }
+
+    override fun onAutoCaptureStarted(mode: String) {
+        runOnUiThread {
+            binding.autoCapturePanel.visibility = View.VISIBLE
+            binding.layoutIntervalProgress.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
+            binding.layoutContinuousProgress.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
+        }
+    }
+
+    override fun onAutoCaptureIntervalUpdate(elapsedMs: Long, totalMs: Long, nextCaptureInMs: Long, intervalMs: Long) {
+        runOnUiThread {
+            binding.pbTotalProgress.max = totalMs.toInt()
+            binding.pbTotalProgress.progress = elapsedMs.toInt()
+            binding.tvTotalProgress.text = "总进度: ${elapsedMs/1000}/${totalMs/1000}s"
+            
+            binding.pbNextCapture.max = intervalMs.toInt()
+            binding.pbNextCapture.progress = (intervalMs - nextCaptureInMs).toInt()
+            binding.tvNextCapture.text = "下次拍摄: ${String.format(java.util.Locale.US, "%.1f", nextCaptureInMs/1000f)}s"
+        }
+    }
+
+    override fun onAutoCaptureContinuousUpdate(current: Int, total: Int) {
+        runOnUiThread {
+            binding.pbCaptureCount.max = total
+            binding.pbCaptureCount.progress = current
+            binding.tvCaptureCount.text = "拍摄进度: $current/$total"
+        }
+    }
+
+    override fun onAutoCaptureStopped() {
+        runOnUiThread {
+            binding.autoCapturePanel.visibility = View.GONE
+        }
+    }
     override fun onCaptureCompleted(uri: Uri?) { runOnUiThread { uri?.let { galleryController.updateRecentPhotoPreview(it) } } }
     override fun onCaptureFailed(message: String) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); showToast(message) } }
     override fun onReadyToResumePreview() { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); resumePreview() } }

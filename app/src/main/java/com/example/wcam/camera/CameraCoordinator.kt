@@ -32,7 +32,7 @@ class CameraCoordinator(
     private val captureProcessor: CaptureProcessor,
     private val config: com.example.wcam.util.ConfigManager,
     private val listener: CoordinatorListener
-) : CameraManager.CameraListener, CaptureSessionManager.SessionListener, CaptureManager.CaptureListener {
+) : CameraManager.CameraListener, CaptureSessionManager.SessionListener, CaptureManager.CaptureListener, AutoCaptureManager.Listener {
 
     interface CoordinatorListener {
         fun onCameraOpened(characteristics: CameraCharacteristics)
@@ -46,6 +46,12 @@ class CameraCoordinator(
         fun getPreviewTexture(): TextureView
         fun getCountdownTextView(): TextView?
         
+        // Auto Capture UI callbacks
+        fun onAutoCaptureStarted(mode: String)
+        fun onAutoCaptureIntervalUpdate(elapsedMs: Long, totalMs: Long, nextCaptureInMs: Long, intervalMs: Long)
+        fun onAutoCaptureContinuousUpdate(current: Int, total: Int)
+        fun onAutoCaptureStopped()
+
         // State getters that remain in Activity for now (UI related or calculated)
         fun getDeviceRotationDegrees(): Int
         fun getSensorOrientation(): Int
@@ -128,6 +134,7 @@ class CameraCoordinator(
             autoCaptureManager = AutoCaptureManager(handler) {
                 executeCaptureAction()
             }
+            autoCaptureManager?.setListener(this)
         }
     }
 
@@ -370,6 +377,10 @@ class CameraCoordinator(
         }
     }
 
+    fun stopAutoCapture() {
+        autoCaptureManager?.stop()
+    }
+
     private fun executeCaptureAction() {
         val cam = cameraDevice
         val session = captureSession
@@ -464,6 +475,25 @@ class CameraCoordinator(
         listener.onReadyToResumePreview()
     }
 
+    // AutoCaptureManager.Listener implementation
+    override fun onIntervalUpdate(elapsedMs: Long, totalMs: Long, nextCaptureInMs: Long, intervalMs: Long) {
+        listener.onAutoCaptureIntervalUpdate(elapsedMs, totalMs, nextCaptureInMs, intervalMs)
+    }
+
+    override fun onContinuousUpdate(current: Int, total: Int) {
+        listener.onAutoCaptureContinuousUpdate(current, total)
+    }
+
+    override fun onStarted(mode: String) {
+        listener.onAutoCaptureStarted(mode)
+    }
+
+    override fun onStopped() {
+        coordinatorCaptureLock = false
+        listener.onAutoCaptureStopped()
+    }
+
+    // State getters for Coordinator
     override fun getActiveCameraCharacteristics(): CameraCharacteristics? = activeCharacteristics
     override fun getPhotoParamState(): PhotoParamState = viewModel.photoParamState.value
     override fun getPreviewAutoValues(): ManualParamController.PreviewAutoValues = listener.getPreviewAutoValues()
@@ -481,4 +511,5 @@ class CameraCoordinator(
     fun getBackgroundHandler(): Handler? = backgroundHandler
     fun getPreviewRequestBuilder(): CaptureRequest.Builder? = previewRequestBuilder
     fun isCaptureInProgress(): Boolean = captureManager?.isCaptureInProgress ?: false
+    fun isAutoCaptureRunning(): Boolean = autoCaptureManager?.isRunning() ?: false
 }
