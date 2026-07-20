@@ -105,23 +105,21 @@ class CameraUiController(
             updateAutoModeSelection("Continuous", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
         }
 
-        val textWatcher = object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) {
-                val view = activity.currentFocus
-                val key = when(view?.id) {
-                    R.id.et_interval_sec -> "auto_interval_sec"
-                    R.id.et_interval_duration -> "auto_interval_duration"
-                    R.id.et_continuous_count -> "auto_continuous_count"
-                    else -> return
-                }
-                preferenceManager.saveString(key, s.toString())
-            }
+        etIntervalSec.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_interval_sec", s.toString()) }
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        }
-        etIntervalSec.addTextChangedListener(textWatcher)
-        etIntervalDuration.addTextChangedListener(textWatcher)
-        etContinuousCount.addTextChangedListener(textWatcher)
+        })
+        etIntervalDuration.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_interval_duration", s.toString()) }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        etContinuousCount.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { preferenceManager.saveString("auto_continuous_count", s.toString()) }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
 
         popupWindow.setOnDismissListener { listener.onTimerPanelDismissed() }
         popupWindow.showAsDropDown(anchor, 0, 10)
