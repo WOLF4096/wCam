@@ -109,30 +109,20 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     int rotH = (rotation % 180 == 0) ? cropHeight : cropWidth;
 
     try {
-        if (algo == "Mono" || algo == "None") {
+        if (algo == "None") {
             #pragma omp parallel for schedule(dynamic, 16)
             for (int y = 0; y < cropHeight; ++y) {
                 for (int x = 0; x < cropWidth; ++x) {
                     int sx = cropLeft + x;
                     int sy = cropTop + y;
                     float val = get_raw(p, sx, sy);
-                    int channel = get_channel_type(sx, sy, p.bayerPattern);
-
-                    float r = 0, g = 0, b = 0;
-                    if (algo == "None") {
-                        // Original Bayer: True raw intensity without White Balance
-                        r = g = b = val;
-                    } else if (algo == "Mono") {
-                        // Mono: Balanced grayscale mosaic
-                        r = g = b = val * wb[channel];
-                    }
 
                     int tx, ty;
                     get_rotated_idx(x, y, cropWidth, cropHeight, rotation, tx, ty);
-                    write_pixel(p, pixelsOut, ty * rotW + tx, r, g, b);
+                    write_pixel(p, pixelsOut, ty * rotW + tx, val, val, val);
                 }
             }
-        } else if (algo == "LumaSum") {
+        } else if (algo == "LumaSum" || algo == "Mono") {
             int outW = cropWidth / 2;
             int outH = cropHeight / 2;
             int rotOutW = (rotation % 180 == 0) ? outW : outH;
@@ -151,10 +141,12 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                         }
                     }
 
+                    float result = (algo == "Mono") ? (totalSum * 0.25f) : totalSum;
+
                     int tx, ty;
                     get_rotated_idx(x, y, outW, outH, rotation, tx, ty);
-                    // Single pixel output with summed brightness
-                    write_pixel(p, pixelsOut, ty * rotOutW + tx, totalSum, totalSum, totalSum);
+                    // Single pixel output with summed or averaged brightness
+                    write_pixel(p, pixelsOut, ty * rotOutW + tx, result, result, result);
                 }
             }
         } else if (algo == "RgbCh") {
