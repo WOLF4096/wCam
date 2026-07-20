@@ -109,7 +109,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     int rotH = (rotation % 180 == 0) ? cropHeight : cropWidth;
 
     try {
-        if (algo == "RgbCh" || algo == "Mono" || algo == "None") {
+        if (algo == "Mono" || algo == "None") {
             #pragma omp parallel for schedule(dynamic, 16)
             for (int y = 0; y < cropHeight; ++y) {
                 for (int x = 0; x < cropWidth; ++x) {
@@ -119,17 +119,68 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                     int channel = get_channel_type(sx, sy, p.bayerPattern);
 
                     float r = 0, g = 0, b = 0;
-                    if (algo == "Mono") {
+                    if (algo == "None") {
+                        // Original Bayer: True raw intensity without White Balance
+                        r = g = b = val;
+                    } else if (algo == "Mono") {
+                        // Mono: Balanced grayscale mosaic
                         r = g = b = val * wb[channel];
-                    } else {
-                        if (channel == 0) r = val * wb[0];
-                        else if (channel == 1 || channel == 2) g = val * wb[channel];
-                        else b = val * wb[3];
                     }
 
                     int tx, ty;
                     get_rotated_idx(x, y, cropWidth, cropHeight, rotation, tx, ty);
                     write_pixel(p, pixelsOut, ty * rotW + tx, r, g, b);
+                }
+            }
+        } else if (algo == "RgbCh") {
+            int gridW = rotW;
+            int halfRotW = rotW / 2;
+            int halfRotH = rotH / 2;
+            int halfCropW = cropWidth / 2;
+            int halfCropH = cropHeight / 2;
+            uint32_t* pixels = (uint32_t*)pixelsOut;
+
+            #pragma omp parallel for schedule(dynamic, 16)
+            for (int y = 0; y < cropHeight; y += 2) {
+                for (int x = 0; x < cropWidth; x += 2) {
+                    int sx = cropLeft + x;
+                    int sy = cropTop + y;
+
+                    // 直接采样 2x2 块以获取完整的 RGB 信息
+                    float v00 = get_raw(p, sx, sy);
+                    float v01 = get_raw(p, sx + 1, sy);
+                    float v10 = get_raw(p, sx, sy + 1);
+                    float v11 = get_raw(p, sx + 1, sy + 1);
+
+                    float rLin, gLin, bLin;
+                    if (p.bayerPattern == RGGB) {
+                        rLin = v00 * wb[0]; gLin = (v01 * wb[1] + v10 * wb[2]) * 0.5f; bLin = v11 * wb[3];
+                    } else if (p.bayerPattern == GRBG) {
+                        gLin = (v00 * wb[1] + v11 * wb[2]) * 0.5f; rLin = v01 * wb[0]; bLin = v10 * wb[3];
+                    } else if (p.bayerPattern == GBRG) {
+                        gLin = (v00 * wb[2] + v11 * wb[1]) * 0.5f; bLin = v01 * wb[3]; rLin = v10 * wb[0];
+                    } else { // BGGR
+                        bLin = v00 * wb[3]; gLin = (v01 * wb[2] + v10 * wb[1]) * 0.5f; rLin = v11 * wb[0];
+                    }
+
+                    uint32_t mixed = rgb_to_pixel_8bit(rLin, gLin, bLin, p);
+                    // Standard RGBA layout: R is lowest byte, then G, then B
+                    int r8 = mixed & 0xFF, g8 = (mixed >> 8) & 0xFF, b8 = (mixed >> 16) & 0xFF;
+
+                    uint32_t rGray = 0xFF000000 | (r8 << 16) | (r8 << 8) | r8;
+                    uint32_t gGray = 0xFF000000 | (g8 << 16) | (g8 << 8) | g8;
+                    uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
+
+                    int tx, ty;
+                    // 对降采样后的坐标 (x/2, y/2) 应用旋转，得到旋转后象限内的坐标
+                    get_rotated_idx(x / 2, y / 2, halfCropW, halfCropH, rotation, tx, ty);
+
+                    // 无论如何旋转，tx/ty 都是相对于旋转后画布的坐标
+                    // 核心排列逻辑：物理位置永久固定
+                    pixels[ty * gridW + tx] = mixed;                                // 左上角：彩色图
+                    pixels[ty * gridW + (tx + halfRotW)] = gGray;                   // 右上角：绿色
+                    pixels[(ty + halfRotH) * gridW + tx] = rGray;                   // 左下角：红色
+                    pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;      // 右下角：蓝色
                 }
             }
         } else if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16" || algo == "Bright4") {
