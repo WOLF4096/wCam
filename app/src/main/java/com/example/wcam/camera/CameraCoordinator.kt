@@ -232,7 +232,8 @@ class CameraCoordinator(
                         ?.sortedByDescending { it.width * it.height }
                         ?.find { it.width <= maxWidth } ?: Size(1440, 1080)
                 } else {
-                    Size(1920, 1080)
+                    // 彻底移除 16:9 硬编码，即使在非拍照模式也默认使用 4:3 (1920x1440)
+                    Size(1920, 1440)
                 }
             }
 

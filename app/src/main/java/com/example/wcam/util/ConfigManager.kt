@@ -106,7 +106,9 @@ class ConfigManager(context: Context) {
     }
 
     fun getCameraConfig(id: String): CameraConfig? {
-        return getCameras().find { it.id == id }
+        val cameras = getCameras()
+        // 优先匹配物理 ID (id)，其次匹配逻辑 ID (logicalId)
+        return cameras.find { it.id == id } ?: cameras.find { it.logicalId == id }
     }
 
     data class CameraConfig(

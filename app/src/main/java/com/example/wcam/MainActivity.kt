@@ -80,8 +80,8 @@ class MainActivity : AppCompatActivity(),
     private var currentSensorOrientation: Int = 0
     private var currentLensFacing: Int? = null
     private var selectedPhotoRatioStr: String = "4:3"
-    private var selectedVideoRatioStr: String = "16:9"
-    private var selectedVideoSizeStr: String = "1920x1080"
+    private var selectedVideoRatioStr: String = "4:3"
+    private var selectedVideoSizeStr: String = "1920x1440"
     private var selectedVideoFps: Int = 30
     private var selectedVideoBitrate: Float = 20.0f
     private var allVideoCapabilities = mutableMapOf<String, List<VideoSizeInfo>>()
@@ -221,6 +221,9 @@ class MainActivity : AppCompatActivity(),
         val startTime = System.currentTimeMillis()
         Log.d("PerfLog", "handleOnResume started")
         
+        // 关键修复：返回时重新加载设置，确保获取到最新的镜头 ID 和模式
+        loadSettings()
+        
         coordinator.start() 
         startLocationUpdates()
         streamMonitor = CameraStreamMonitor(coordinator.getBackgroundHandler() ?: android.os.Handler(android.os.Looper.getMainLooper()), config, this)
@@ -335,8 +338,8 @@ class MainActivity : AppCompatActivity(),
         viewModel.setHistogramVisible(preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false))
         selectedPhotoRatioStr = preferenceManager.getString(PreferenceManager.KEY_PHOTO_RATIO_STR, "4:3")
         cropRatio = preferenceManager.getFloat(PreferenceManager.KEY_PHOTO_RATIO, 4f / 3f)
-        selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "16:9")
-        selectedVideoSizeStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RESOLUTION, "1920x1080")
+        selectedVideoRatioStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RATIO, "4:3")
+        selectedVideoSizeStr = preferenceManager.getString(PreferenceManager.KEY_VIDEO_RESOLUTION, "1920x1440")
         selectedVideoFps = preferenceManager.getInt(PreferenceManager.KEY_VIDEO_FPS, 30)
         selectedVideoBitrate = preferenceManager.getFloat(PreferenceManager.KEY_VIDEO_BITRATE, 20.0f)
         isAeAfLocked = preferenceManager.getBoolean(PreferenceManager.KEY_AE_AF_LOCKED, false)
