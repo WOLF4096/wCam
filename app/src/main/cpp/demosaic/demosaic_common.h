@@ -148,7 +148,7 @@ inline uint16_t float_to_half(float f) {
 }
 
 inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParams& p) {
-    float exposure = 1.06f; r *= exposure; g *= exposure; b *= exposure;
+    float exposure = 1.0f; r *= exposure; g *= exposure; b *= exposure;
     float rr, gg, bb;
     if (p.hasCombinedCCM) {
         rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
@@ -168,12 +168,12 @@ inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParam
         rr = rr + (peak - rr) * blend * 0.8f; gg = gg + (peak - gg) * blend * 0.8f; bb = bb + (peak - bb) * blend * 0.8f;
     }
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.12f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
+    float sat = 1.0f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
     return 0xFF000000 | (to_srgb(bb) << 16) | (to_srgb(gg) << 8) | to_srgb(rr);
 }
 
 inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicParams& p) {
-    float exposure = 1.06f; r *= exposure; g *= exposure; b *= exposure;
+    float exposure = 1.0f; r *= exposure; g *= exposure; b *= exposure;
     float rr, gg, bb;
     if (p.hasCombinedCCM) {
         rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
@@ -204,7 +204,7 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
     }
 
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.12f;
+    float sat = 1.0f;
     rr = std::clamp(luma + sat * (rr - luma), 0.0f, 1.0f);
     gg = std::clamp(luma + sat * (gg - luma), 0.0f, 1.0f);
     bb = std::clamp(luma + sat * (bb - luma), 0.0f, 1.0f);
