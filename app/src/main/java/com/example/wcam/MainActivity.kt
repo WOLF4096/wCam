@@ -448,54 +448,58 @@ class MainActivity : AppCompatActivity(),
         val viewH = binding.cameraPreview.height.toFloat()
         if (viewW == 0f || viewH == 0f) return
 
-        // 1. 获取流的原始比例 (通常是横屏尺寸，如 1920x1440 -> 1.333)
+        val displayRotation = windowManager.defaultDisplay.rotation
+        val sensorOrientation = currentSensorOrientation
+        
+        // 1. 获取流的原始比例
         val bufferRatio = viewWidth.toFloat() / viewHeight.toFloat()
-        // 2. 获取 UI View 的比例 (通常是竖屏尺寸，如 1080x1440 -> 0.75)
         val viewRatio = viewW / viewH
         
-        // 3. 计算预期的显示比例。
-        // 由于相机输出通常是旋转 90/270 度的，显示在竖屏 UI 时，其比例应该是 viewHeight/viewWidth
-        val expectedPortraitRatio = viewHeight.toFloat() / viewWidth.toFloat()
+        // 2. 预测目标比例 (考虑传感器旋转)
+        // 大部分 Android 传感器是 90 或 270 度，这意味着 1920(W)x1440(H) 的流在竖屏显示时是 1440x1920
+        val isSensorPortrait = (sensorOrientation % 180 != 0)
+        val expectedPortraitRatio = if (isSensorPortrait) viewHeight.toFloat() / viewWidth.toFloat() else bufferRatio
 
-        Log.d("VideoStreamDebug", "--- Transform Analysis Start ---")
-        Log.d("VideoStreamDebug", "[Buffer] Size: ${viewWidth}x${viewHeight}, Raw Ratio: ${String.format("%.3f", bufferRatio)}")
-        Log.d("VideoStreamDebug", "[UI View] Size: ${viewW.toInt()}x${viewH.toInt()}, View Ratio: ${String.format("%.3f", viewRatio)}")
-        Log.d("VideoStreamDebug", "[Target] Expected Portrait Ratio: ${String.format("%.3f", expectedPortraitRatio)}")
+        Log.d("VideoStreamDebug", "--- Comprehensive Transform Analysis ---")
+        Log.d("VideoStreamDebug", "[Hardware] Sensor Orientation: $sensorOrientation, Display Rotation: $displayRotation")
+        Log.d("VideoStreamDebug", "[Buffer] Incoming Stream: ${viewWidth}x${viewHeight} (Ratio: ${String.format("%.3f", bufferRatio)})")
+        Log.d("VideoStreamDebug", "[UI View] TextureView Size: ${viewW.toInt()}x${viewH.toInt()} (Ratio: ${String.format("%.3f", viewRatio)})")
+        Log.d("VideoStreamDebug", "[UI View] LayoutParams: W=${binding.cameraPreview.layoutParams.width}, H=${binding.cameraPreview.layoutParams.height}")
+        Log.d("VideoStreamDebug", "[Target] Calculated Target Ratio: ${String.format("%.3f", expectedPortraitRatio)}")
 
         var scaleX = 1.0f
         var scaleY = 1.0f
         
-        // 典型的 Center-Inside 逻辑，修正 TextureView 默认填满导致的拉伸
         if (expectedPortraitRatio > viewRatio) {
-            // 流比视图更“高”，需要缩放 Y
             scaleY = (viewW / expectedPortraitRatio) / viewH
-            Log.d("VideoStreamDebug", "[Decision] Buffer is taller than view. Scaling Y to ${String.format("%.3f", scaleY)}")
         } else {
-            // 流比视图更“宽”，需要缩放 X
             scaleX = (viewH * expectedPortraitRatio) / viewW
-            Log.d("VideoStreamDebug", "[Decision] Buffer is wider than view. Scaling X to ${String.format("%.3f", scaleX)}")
         }
 
-        val effectiveW = viewW * scaleX
-        val effectiveH = viewH * scaleY
-        val finalDisplayRatio = effectiveW / effectiveH
-
-        Log.d("VideoStreamDebug", "[Result] Final Effective Area: ${effectiveW.toInt()}x${effectiveH.toInt()}")
-        Log.d("VideoStreamDebug", "[Result] Final Display Ratio: ${String.format("%.3f", finalDisplayRatio)}")
-
-        // 关键：检测逻辑计算后的比例是否依然不符合预期
-        val ratioError = Math.abs(finalDisplayRatio - expectedPortraitRatio)
-        if (ratioError > 0.01) {
-            Log.e("VideoStreamDebug", "!!! STRETCH DETECTED !!!")
-            Log.e("VideoStreamDebug", "Display Ratio ($finalDisplayRatio) != Expected Ratio ($expectedPortraitRatio)")
-            Log.e("VideoStreamDebug", "This means the Matrix transform failed to correct the aspect ratio mismatch.")
-        } else {
-            Log.d("VideoStreamDebug", "Aspect ratio corrected successfully (Error: ${String.format("%.4f", ratioError)})")
+        // 检查 View 自身是否有异常缩放
+        val viewScaleX = binding.cameraPreview.scaleX
+        val viewScaleY = binding.cameraPreview.scaleY
+        if (viewScaleX != 1.0f || viewScaleY != 1.0f) {
+            Log.w("VideoStreamDebug", "!!! View properties have scale: ${viewScaleX}x${viewScaleY}")
         }
-        Log.d("VideoStreamDebug", "--- Transform Analysis End ---")
 
         matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+        
+        // 在应用前检查 Matrix
+        val currentMatrix = android.graphics.Matrix()
+        binding.cameraPreview.getTransform(currentMatrix)
+        Log.d("VideoStreamDebug", "[Matrix] Pre-apply matrix is identity: ${currentMatrix.isIdentity}")
+
         binding.cameraPreview.setTransform(matrix)
+        
+        val finalEffectiveW = viewW * scaleX
+        val finalEffectiveH = viewH * scaleY
+        Log.d("VideoStreamDebug", "[Result] Final Screen Pixels: ${finalEffectiveW.toInt()}x${finalEffectiveH.toInt()} (Ratio: ${String.format("%.3f", finalEffectiveW/finalEffectiveH)})")
+        
+        if (Math.abs((finalEffectiveW/finalEffectiveH) - expectedPortraitRatio) > 0.01) {
+            Log.e("VideoStreamDebug", "!!! LOGICAL STRETCH DETECTED !!!")
+        }
+        Log.d("VideoStreamDebug", "---------------------------------------")
     }
 
     private fun setupParamGestures() { refreshParamViews(viewModel.photoParamState.value) }
