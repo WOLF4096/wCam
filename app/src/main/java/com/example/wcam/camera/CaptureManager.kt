@@ -346,6 +346,7 @@ class CaptureManager(
         return when {
             savedAlgo.startsWith("RGB通道") -> "RgbCh"
             savedAlgo.startsWith("灰度") -> "Mono"
+            savedAlgo.startsWith("亮度") -> "LumaSum"
             savedAlgo.startsWith("原始拜尔") || savedAlgo.startsWith("无") -> "None"
             savedAlgo.startsWith("4合1") -> "Bin4"
             savedAlgo.startsWith("9合1") -> "Bin9"

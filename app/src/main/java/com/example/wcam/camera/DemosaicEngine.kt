@@ -61,7 +61,7 @@ object DemosaicEngine {
         
         var step = 1
         when (algorithm) {
-            "Bin4" -> step = 2
+            "Bin4", "LumaSum" -> step = 2
             "Bin9" -> step = 3
             "Bin16", "Bright4" -> step = 4
         }

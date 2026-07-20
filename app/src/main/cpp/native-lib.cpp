@@ -132,6 +132,31 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                     write_pixel(p, pixelsOut, ty * rotW + tx, r, g, b);
                 }
             }
+        } else if (algo == "LumaSum") {
+            int outW = cropWidth / 2;
+            int outH = cropHeight / 2;
+            int rotOutW = (rotation % 180 == 0) ? outW : outH;
+
+            #pragma omp parallel for schedule(dynamic, 16)
+            for (int y = 0; y < outH; ++y) {
+                for (int x = 0; x < outW; ++x) {
+                    float totalSum = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            int sx = cropLeft + x * 2 + dx;
+                            int sy = cropTop + y * 2 + dy;
+                            float val = get_raw(p, sx, sy);
+                            int channel = get_channel_type(sx, sy, p.bayerPattern);
+                            totalSum += val * wb[channel];
+                        }
+                    }
+
+                    int tx, ty;
+                    get_rotated_idx(x, y, outW, outH, rotation, tx, ty);
+                    // Single pixel output with summed brightness
+                    write_pixel(p, pixelsOut, ty * rotOutW + tx, totalSum, totalSum, totalSum);
+                }
+            }
         } else if (algo == "RgbCh") {
             int gridW = rotW;
             int halfRotW = rotW / 2;
