@@ -15,6 +15,72 @@ import java.util.Locale
 object CameraDebugger {
     private const val TAG = "CameraDebugger"
 
+    fun logCameraArchitecture(context: Context) {
+        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        Log.i(TAG, "==== CAMERA ARCHITECTURE DEBUG START ====")
+        try {
+            val logicalIds = manager.cameraIdList
+            for (id in logicalIds) {
+                val chars = manager.getCameraCharacteristics(id)
+                val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                    else -> "EXTERNAL"
+                }
+                
+                Log.i(TAG, "LOGICAL ID: $id ($facing)")
+                
+                // Check if Multi-Camera
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val physicalIds = chars.physicalCameraIds
+                    if (physicalIds.isNotEmpty()) {
+                        Log.i(TAG, "  -> This is a LOGICAL camera consisting of physical IDs: ${physicalIds.joinToString(", ")}")
+                        for (pId in physicalIds) {
+                            logIdCapabilities(manager, pId, "PHYSICAL (Sub)")
+                        }
+                    } else {
+                        Log.i(TAG, "  -> This is a standalone PHYSICAL camera.")
+                    }
+                }
+                
+                logIdCapabilities(manager, id, "LOGICAL (Main)")
+                Log.i(TAG, "--------------------------------------------")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Architecture debug failed: ${e.message}")
+        }
+        Log.i(TAG, "==== CAMERA ARCHITECTURE DEBUG END ====")
+    }
+
+    private fun logIdCapabilities(manager: CameraManager, id: String, label: String) {
+        try {
+            val chars = manager.getCameraCharacteristics(id)
+            val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val cfa = chars.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
+            val cfaStr = when(cfa) {
+                CameraMetadata.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB -> "RGGB"
+                CameraMetadata.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GRBG -> "GRBG"
+                CameraMetadata.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GBRG -> "GBRG"
+                CameraMetadata.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_BGGR -> "BGGR"
+                else -> "UNKNOWN ($cfa)"
+            }
+
+            Log.i(TAG, "  [$label ID: $id] CFA: $cfaStr")
+            
+            Log.i(TAG, "    [RAW_SENSOR Sizes]")
+            map?.getOutputSizes(ImageFormat.RAW_SENSOR)?.forEach { size ->
+                Log.i(TAG, "      - ${size.width}x${size.height}")
+            }
+            
+            Log.i(TAG, "    [SurfaceTexture (Preview) Sizes]")
+            map?.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.take(10)?.forEach { size ->
+                Log.i(TAG, "      - ${size.width}x${size.height}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "    Failed to get capabilities for ID $id: ${e.message}")
+        }
+    }
+
     fun logAllCameraStreams(context: Context, outVideoCapabilities: MutableMap<String, List<VideoSizeInfo>>) {
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         

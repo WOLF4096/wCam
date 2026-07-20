@@ -278,7 +278,8 @@ class CameraCoordinator(
             }
 
             // Determine if we really need to pass a physical ID.
-            // Only pass it if it's a sub-lens of a logical multi-camera (i.e., different from logical ID).
+            // On Xiaomi/Redmi devices, passing physical ID "0" to a session opened with logical ID "0" 
+            // can cause a configuration fail.
             val effectivePhysicalId = if (currentPhysicalId != null && currentPhysicalId != currentLogicalId) {
                 currentPhysicalId
             } else {

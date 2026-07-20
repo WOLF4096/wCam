@@ -57,13 +57,6 @@ class CaptureSessionManager(
                 val outputConfigs = surfaces.map { s ->
                     OutputConfiguration(s).apply {
                         physicalCameraId?.let { setPhysicalCameraId(it) }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && s == rawSurface) {
-                            try {
-                                streamUseCase = CameraMetadata.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
-                            } catch (e: Exception) {
-                                Log.w("CaptureSessionManager", "Failed to set StreamUseCase")
-                            }
-                        }
                     }
                 }
                 val sessionConfig = SessionConfiguration(
@@ -72,7 +65,7 @@ class CaptureSessionManager(
                     Executor { command -> backgroundHandler.post(command) },
                     previewStateCallback
                 )
-                sessionConfig.sessionParameters = initialRequest
+                // Remove sessionParameters for initial handshake stability on API 35
                 camera.createCaptureSession(sessionConfig)
             } else {
                 camera.createCaptureSession(surfaces, previewStateCallback, backgroundHandler)

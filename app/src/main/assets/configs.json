@@ -23,7 +23,7 @@
       "manufacturer": "Xiaomi",
       "lsc_strength": 1.0,
       "default_max_diopter": 10.0,
-      "default_logical_camera_id": "0",
+      "default_logical_camera_id": "4",
       "default_physical_camera_id": "0",
       "lens_order": ["前置", "微距", "主摄", "广角"],
       "cameras": [
@@ -32,28 +32,28 @@
           "name": "前置",
           "logical_id": "1",
           "supports_raw": true,
-          "preview_size": "1920x1440@30"
+          "preview_size": "1280x960@30"
         },
         {
           "id": "3",
           "name": "微距",
-          "logical_id": "0",
+          "logical_id": "5",
           "supports_raw": true,
-          "preview_size": "1600x1200@30"
+          "preview_size": "1280x960@30"
         },
         {
           "id": "0",
           "name": "主摄",
-          "logical_id": "0",
+          "logical_id": "4",
           "supports_raw": true,
-          "preview_size": "1920x1440@30"
+          "preview_size": "1280x960@30"
         },
         {
           "id": "2",
           "name": "广角",
-          "logical_id": "0",
+          "logical_id": "4",
           "supports_raw": true,
-          "preview_size": "1920x1440@30"
+          "preview_size": "1280x960@30"
         }
       ]
     },
