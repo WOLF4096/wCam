@@ -44,14 +44,21 @@ void demosaic_lmmse(const DemosaicParams& p, void* pixels) {
                         int nx = std::clamp(ix + dx, 0, width - 1);
                         int ny = std::clamp(iy + dy, 0, height - 1);
                         if (get_channel_type(nx, ny, p.bayerPattern) == target_c) {
-                            float val = get_pixel_wb(p, nx, ny);
+                            float val = get_pixel_wb(p, nx, ny) - full_g[ny*width + nx];
                             sum += val; sum_sq += val * val; count++;
                         }
                     }
                 }
-                float mean = (count > 0) ? (sum / count) : 0;
-                float var = (count > 0) ? (sum_sq / count - mean * mean) : 0;
-                return mean; // Simplified MMSE for this project
+                float mean = (count > 0) ? (sum / (float)count) : 0;
+                float var = (count > 0) ? (sum_sq / (float)count - mean * mean) : 0;
+
+                // MMSE weighting: use local variance to preserve edges while smoothing noise
+                // k = var_signal / (var_signal + var_noise)
+                float noise_var = 0.001f; // Estimated noise floor
+                float k = var / (var + noise_var + 1e-6f);
+                float diff = get_pixel_wb(p, ix, iy) - full_g[iy * width + ix];
+
+                return g + (mean + k * (diff - mean));
             };
 
             if (channel == 0) { r = get_pixel_wb(p, x, y); b = get_mmse_val(x, y, 3); }
