@@ -109,7 +109,30 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     int rotH = (rotation % 180 == 0) ? cropHeight : cropWidth;
 
     try {
-        if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16" || algo == "Bright4") {
+        if (algo == "RgbCh" || algo == "Mono" || algo == "None") {
+            #pragma omp parallel for schedule(dynamic, 16)
+            for (int y = 0; y < cropHeight; ++y) {
+                for (int x = 0; x < cropWidth; ++x) {
+                    int sx = cropLeft + x;
+                    int sy = cropTop + y;
+                    float val = get_raw(p, sx, sy);
+                    int channel = get_channel_type(sx, sy, p.bayerPattern);
+
+                    float r = 0, g = 0, b = 0;
+                    if (algo == "Mono") {
+                        r = g = b = val * wb[channel];
+                    } else {
+                        if (channel == 0) r = val * wb[0];
+                        else if (channel == 1 || channel == 2) g = val * wb[channel];
+                        else b = val * wb[3];
+                    }
+
+                    int tx, ty;
+                    get_rotated_idx(x, y, cropWidth, cropHeight, rotation, tx, ty);
+                    write_pixel(p, pixelsOut, ty * rotW + tx, r, g, b);
+                }
+            }
+        } else if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16" || algo == "Bright4") {
             int step = (algo == "Bin4") ? 2 : (algo == "Bin9" ? 3 : 4);
             int outW = cropWidth / step;
             int outH = cropHeight / step;
@@ -131,9 +154,18 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                             else { sumB += val * wb[3]; countB++; }
                         }
                     }
-                    float rLin = (countR > 0) ? (sumR / countR) : 0;
-                    float gLin = (countG > 0) ? (sumG / countG) : 0;
-                    float bLin = (countB > 0) ? (sumB / countB) : 0;
+                    float rLin, gLin, bLin;
+                    if (algo == "Bright4") {
+                        // Pixel Summation: Sum 4R, Sum 8G/2, Sum 4B
+                        rLin = sumR;
+                        gLin = sumG * 0.5f;
+                        bLin = sumB;
+                    } else {
+                        // Pixel Binning: Average of available pixels
+                        rLin = (countR > 0) ? (sumR / countR) : 0;
+                        gLin = (countG > 0) ? (sumG / countG) : 0;
+                        bLin = (countB > 0) ? (sumB / countB) : 0;
+                    }
 
                     int tx, ty;
                     get_rotated_idx(x, y, outW, outH, rotation, tx, ty);
