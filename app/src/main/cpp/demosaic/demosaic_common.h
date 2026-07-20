@@ -173,7 +173,6 @@ inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParam
 }
 
 inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicParams& p) {
-    float exposure = 1.0f; r *= exposure; g *= exposure; b *= exposure;
     float rr, gg, bb;
     if (p.hasCombinedCCM) {
         rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
@@ -185,37 +184,10 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
         bb = -0.05f * r - 0.65f * g + 1.70f * b;
     }
 
-    // Apply Tonemap
-    rr = tonemap(std::max(0.0f, rr));
-    gg = tonemap(std::max(0.0f, gg));
-    bb = tonemap(std::max(0.0f, bb));
-
-    // Highlight Protection: Pull extreme highlights towards neutral white
-    float peak = std::max({rr, gg, bb});
-    if (peak > 0.88f) {
-        float blend = std::min(1.0f, (peak - 0.88f) / 0.12f);
-        float gray = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-        rr = rr * (1.0f - blend) + gray * blend;
-        gg = gg * (1.0f - blend) + gray * blend;
-        bb = bb * (1.0f - blend) + gray * blend;
-        rr = rr + (peak - rr) * blend * 0.8f;
-        gg = gg + (peak - gg) * blend * 0.8f;
-        bb = bb + (peak - bb) * blend * 0.8f;
-    }
-
-    float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.0f;
-    rr = std::clamp(luma + sat * (rr - luma), 0.0f, 1.0f);
-    gg = std::clamp(luma + sat * (gg - luma), 0.0f, 1.0f);
-    bb = std::clamp(luma + sat * (bb - luma), 0.0f, 1.0f);
-
-    // CRITICAL: Apply sRGB Gamma even for 16-bit path.
-    // This protects shadow precision during the encoder's internal 8-bit YUV conversion.
-    float sR = to_srgb_f(rr);
-    float sG = to_srgb_f(gg);
-    float sB = to_srgb_f(bb);
-
-    return (uint64_t)float_to_half(sR) | ((uint64_t)float_to_half(sG) << 16) | ((uint64_t)float_to_half(sB) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
+    // TRUE 12-bit+ LINEAR PATH:
+    // We skip Tonemap and Gamma to preserve the full linear dynamic range.
+    // The data is stored in float16 which can represent values > 1.0 (highlights).
+    return (uint64_t)float_to_half(rr) | ((uint64_t)float_to_half(gg) << 16) | ((uint64_t)float_to_half(bb) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
 }
 
 inline void write_pixel(const DemosaicParams& p, void* pixels, int index, float r, float g, float b) {

@@ -186,14 +186,17 @@ class CaptureProcessor(
             val exifBytes = extractExifBytes(finalBitmap.width, finalBitmap.height, characteristics, captureResult, location)
             
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                // For HEIF, we want to ensure the highest possible quality to match 100% JPG.
-                // Note: Using 99 instead of 100 can avoid encoder bugs on some devices while maintaining near-lossless quality.
-                val heifQuality = if (quality >= 95) 99 else quality
+                // To achieve True High Bit Depth (10/12-bit) in HEIF:
+                // 1. We MUST use INPUT_MODE_BITMAP with an RGBA_F16 bitmap.
+                // 2. We set quality to a very high level to prevent chroma subsampling artifacts.
+                val heifQuality = if (quality >= 95) 100 else quality
 
                 val builder = HeifWriter.Builder(pfd.fileDescriptor, finalBitmap.width, finalBitmap.height, HeifWriter.INPUT_MODE_BITMAP)
                     .setQuality(heifQuality)
                     .setMaxImages(1)
                 
+                // If the bitmap is RGBA_F16, HeifWriter will attempt to use Main10/Main12 profile 
+                // if the hardware encoder supports it.
                 val writer = builder.build()
                 writer.start()
                 writer.addBitmap(finalBitmap)
