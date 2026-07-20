@@ -239,8 +239,16 @@ class CameraCoordinator(
                         ?.sortedByDescending { it.width * it.height }
                         ?.find { it.width <= maxWidth } ?: Size(1440, 1080)
                 } else {
-                    // 彻底移除 16:9 硬编码，即使在非拍照模式也默认使用 4:3 (1920x1440)
-                    Size(1920, 1440)
+                    // Capping preview size by the maximum physical capability of the sensor.
+                    // This prevents "Failed to allocate" errors on small sensors like Macro (2MP).
+                    val maxSupported = map?.getOutputSizes(SurfaceTexture::class.java)
+                        ?.maxByOrNull { it.width * it.height } ?: Size(1920, 1440)
+                    
+                    if (maxSupported.width < 1920 || maxSupported.height < 1440) {
+                        maxSupported
+                    } else {
+                        Size(1920, 1440)
+                    }
                 }
             }
 
