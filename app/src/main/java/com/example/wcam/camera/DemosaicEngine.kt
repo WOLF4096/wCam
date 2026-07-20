@@ -75,19 +75,18 @@ object DemosaicEngine {
         val resW = if (rotation % 180 == 0) outW else outH
         val resH = if (rotation % 180 == 0) outH else outW
         
-        val actualHighBitDepth = if (algorithm == "RgbCh") false else highBitDepth
-        val config = if (actualHighBitDepth) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+        val config = if (highBitDepth) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
         
         // For True 12-bit storage, we use LINEAR_EXTENDED_SRGB for the high bit-depth path.
         // This tells the system the data is linear and high-range (scRGB).
-        val colorSpace = if (actualHighBitDepth) {
+        val colorSpace = if (highBitDepth) {
             android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.LINEAR_EXTENDED_SRGB)
         } else {
             android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.DISPLAY_P3)
         }
         val bitmap = Bitmap.createBitmap(resW, resH, config, true, colorSpace)
         
-        val pixelSize = if (actualHighBitDepth) 8 else 4
+        val pixelSize = if (highBitDepth) 8 else 4
         val outputBuffer = ByteBuffer.allocateDirect(resW * resH * pixelSize)
         outputBuffer.order(java.nio.ByteOrder.nativeOrder())
         
@@ -99,7 +98,7 @@ object DemosaicEngine {
                 bayerPattern, blackLevel, whiteLevel,
                 lscStrength,
                 left, top, rawCropW, rawCropH, rotation,
-                actualHighBitDepth
+                highBitDepth
             )
             outputBuffer.rewind()
             bitmap.copyPixelsFromBuffer(outputBuffer)

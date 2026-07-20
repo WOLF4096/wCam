@@ -138,7 +138,6 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
             int halfRotH = rotH / 2;
             int halfCropW = cropWidth / 2;
             int halfCropH = cropHeight / 2;
-            uint32_t* pixels = (uint32_t*)pixelsOut;
 
             #pragma omp parallel for schedule(dynamic, 16)
             for (int y = 0; y < cropHeight; y += 2) {
@@ -163,24 +162,45 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
                         bLin = v00 * wb[3]; gLin = (v01 * wb[2] + v10 * wb[1]) * 0.5f; rLin = v11 * wb[0];
                     }
 
-                    uint32_t mixed = rgb_to_pixel_8bit(rLin, gLin, bLin, p);
-                    // Standard RGBA layout: R is lowest byte, then G, then B
-                    int r8 = mixed & 0xFF, g8 = (mixed >> 8) & 0xFF, b8 = (mixed >> 16) & 0xFF;
-
-                    uint32_t rGray = 0xFF000000 | (r8 << 16) | (r8 << 8) | r8;
-                    uint32_t gGray = 0xFF000000 | (g8 << 16) | (g8 << 8) | g8;
-                    uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
-
                     int tx, ty;
-                    // 对降采样后的坐标 (x/2, y/2) 应用旋转，得到旋转后象限内的坐标
                     get_rotated_idx(x / 2, y / 2, halfCropW, halfCropH, rotation, tx, ty);
 
-                    // 无论如何旋转，tx/ty 都是相对于旋转后画布的坐标
-                    // 核心排列逻辑：物理位置永久固定
-                    pixels[ty * gridW + tx] = mixed;                                // 左上角：彩色图
-                    pixels[ty * gridW + (tx + halfRotW)] = gGray;                   // 右上角：绿色
-                    pixels[(ty + halfRotH) * gridW + tx] = rGray;                   // 左下角：红色
-                    pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;      // 右下角：蓝色
+                    if (highBitDepth) {
+                        uint64_t* pixels = (uint64_t*)pixelsOut;
+                        uint64_t mixed = rgb_to_pixel_16bit(rLin, gLin, bLin, p);
+
+                        // Extract linear components (they are already linear in 16bit path)
+                        uint16_t rH = mixed & 0xFFFF;
+                        uint16_t gH = (mixed >> 16) & 0xFFFF;
+                        uint16_t bH = (mixed >> 32) & 0xFFFF;
+                        uint16_t aH = float_to_half(1.0f);
+
+                        auto make_gray = [&](uint16_t h) {
+                            return (uint64_t)h | ((uint64_t)h << 16) | ((uint64_t)h << 32) | ((uint64_t)aH << 48);
+                        };
+
+                        uint64_t rGray = make_gray(rH);
+                        uint64_t gGray = make_gray(gH);
+                        uint64_t bGray = make_gray(bH);
+
+                        pixels[ty * gridW + tx] = mixed;
+                        pixels[ty * gridW + (tx + halfRotW)] = gGray;
+                        pixels[(ty + halfRotH) * gridW + tx] = rGray;
+                        pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;
+                    } else {
+                        uint32_t* pixels = (uint32_t*)pixelsOut;
+                        uint32_t mixed = rgb_to_pixel_8bit(rLin, gLin, bLin, p);
+                        int r8 = mixed & 0xFF, g8 = (mixed >> 8) & 0xFF, b8 = (mixed >> 16) & 0xFF;
+
+                        uint32_t rGray = 0xFF000000 | (r8 << 16) | (r8 << 8) | r8;
+                        uint32_t gGray = 0xFF000000 | (g8 << 16) | (g8 << 8) | g8;
+                        uint32_t bGray = 0xFF000000 | (b8 << 16) | (b8 << 8) | b8;
+
+                        pixels[ty * gridW + tx] = mixed;
+                        pixels[ty * gridW + (tx + halfRotW)] = gGray;
+                        pixels[(ty + halfRotH) * gridW + tx] = rGray;
+                        pixels[(ty + halfRotH) * gridW + (tx + halfRotW)] = bGray;
+                    }
                 }
             }
         } else if (algo == "Bin4" || algo == "Bin9" || algo == "Bin16" || algo == "Bright4") {
