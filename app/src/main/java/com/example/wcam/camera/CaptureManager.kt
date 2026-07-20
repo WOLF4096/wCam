@@ -41,7 +41,7 @@ class CaptureManager(
         fun getSensorOrientation(): Int
         fun getLensFacing(): Int?
         fun getCurrentCropRect(): Rect?
-        fun getJpgQuality(): Int
+        fun getImageQuality(): Int
         fun getCameraCapabilities(): CameraCapabilities
         fun getLocation(): android.location.Location?
     }
@@ -322,7 +322,7 @@ class CaptureManager(
 
             if (formats.contains("JPG") && bitmap8 != null) {
                 val saveStart = System.currentTimeMillis()
-                val uri = captureProcessor.saveJpegBitmap(bitmap8, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
+                val uri = captureProcessor.saveJpegBitmap(bitmap8, 0, task.captureStartTime, listener.getImageQuality(), chars, result, task.location, wmConfig)
                 Log.d("CaptureTimer", "[$wallTime] JPEG save finished in ${System.currentTimeMillis() - saveStart}ms")
                 listener.onCaptureCompleted(uri)
                 bitmap8.recycle()
@@ -330,7 +330,7 @@ class CaptureManager(
             
             if (formats.contains("HEIF") && bitmap16 != null) {
                 val saveStart = System.currentTimeMillis()
-                val uri = captureProcessor.saveHeifBitmap(bitmap16, 0, task.captureStartTime, listener.getJpgQuality(), chars, result, task.location, wmConfig)
+                val uri = captureProcessor.saveHeifBitmap(bitmap16, 0, task.captureStartTime, listener.getImageQuality(), chars, result, task.location, wmConfig)
                 Log.d("CaptureTimer", "[$wallTime] HEIF save finished in ${System.currentTimeMillis() - saveStart}ms")
                 listener.onCaptureCompleted(uri)
                 bitmap16.recycle()

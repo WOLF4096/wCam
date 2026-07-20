@@ -51,7 +51,7 @@ class CameraCoordinator(
         fun getSensorOrientation(): Int
         fun getLensFacing(): Int?
         fun getCurrentCropRect(): Rect?
-        fun getJpgQuality(): Int
+        fun getImageQuality(): Int
         fun getCameraCapabilities(): CameraCapabilities
         fun getLocation(): Location?
         fun getPreviewAutoValues(): ManualParamController.PreviewAutoValues
@@ -473,7 +473,7 @@ class CameraCoordinator(
     override fun getSensorOrientation(): Int = listener.getSensorOrientation()
     override fun getLensFacing(): Int? = listener.getLensFacing()
     override fun getCurrentCropRect(): Rect? = listener.getCurrentCropRect()
-    override fun getJpgQuality(): Int = listener.getJpgQuality()
+    override fun getImageQuality(): Int = listener.getImageQuality()
     override fun getCameraCapabilities(): CameraCapabilities = listener.getCameraCapabilities()
     override fun getLocation(): Location? = listener.getLocation()
     

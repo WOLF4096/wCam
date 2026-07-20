@@ -50,11 +50,11 @@ class SettingsActivity : AppCompatActivity() {
         setupFormatChip(binding.chipJpg, "JPG")
         setupFormatChip(binding.chipHeif, "HEIF")
 
-        // JPG Quality
+        // Image Quality
         binding.seekbarQuality.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 binding.tvQualityVal.text = "${progress}%"
-                if (fromUser) preferenceManager.saveInt(PreferenceManager.KEY_JPG_QUALITY, progress)
+                if (fromUser) preferenceManager.saveInt(PreferenceManager.KEY_IMAGE_QUALITY, progress)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -353,7 +353,7 @@ class SettingsActivity : AppCompatActivity() {
         updateVisibilityByFormats(formats)
 
         // Load JPG Quality
-        val quality = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
+        val quality = preferenceManager.getInt(PreferenceManager.KEY_IMAGE_QUALITY, 95)
         binding.seekbarQuality.progress = quality
         binding.tvQualityVal.text = "${quality}%"
 
@@ -468,8 +468,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun updateVisibilityByFormats(formats: Set<String>) {
-        val hasJpg = formats.contains("JPG")
-        binding.layoutJpgQuality.visibility = if (hasJpg) View.VISIBLE else View.GONE
+        val hasJpgOrHeif = formats.contains("JPG") || formats.contains("HEIF")
+        binding.layoutImageQuality.visibility = if (hasJpgOrHeif) View.VISIBLE else View.GONE
         
         // Hide location if ONLY HEIF is selected
         val onlyHeif = formats.size == 1 && formats.contains("HEIF")

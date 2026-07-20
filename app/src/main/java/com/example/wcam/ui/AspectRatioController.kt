@@ -84,7 +84,7 @@ class AspectRatioController(
 
         if (isPhotoMode) {
             val format = preferenceManager.getString(PreferenceManager.KEY_OUTPUT_FORMAT, "JPG")
-            val quality = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
+            val quality = preferenceManager.getInt(PreferenceManager.KEY_IMAGE_QUALITY, 95)
             val fullAlgo = preferenceManager.getString(PreferenceManager.KEY_DEMOSAIC_ALGO, "Fast")
             val algo = fullAlgo.split('：', ':')[0].trim()
             

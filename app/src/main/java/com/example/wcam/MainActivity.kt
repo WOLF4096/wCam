@@ -579,7 +579,7 @@ class MainActivity : AppCompatActivity(),
     override fun getSensorOrientation(): Int = currentSensorOrientation
     override fun getLensFacing(): Int? = currentLensFacing
     override fun getCurrentCropRect(): Rect? = currentCropRectInSensor
-    override fun getJpgQuality(): Int = preferenceManager.getInt(PreferenceManager.KEY_JPG_QUALITY, 95)
+    override fun getImageQuality(): Int = preferenceManager.getInt(PreferenceManager.KEY_IMAGE_QUALITY, 95)
     override fun getCameraCapabilities(): CameraCapabilities = cameraCapabilities
     override fun getLocation(): Location? = lastLocation
 

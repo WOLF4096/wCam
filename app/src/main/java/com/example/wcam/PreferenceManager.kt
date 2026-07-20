@@ -24,7 +24,7 @@ class PreferenceManager(context: Context) {
         const val KEY_OUTPUT_FORMAT = "output_format"
         const val KEY_GRID_VISIBLE = "grid_visible"
         const val KEY_HISTOGRAM_VISIBLE = "histogram_visible"
-        const val KEY_JPG_QUALITY = "jpg_quality"
+        const val KEY_IMAGE_QUALITY = "image_quality"
         const val KEY_DEMOSAIC_ALGO = "demosaic_algo"
         const val KEY_IS_PHOTO_MODE = "is_photo_mode"
         const val KEY_PHOTO_RATIO = "photo_ratio"
