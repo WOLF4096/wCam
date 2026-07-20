@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/settings_bg"
@@ -436,22 +437,33 @@
                         android:clickable="true" />
                 </LinearLayout>
 
-                <EditText
-                    android:id="@+id/et_camera_info"
+                <androidx.core.widget.NestedScrollView
                     android:layout_width="match_parent"
                     android:layout_height="260dp"
                     android:background="@color/settings_unselected_bg"
-                    android:padding="10dp"
-                    android:textColor="@color/white"
-                    android:textSize="11sp"
-                    android:fontFamily="monospace"
-                    android:gravity="top|start"
-                    android:clickable="true"
-                    android:focusable="true"
                     android:scrollbars="vertical"
-                    android:fadeScrollbars="false"
-                    android:importantForAutofill="no"
-                    android:inputType="textMultiLine" />
+                    android:overScrollMode="always">
+
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:scrollbars="horizontal"
+                        android:overScrollMode="always">
+
+                        <TextView
+                            android:id="@+id/et_camera_info"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="10dp"
+                            android:textColor="@color/white"
+                            android:textSize="11sp"
+                            android:fontFamily="monospace"
+                            android:gravity="top|start"
+                            android:textIsSelectable="true"
+                            android:scrollHorizontally="true"
+                            android:inputType="none" />
+                    </HorizontalScrollView>
+                </androidx.core.widget.NestedScrollView>
             </LinearLayout>
 
         </LinearLayout>

@@ -102,15 +102,8 @@ class SettingsActivity : AppCompatActivity() {
         // Camera Info
         binding.btnGetCameraInfo.setOnClickListener { getCameraDetailedInfo() }
         
-        binding.etCameraInfo.setOnTouchListener { v, event ->
-            if (v.id == R.id.et_camera_info) {
-                v.parent.requestDisallowInterceptTouchEvent(true)
-                when (event.action and android.view.MotionEvent.ACTION_MASK) {
-                    android.view.MotionEvent.ACTION_UP -> v.parent.requestDisallowInterceptTouchEvent(false)
-                }
-            }
-            false
-        }
+        // Removed custom OnTouchListener as we now use standard NestedScrollView + HorizontalScrollView 
+        // to handle all-directional scrolling and inertia naturally.
 
         binding.btnCopyCameraInfo.setOnClickListener {
             val info = binding.etCameraInfo.text.toString()
