@@ -314,6 +314,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:visibility="gone">
+                    <!-- Row 1: Time, Params, Algo -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -325,7 +326,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:background="@drawable/sl_settings_chip"
-                            android:text="时间"
+                            android:text="拍摄时间"
                             android:textColor="@color/sl_settings_chip_text"
                             android:gravity="center"
                             android:paddingVertical="8dp"
@@ -336,35 +337,55 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:background="@drawable/sl_settings_chip"
-                            android:text="参数"
+                            android:text="拍摄参数"
                             android:textColor="@color/sl_settings_chip_text"
                             android:gravity="center"
                             android:paddingVertical="8dp"
                             android:layout_marginHorizontal="4dp" />
                         <TextView
-                            android:id="@+id/chip_wm_text"
+                            android:id="@+id/chip_wm_algo"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:background="@drawable/sl_settings_chip"
-                            android:text="固定文本"
+                            android:text="处理方式"
                             android:textColor="@color/sl_settings_chip_text"
                             android:gravity="center"
                             android:paddingVertical="8dp"
                             android:layout_marginStart="4dp" />
                     </LinearLayout>
-                    <EditText
-                        android:id="@+id/et_wm_custom"
+                    <!-- Row 2: Fixed Text + Input -->
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:background="@color/settings_unselected_bg"
-                        android:hint="输入水印文本..."
-                        android:padding="10dp"
-                        android:textColor="@color/white"
-                        android:textColorHint="@color/settings_text_main"
-                        android:textSize="14sp"
-                        android:visibility="gone" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="12dp">
+                        <TextView
+                            android:id="@+id/chip_wm_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/sl_settings_chip"
+                            android:text="固定文本"
+                            android:textColor="@color/sl_settings_chip_text"
+                            android:gravity="center"
+                            android:paddingVertical="8dp"
+                            android:paddingHorizontal="16dp"
+                            android:layout_marginEnd="8dp" />
+                        <EditText
+                            android:id="@+id/et_wm_custom"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@color/settings_unselected_bg"
+                            android:hint="输入水印文本..."
+                            android:padding="10dp"
+                            android:textColor="@color/white"
+                            android:textColorHint="@color/settings_text_main"
+                            android:textSize="14sp"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
 

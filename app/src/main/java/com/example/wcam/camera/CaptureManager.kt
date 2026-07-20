@@ -311,13 +311,20 @@ class CaptureManager(
             }
             Log.d("CaptureTimer", "[$wallTime] Demosaic finished in ${System.currentTimeMillis() - demosaicStart}ms")
 
+            val isDemosaicMode = preferenceManager.getBoolean("settings_algo_is_demosaic", true)
+            val savedAlgo = if (isDemosaicMode) preferenceManager.getString("algo_demosaic_choice", "Fast") 
+                           else preferenceManager.getString("algo_simple_choice", "RGB通道")
+            val algoDisplayName = savedAlgo.split('：', ':')[0].trim()
+
             val wmMode = preferenceManager.getString("wm_mode", "None")
             val wmConfig = WatermarkProcessor.WatermarkConfig(
                 type = wmMode,
                 showTime = preferenceManager.getBoolean("wm_show_time", true),
                 showParams = preferenceManager.getBoolean("wm_show_params", true),
+                showAlgo = preferenceManager.getBoolean("wm_show_algo", true),
                 showText = preferenceManager.getBoolean("wm_show_text", false),
-                customText = preferenceManager.getString("wm_custom_text", "wCam")
+                customText = preferenceManager.getString("wm_custom_text", "wCam"),
+                algoName = algoDisplayName
             )
 
             if (formats.contains("JPG") && bitmap8 != null) {

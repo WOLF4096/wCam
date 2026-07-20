@@ -13,8 +13,10 @@ class WatermarkProcessor {
         val type: String, // "None", "Internal", "External"
         val showTime: Boolean,
         val showParams: Boolean,
+        val showAlgo: Boolean,
         val showText: Boolean,
-        val customText: String
+        val customText: String,
+        val algoName: String = ""
     )
 
     fun applyWatermark(
@@ -59,6 +61,10 @@ class WatermarkProcessor {
             } else "N/A"
             
             parts.add("ISO$iso | $expStr | f/$aperture")
+        }
+
+        if (config.showAlgo && config.algoName.isNotEmpty()) {
+            parts.add(config.algoName)
         }
 
         if (config.showText && config.customText.isNotEmpty()) {

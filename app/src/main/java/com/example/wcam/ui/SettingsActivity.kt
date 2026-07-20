@@ -91,9 +91,11 @@ class SettingsActivity : AppCompatActivity() {
 
         binding.chipWmTime.setOnClickListener { toggleWmOption("wm_show_time", it as TextView) }
         binding.chipWmParams.setOnClickListener { toggleWmOption("wm_show_params", it as TextView) }
+        binding.chipWmAlgo.setOnClickListener { toggleWmOption("wm_show_algo", it as TextView) }
         binding.chipWmText.setOnClickListener { 
             val newState = toggleWmOption("wm_show_text", it as TextView)
-            binding.etWmCustom.visibility = if (newState) View.VISIBLE else View.GONE
+            binding.etWmCustom.isEnabled = newState
+            binding.etWmCustom.alpha = if (newState) 1.0f else 0.5f
         }
         binding.etWmCustom.addTextChangedListener { preferenceManager.saveString("wm_custom_text", it.toString()) }
 
@@ -377,9 +379,11 @@ class SettingsActivity : AppCompatActivity() {
         selectWmMode(preferenceManager.getString("wm_mode", "None"))
         binding.chipWmTime.isSelected = preferenceManager.getBoolean("wm_show_time", true)
         binding.chipWmParams.isSelected = preferenceManager.getBoolean("wm_show_params", true)
+        binding.chipWmAlgo.isSelected = preferenceManager.getBoolean("wm_show_algo", true)
         binding.chipWmText.isSelected = preferenceManager.getBoolean("wm_show_text", false)
         binding.etWmCustom.setText(preferenceManager.getString("wm_custom_text", "wCam"))
-        binding.etWmCustom.visibility = if (binding.chipWmText.isSelected) View.VISIBLE else View.GONE
+        binding.etWmCustom.isEnabled = binding.chipWmText.isSelected
+        binding.etWmCustom.alpha = if (binding.chipWmText.isSelected) 1.0f else 0.5f
     }
 
     private fun populateAlgoGrid(grid: GridLayout, algos: List<String>, isDemosaicList: Boolean) {
