@@ -226,8 +226,12 @@ object CameraDebugger {
                 val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
                 val apertures = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
                 val pixelArray = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                val minFocus = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+                val focusType = if (minFocus > 0f) "AUTO FOCUS (Actuator present)" else "FIXED FOCUS (No Motor)"
+                
                 Log.i(TAG, "  Focal Lengths: ${focalLengths?.joinToString(", ") ?: "N/A"} mm")
                 Log.i(TAG, "  Apertures: f/${apertures?.joinToString(", f/") ?: "N/A"}")
+                Log.i(TAG, "  Focus Type: $focusType (Min Distance: $minFocus diopters)")
                 Log.i(TAG, "  Sensor Res: ${pixelArray?.width}x${pixelArray?.height}")
 
                 // Capabilities

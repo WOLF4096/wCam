@@ -12,6 +12,7 @@ import com.example.wcam.camera.PARAM_TEXT_MANUAL_COLOR
 import com.example.wcam.camera.ParamKey
 import com.example.wcam.camera.PhotoParamMapper
 import com.example.wcam.camera.PhotoParamState
+import com.example.wcam.camera.CameraCapabilities
 import java.util.Locale
 import kotlin.math.abs
 
@@ -28,6 +29,7 @@ class ManualParamController(
         fun onParamAutoReset(key: ParamKey)
         fun getPhotoParamState(): PhotoParamState
         fun getPreviewAutoValues(): PreviewAutoValues
+        fun getCameraCapabilities(): CameraCapabilities
     }
 
     data class PreviewAutoValues(
@@ -62,6 +64,13 @@ class ManualParamController(
             })
 
             layout.setOnTouchListener { _, event ->
+                if (key == ParamKey.AF) {
+                    val caps = listener.getCameraCapabilities()
+                    if ((caps.minimumFocusDistance ?: 0f) <= 0f) {
+                        return@setOnTouchListener false
+                    }
+                }
+
                 gestureDetector.onTouchEvent(event)
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
@@ -141,10 +150,20 @@ class ManualParamController(
         } else state.shutter.displayValue
         setParamText(tvS, shutterDisplay, state.shutter.isAuto)
 
-        val afDisplay = if (state.af.isAuto) {
-            auto.afDistance?.let { PhotoParamMapper.formatFocusDistanceDisplay(it) } ?: state.af.displayValue
-        } else state.af.displayValue
-        setParamText(tvAf, afDisplay, state.af.isAuto)
+        val caps = listener.getCameraCapabilities()
+        val afSupported = (caps.minimumFocusDistance ?: 0f) > 0f
+        
+        if (!afSupported) {
+            tvAf.text = "不支持"
+            tvAf.setTextColor(Color.GRAY)
+            tvAf.alpha = 0.5f
+        } else {
+            val afDisplay = if (state.af.isAuto) {
+                auto.afDistance?.let { PhotoParamMapper.formatFocusDistanceDisplay(it) } ?: state.af.displayValue
+            } else state.af.displayValue
+            setParamText(tvAf, afDisplay, state.af.isAuto)
+            tvAf.alpha = 1.0f
+        }
     }
 
     private fun setParamText(view: TextView, text: String, isAuto: Boolean) {
