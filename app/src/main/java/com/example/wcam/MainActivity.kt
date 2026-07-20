@@ -443,12 +443,59 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun configureTransform(viewWidth: Int, viewHeight: Int) {
-        val matrix = android.graphics.Matrix(); val viewW = binding.cameraPreview.width.toFloat(); val viewH = binding.cameraPreview.height.toFloat()
+        val matrix = android.graphics.Matrix()
+        val viewW = binding.cameraPreview.width.toFloat()
+        val viewH = binding.cameraPreview.height.toFloat()
         if (viewW == 0f || viewH == 0f) return
-        val streamRatio = viewHeight.toFloat() / viewWidth.toFloat(); val viewRatio = viewW / viewH
-        var scaleX = 1.0f; var scaleY = 1.0f
-        if (streamRatio > viewRatio) scaleY = (viewW / streamRatio) / viewH else scaleX = (viewH * streamRatio) / viewW
-        matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f); binding.cameraPreview.setTransform(matrix)
+
+        // 1. 获取流的原始比例 (通常是横屏尺寸，如 1920x1440 -> 1.333)
+        val bufferRatio = viewWidth.toFloat() / viewHeight.toFloat()
+        // 2. 获取 UI View 的比例 (通常是竖屏尺寸，如 1080x1440 -> 0.75)
+        val viewRatio = viewW / viewH
+        
+        // 3. 计算预期的显示比例。
+        // 由于相机输出通常是旋转 90/270 度的，显示在竖屏 UI 时，其比例应该是 viewHeight/viewWidth
+        val expectedPortraitRatio = viewHeight.toFloat() / viewWidth.toFloat()
+
+        Log.d("VideoStreamDebug", "--- Transform Analysis Start ---")
+        Log.d("VideoStreamDebug", "[Buffer] Size: ${viewWidth}x${viewHeight}, Raw Ratio: ${String.format("%.3f", bufferRatio)}")
+        Log.d("VideoStreamDebug", "[UI View] Size: ${viewW.toInt()}x${viewH.toInt()}, View Ratio: ${String.format("%.3f", viewRatio)}")
+        Log.d("VideoStreamDebug", "[Target] Expected Portrait Ratio: ${String.format("%.3f", expectedPortraitRatio)}")
+
+        var scaleX = 1.0f
+        var scaleY = 1.0f
+        
+        // 典型的 Center-Inside 逻辑，修正 TextureView 默认填满导致的拉伸
+        if (expectedPortraitRatio > viewRatio) {
+            // 流比视图更“高”，需要缩放 Y
+            scaleY = (viewW / expectedPortraitRatio) / viewH
+            Log.d("VideoStreamDebug", "[Decision] Buffer is taller than view. Scaling Y to ${String.format("%.3f", scaleY)}")
+        } else {
+            // 流比视图更“宽”，需要缩放 X
+            scaleX = (viewH * expectedPortraitRatio) / viewW
+            Log.d("VideoStreamDebug", "[Decision] Buffer is wider than view. Scaling X to ${String.format("%.3f", scaleX)}")
+        }
+
+        val effectiveW = viewW * scaleX
+        val effectiveH = viewH * scaleY
+        val finalDisplayRatio = effectiveW / effectiveH
+
+        Log.d("VideoStreamDebug", "[Result] Final Effective Area: ${effectiveW.toInt()}x${effectiveH.toInt()}")
+        Log.d("VideoStreamDebug", "[Result] Final Display Ratio: ${String.format("%.3f", finalDisplayRatio)}")
+
+        // 关键：检测逻辑计算后的比例是否依然不符合预期
+        val ratioError = Math.abs(finalDisplayRatio - expectedPortraitRatio)
+        if (ratioError > 0.01) {
+            Log.e("VideoStreamDebug", "!!! STRETCH DETECTED !!!")
+            Log.e("VideoStreamDebug", "Display Ratio ($finalDisplayRatio) != Expected Ratio ($expectedPortraitRatio)")
+            Log.e("VideoStreamDebug", "This means the Matrix transform failed to correct the aspect ratio mismatch.")
+        } else {
+            Log.d("VideoStreamDebug", "Aspect ratio corrected successfully (Error: ${String.format("%.4f", ratioError)})")
+        }
+        Log.d("VideoStreamDebug", "--- Transform Analysis End ---")
+
+        matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+        binding.cameraPreview.setTransform(matrix)
     }
 
     private fun setupParamGestures() { refreshParamViews(viewModel.photoParamState.value) }
@@ -494,15 +541,24 @@ class MainActivity : AppCompatActivity(),
     
     // CoordinatorListener implementation
     override fun onCameraOpened(characteristics: CameraCharacteristics) {
+        val rawSize = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?.getOutputSizes(android.graphics.ImageFormat.RAW_SENSOR)
+            ?.maxByOrNull { it.width * it.height }
+        Log.d("VideoStreamDebug", ">>> [Camera Hardware] Opened. Max RAW Size: ${rawSize?.width}x${rawSize?.height}")
         refreshCameraCapabilities(characteristics)
         coordinator.toggleAeAfLock(isAeAfLocked)
     }
 
     override fun onSessionConfigured() {
+        Log.d("VideoStreamDebug", ">>> [Camera Session] Session configured and ready.")
         resumePreview()
     }
 
     override fun onPreviewReady(size: Size) {
+        Log.d("VideoStreamDebug", ">>> [Camera Stream] Actual Surface Size: ${size.width}x${size.height} (Ratio: ${String.format("%.3f", size.width.toFloat()/size.height)})")
+        if (!viewModel.isPhotoMode.value) {
+            Log.d("VideoStreamDebug", ">>> [UI Display] Selected Video Config: $selectedVideoSizeStr @ ${selectedVideoFps}fps (Ratio: $selectedVideoRatioStr)")
+        }
         runOnUiThread { configureTransform(size.width, size.height) }
     }
 
@@ -554,6 +610,8 @@ class MainActivity : AppCompatActivity(),
     private fun updateVideoParamsForNewLens() {
         val newId = activeMetadataCameraId()
         val caps = allVideoCapabilities[newId] ?: emptyList()
+        Log.d("VideoStreamDebug", "Checking video params for lens $newId. Current selection: $selectedVideoSizeStr@${selectedVideoFps}fps. Available caps count: ${caps.size}")
+
         val supported = caps.find { "${it.width}x${it.height}" == selectedVideoSizeStr && it.maxFps >= selectedVideoFps }
         if (supported == null) {
             val fallback = caps.find { it.width == 1920 && it.height == 1080 && it.maxFps >= 60 }
@@ -724,6 +782,7 @@ class MainActivity : AppCompatActivity(),
                 selectedVideoFps = if (bestFor30.maxFps >= 30) 30 else bestFor30.maxFps
                 preferenceManager.saveString(PreferenceManager.KEY_VIDEO_RESOLUTION, selectedVideoSizeStr)
                 preferenceManager.saveInt(PreferenceManager.KEY_VIDEO_FPS, selectedVideoFps)
+                Log.d("VideoStreamDebug", "User selected video ratio: $ratioStr -> Best match: ${selectedVideoSizeStr}@${selectedVideoFps}fps")
             }
             binding.topToolbar.btnResolution.text = selectedVideoRatioStr
             binding.topToolbar.btnResolution.setTextColor(Color.parseColor("#FFCC00"))
