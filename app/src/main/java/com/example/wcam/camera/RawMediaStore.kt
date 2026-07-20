@@ -118,7 +118,10 @@ class RawMediaStore(
     fun findLatestRecentPhotoUri(): Uri? {
         val folderName = config?.getString("default_storage_folder", "wCam") ?: "wCam"
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(MediaStore.Images.Media._ID)
+        val projection = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME
+        )
         
         // Filter by folder name
         val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -129,10 +132,19 @@ class RawMediaStore(
         val selectionArgs = arrayOf("%$folderName%")
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
         
+        val namePattern = Regex("""^\d{8}_\d{6}_\d{3}\..*$""")
+        
         try {
             context.contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                
                 while (cursor.moveToNext()) {
-                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val displayName = cursor.getString(nameColumn)
+                    if (displayName == null || !namePattern.matches(displayName)) {
+                        continue
+                    }
+
                     val id = cursor.getLong(idColumn)
                     val uri = Uri.withAppendedPath(collection, id.toString())
                     
