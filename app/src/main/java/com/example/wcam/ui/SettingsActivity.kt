@@ -470,10 +470,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun updateVisibilityByFormats(formats: Set<String>) {
         val hasJpgOrHeif = formats.contains("JPG") || formats.contains("HEIF")
         binding.layoutImageQuality.visibility = if (hasJpgOrHeif) View.VISIBLE else View.GONE
-        
-        // Hide location if ONLY HEIF is selected
-        val onlyHeif = formats.size == 1 && formats.contains("HEIF")
-        binding.layoutLocation.visibility = if (onlyHeif) View.GONE else View.VISIBLE
+        binding.layoutLocation.visibility = if (hasJpgOrHeif) View.VISIBLE else View.GONE
 
         val isRawOnly = formats.size == 1 && formats.contains("RAW")
         binding.cardAlgo.visibility = if (isRawOnly) View.GONE else View.VISIBLE
