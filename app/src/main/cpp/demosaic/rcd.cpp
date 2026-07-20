@@ -3,77 +3,69 @@
 #include <algorithm>
 #include <cmath>
 
+// RCD (Ratio-Conditioned Demosaicing)
+// Improved version with directional G and ratio-based R/B
 void demosaic_rcd(const DemosaicParams& p, void* pixels) {
     const int width = p.width;
     const int height = p.height;
     const int size = width * height;
 
-    std::vector<float> wb_raw(size);
     std::vector<float> full_g(size);
 
-    #pragma omp parallel for schedule(dynamic, 16)
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            wb_raw[y * width + x] = get_pixel_wb(p, x, y);
-        }
-    }
-
-    auto get_wb_fast = [&](int x, int y) {
-        int cx = (x < 0) ? 0 : (x >= width ? width - 1 : x);
-        int cy = (y < 0) ? 0 : (y >= height ? height - 1 : y);
-        return wb_raw[cy * width + cx];
-    };
-
+    // Step 1: Improved Directional Green
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             int channel = get_channel_type(x, y, p.bayerPattern);
             if (channel == 1 || channel == 2) {
-                full_g[y * width + x] = wb_raw[y * width + x];
+                full_g[y * width + x] = get_pixel_wb(p, x, y);
             } else {
-                float g_h = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
-                float g_v = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-                float dh = std::abs(get_wb_fast(x - 2, y) - get_wb_fast(x + 2, y));
-                float dv = std::abs(get_wb_fast(x, y - 2) - get_wb_fast(x, y + 2));
-                full_g[y * width + x] = (dh < dv) ? g_h : g_v;
+                float v1 = get_pixel_wb(p, x, y-1);
+                float v2 = get_pixel_wb(p, x, y+1);
+                float h1 = get_pixel_wb(p, x-1, y);
+                float h2 = get_pixel_wb(p, x+1, y);
+
+                float dv = std::abs(v1 - v2) + std::abs(2.0f * get_pixel_wb(p, x, y) - get_pixel_wb(p, x, y-2) - get_pixel_wb(p, x, y+2));
+                float dh = std::abs(h1 - h2) + std::abs(2.0f * get_pixel_wb(p, x, y) - get_pixel_wb(p, x-2, y) - get_pixel_wb(p, x+2, y));
+
+                if (dv < dh) full_g[y * width + x] = (v1 + v2) * 0.5f;
+                else full_g[y * width + x] = (h1 + h2) * 0.5f;
             }
         }
     }
 
+    // Step 2: Ratio-based interpolation for R and B
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
-        int out_row = y * width;
         for (int x = 0; x < width; ++x) {
             float r, g, b;
-            g = full_g[out_row + x];
+            g = full_g[y * width + x];
             int channel = get_channel_type(x, y, p.bayerPattern);
 
-            auto get_ratio_r = [&](int ix, int iy) {
-                int cx = (ix < 0) ? 0 : (ix >= width ? width - 1 : ix);
-                int cy = (iy < 0) ? 0 : (iy >= height ? height - 1 : iy);
-                float val = wb_raw[cy * width + cx];
-                float g_val = full_g[cy * width + cx];
-                return val / (g_val + 1e-6f);
+            auto get_ratio = [&](int ix, int iy) {
+                int cx = std::clamp(ix, 0, width - 1);
+                int cy = std::clamp(iy, 0, height - 1);
+                float raw = get_pixel_wb(p, cx, cy);
+                float gr = full_g[cy * width + cx];
+                return raw / (gr + 1e-4f);
             };
 
             if (channel == 0) { // R
-                r = wb_raw[out_row + x];
-                float ratio_b = (get_ratio_r(x-1, y-1) + get_ratio_r(x+1, y-1) + get_ratio_r(x-1, y+1) + get_ratio_r(x+1, y+1)) * 0.25f;
-                b = ratio_b * g;
+                r = get_pixel_wb(p, x, y);
+                float rb = (get_ratio(x-1, y-1) + get_ratio(x+1, y-1) + get_ratio(x-1, y+1) + get_ratio(x+1, y+1)) * 0.25f;
+                b = g * rb;
             } else if (channel == 3) { // B
-                b = wb_raw[out_row + x];
-                float ratio_r = (get_ratio_r(x-1, y-1) + get_ratio_r(x+1, y-1) + get_ratio_r(x-1, y+1) + get_ratio_r(x+1, y+1)) * 0.25f;
-                r = ratio_r * g;
-            } else {
-                if (channel == 1) { // Gr
-                    r = (get_ratio_r(x-1, y) + get_ratio_r(x+1, y)) * 0.5f * g;
-                    b = (get_ratio_r(x, y-1) + get_ratio_r(x, y+1)) * 0.5f * g;
-                } else { // Gb
-                    b = (get_ratio_r(x-1, y) + get_ratio_r(x+1, y)) * 0.5f * g;
-                    r = (get_ratio_r(x, y-1) + get_ratio_r(x, y+1)) * 0.5f * g;
-                }
+                b = get_pixel_wb(p, x, y);
+                float rr = (get_ratio(x-1, y-1) + get_ratio(x+1, y-1) + get_ratio(x-1, y+1) + get_ratio(x+1, y+1)) * 0.25f;
+                r = g * rr;
+            } else if (channel == 1) { // Gr
+                r = g * (get_ratio(x-1, y) + get_ratio(x+1, y)) * 0.5f;
+                b = g * (get_ratio(x, y-1) + get_ratio(x, y+1)) * 0.5f;
+            } else { // Gb
+                b = g * (get_ratio(x-1, y) + get_ratio(x+1, y)) * 0.5f;
+                r = g * (get_ratio(x, y-1) + get_ratio(x, y+1)) * 0.5f;
             }
-            write_pixel(p, pixels, out_row + x, r, g, b);
+            write_pixel(p, pixels, y * width + x, r, g, b);
         }
     }
 }

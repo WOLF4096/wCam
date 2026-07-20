@@ -3,64 +3,69 @@
 #include <algorithm>
 #include <cmath>
 
+// Standard AHD implementation
 void demosaic_ahd(const DemosaicParams& p, void* pixels) {
     const int width = p.width;
     const int height = p.height;
     const int size = width * height;
 
-    std::vector<float> wb_raw(size);
+    std::vector<float> full_g(size);
 
+    // Step 1: Directional Green Interpolation
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            wb_raw[y * width + x] = get_pixel_wb(p, x, y);
+            int channel = get_channel_type(x, y, p.bayerPattern);
+            if (channel == 1 || channel == 2) {
+                full_g[y * width + x] = get_pixel_wb(p, x, y);
+            } else {
+                // Horizontal and Vertical candidates
+                float gh = (get_pixel_wb(p, x - 1, y) + get_pixel_wb(p, x + 1, y)) * 0.5f +
+                           (2.0f * get_pixel_wb(p, x, y) - get_pixel_wb(p, x - 2, y) - get_pixel_wb(p, x + 2, y)) * 0.25f;
+                float gv = (get_pixel_wb(p, x, y - 1) + get_pixel_wb(p, x, y + 1)) * 0.5f +
+                           (2.0f * get_pixel_wb(p, x, y) - get_pixel_wb(p, x, y - 2) - get_pixel_wb(p, x, y + 2)) * 0.25f;
+
+                // Simple directional selection based on local gradients
+                float dh = std::abs(get_pixel_wb(p, x - 2, y) - get_pixel_wb(p, x, y)) +
+                           std::abs(get_pixel_wb(p, x + 2, y) - get_pixel_wb(p, x, y));
+                float dv = std::abs(get_pixel_wb(p, x, y - 2) - get_pixel_wb(p, x, y)) +
+                           std::abs(get_pixel_wb(p, x, y + 2) - get_pixel_wb(p, x, y));
+
+                full_g[y * width + x] = (dh < dv) ? gh : gv;
+            }
         }
     }
 
-    auto get_wb_fast = [&](int x, int y) {
-        int cx = (x < 0) ? 0 : (x >= width ? width - 1 : x);
-        int cy = (y < 0) ? 0 : (y >= height ? height - 1 : y);
-        return wb_raw[cy * width + cx];
-    };
-
+    // Step 2: Interpolate R and B using G
     #pragma omp parallel for schedule(dynamic, 16)
     for (int y = 0; y < height; ++y) {
-        int out_row = y * width;
         for (int x = 0; x < width; ++x) {
             float r, g, b;
+            g = full_g[y * width + x];
             int channel = get_channel_type(x, y, p.bayerPattern);
 
-            if (channel == 0 || channel == 3) {
-                float center = wb_raw[out_row + x];
-                float g_h = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
-                float g_v = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-                float dh = std::abs(get_wb_fast(x - 2, y) - get_wb_fast(x + 2, y)) +
-                           std::abs(center - get_wb_fast(x - 1, y)) +
-                           std::abs(center - get_wb_fast(x + 1, y));
-                float dv = std::abs(get_wb_fast(x, y - 2) - get_wb_fast(x + 2, y)) +
-                           std::abs(center - get_wb_fast(x, y - 1)) +
-                           std::abs(center - get_wb_fast(x, y + 1));
-                g = (dh < dv) ? g_h : g_v;
-                if (channel == 0) {
-                    r = center;
-                    b = (get_wb_fast(x - 1, y - 1) + get_wb_fast(x + 1, y - 1) +
-                         get_wb_fast(x - 1, y + 1) + get_wb_fast(x + 1, y + 1)) * 0.25f;
-                } else {
-                    b = center;
-                    r = (get_wb_fast(x - 1, y - 1) + get_wb_fast(x + 1, y - 1) +
-                         get_wb_fast(x - 1, y + 1) + get_wb_fast(x + 1, y + 1)) * 0.25f;
-                }
-            } else {
-                g = wb_raw[out_row + x];
-                if (channel == 1) {
-                    r = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
-                    b = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-                } else {
-                    b = (get_wb_fast(x - 1, y) + get_wb_fast(x + 1, y)) * 0.5f;
-                    r = (get_wb_fast(x, y - 1) + get_wb_fast(x, y + 1)) * 0.5f;
-                }
+            auto get_diff = [&](int ix, int iy, int c) {
+                return get_pixel_wb(p, ix, iy) - full_g[iy * width + ix];
+            };
+
+            if (channel == 0) { // R
+                r = get_pixel_wb(p, x, y);
+                float db = (get_diff(x - 1, y - 1, 3) + get_diff(x + 1, y - 1, 3) +
+                            get_diff(x - 1, y + 1, 3) + get_diff(x + 1, y + 1, 3)) * 0.25f;
+                b = g + db;
+            } else if (channel == 3) { // B
+                b = get_pixel_wb(p, x, y);
+                float dr = (get_diff(x - 1, y - 1, 0) + get_diff(x + 1, y - 1, 0) +
+                            get_diff(x - 1, y + 1, 0) + get_diff(x + 1, y + 1, 0)) * 0.25f;
+                r = g + dr;
+            } else if (channel == 1) { // Gr
+                r = g + (get_diff(x - 1, y, 0) + get_diff(x + 1, y, 0)) * 0.5f;
+                b = g + (get_diff(x, y - 1, 3) + get_diff(x, y + 1, 3)) * 0.5f;
+            } else { // Gb
+                b = g + (get_diff(x - 1, y, 3) + get_diff(x + 1, y, 3)) * 0.5f;
+                r = g + (get_diff(x, y - 1, 0) + get_diff(x, y + 1, 0)) * 0.5f;
             }
-            write_pixel(p, pixels, out_row + x, r, g, b);
+            write_pixel(p, pixels, y * width + x, r, g, b);
         }
     }
 }

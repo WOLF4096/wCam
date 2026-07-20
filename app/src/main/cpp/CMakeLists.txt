@@ -14,11 +14,14 @@ add_library(wcam SHARED
         demosaic/demosaic_common.cpp
         demosaic/bilinear.cpp
         demosaic/ahd.cpp
+        demosaic/eahd.cpp
+        demosaic/hphd.cpp
         demosaic/vng.cpp
         demosaic/rcd.cpp
         demosaic/amaze.cpp
         demosaic/lmmse.cpp
-        demosaic/dcb.cpp)
+        demosaic/dcb.cpp
+        demosaic/igv.cpp)
 
 find_library(log-lib
         log)

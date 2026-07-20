@@ -147,12 +147,15 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
             void* temp = (void*)temp_ptr.get();
 
             if (algo == "Fast") { demosaic_bilinear(p, temp); }
-            else if (algo == "AHD" || algo == "EAHD" || algo == "HPHD") { demosaic_ahd(p, temp); }
+            else if (algo == "AHD") { demosaic_ahd(p, temp); }
+            else if (algo == "EAHD") { demosaic_eahd(p, temp); }
+            else if (algo == "HPHD") { demosaic_hphd(p, temp); }
             else if (algo == "VNG4") { demosaic_vng(p, temp); }
             else if (algo == "RCD") { demosaic_rcd(p, temp); }
             else if (algo == "AMaZE") { demosaic_amaze(p, temp); }
             else if (algo == "LMMSE") { demosaic_lmmse(p, temp); }
             else if (algo == "DCB") { demosaic_dcb(p, temp); }
+            else if (algo == "IGV") { demosaic_igv(p, temp); }
             else { demosaic_bilinear(p, temp); }
 
             #pragma omp parallel for schedule(dynamic, 16)
