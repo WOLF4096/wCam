@@ -160,6 +160,7 @@ class CameraUiController(
             chip.text = mode
             chip.textSize = 11f // Slightly larger but still compact
             chip.isSelected = (index == currentIndex)
+            chip.gravity = android.view.Gravity.CENTER // Ensure text is centered inside the button
             
             val params = GridLayout.LayoutParams().apply {
                 width = 0
@@ -167,6 +168,7 @@ class CameraUiController(
                 columnSpec = GridLayout.spec(index % 3, 1f)
                 rowSpec = GridLayout.spec(index / 3)
                 setMargins(20, 20, 20, 20)
+                setGravity(android.view.Gravity.FILL) // Fill the grid cell to ensure alignment
             }
             chip.layoutParams = params
             
