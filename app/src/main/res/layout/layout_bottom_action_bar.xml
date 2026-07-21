@@ -62,12 +62,12 @@
     </FrameLayout>
 
     <TextView
-        android:id="@+id/btn_mode_switch"
+        android:id="@+id/btn_mode_panel"
         android:layout_width="60dp"
         android:layout_height="60dp"
         android:layout_marginEnd="32dp"
         android:background="@drawable/bg_gallery_modern"
-        android:text="切换\n录像"
+        android:text="RAW\n拍摄"
         android:textColor="#E0E0E0"
         android:textSize="13sp"
         android:lineSpacingMultiplier="0.9"

@@ -25,7 +25,7 @@ class CameraUiController(
         fun onTimerPanelDismissed()
         fun onGridToggle()
         fun onResolutionClick(view: View)
-        fun onModeSwitch()
+        fun onModeSelected(index: Int)
         fun onModeReset()
     }
 
@@ -139,6 +139,47 @@ class CameraUiController(
         panelI.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
         panelC.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
         panelB.visibility = if (mode != "None") View.VISIBLE else View.GONE
+    }
+
+    fun showModePanel(anchor: View, modes: List<String>, currentIndex: Int) {
+        val popupView = activity.layoutInflater.inflate(R.layout.layout_mode_panel, null)
+        val popupWindow = PopupWindow(
+            popupView,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        )
+        popupWindow.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popupWindow.elevation = 10f
+
+        val grid = popupView.findViewById<GridLayout>(R.id.grid_camera_modes)
+        grid.removeAllViews()
+
+        modes.forEachIndexed { index, mode ->
+            val chip = activity.layoutInflater.inflate(R.layout.item_ratio_chip, grid, false) as TextView
+            chip.text = mode
+            chip.textSize = 11f // Slightly larger but still compact
+            chip.isSelected = (index == currentIndex)
+            
+            val params = GridLayout.LayoutParams().apply {
+                width = 0
+                height = 200 // FIXED HEIGHT in pixels for uniformity (approx 60dp)
+                columnSpec = GridLayout.spec(index % 3, 1f)
+                rowSpec = GridLayout.spec(index / 3)
+                setMargins(20, 20, 20, 20)
+            }
+            chip.layoutParams = params
+            
+            chip.setOnClickListener {
+                listener.onModeSelected(index)
+                popupWindow.dismiss()
+            }
+            grid.addView(chip)
+        }
+
+        // Bringing it closer to the bottom bar. -anchor.height puts it right above the button.
+        // We add a small margin (e.g., -100 to -150 depending on screen)
+        popupWindow.showAsDropDown(anchor, 0, -anchor.height - 500, android.view.Gravity.END)
     }
 
     fun showRatioPanel(anchor: View, options: List<String>, currentLabel: String, showCustom: Boolean, onSelected: (String) -> Unit) {

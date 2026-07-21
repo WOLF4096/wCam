@@ -14,8 +14,10 @@ import android.os.Bundle
 import android.util.Log
 import com.example.wcam.util.FileLogger
 import android.util.Size
+import android.view.LayoutInflater
 import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +30,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.LinearSnapHelper
+import androidx.recyclerview.widget.RecyclerView
 import com.example.wcam.camera.*
 import com.example.wcam.databinding.ActivityMainBinding
 import com.example.wcam.ui.*
@@ -88,6 +93,16 @@ class MainActivity : AppCompatActivity(),
     private var isAeAfLocked = false
     private var cropRatio = 4f / 3f
     private var currentCropRectInSensor: Rect? = null
+
+    private val cameraModes = listOf(
+        "RAW拍摄",
+        "JPG直出\n(开发中)",
+        "高速连拍\n(开发中)",
+        "RAW录制\n(开发中)",
+        "视频录制",
+        "高速视频\n(开发中)"
+    )
+    private var currentModeIndex = 0
 
     private val powerSaveHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val powerSaveRunnable = Runnable {
@@ -226,6 +241,44 @@ class MainActivity : AppCompatActivity(),
     override fun onProviderEnabled(provider: String) {}
     override fun onProviderDisabled(provider: String) {}
 
+    override fun onModeSelected(index: Int) {
+        val modeName = cameraModes[index]
+        showModeIndicator(modeName.replace("\n", ""))
+        binding.bottomActionBar.btnModePanel.text = modeName
+
+        when (index) {
+            0 -> { // RAW拍摄
+                if (!viewModel.isPhotoMode.value) {
+                    viewModel.setPhotoMode(true)
+                    preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, true)
+                    coordinator.closeCamera(); openCamera()
+                }
+            }
+            4 -> { // 视频录制
+                if (viewModel.isPhotoMode.value) {
+                    viewModel.setPhotoMode(false)
+                    preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, false)
+                    coordinator.closeCamera(); openCamera()
+                }
+            }
+            else -> {
+                // Placeholder
+            }
+        }
+        currentModeIndex = index
+    }
+
+    private fun showModeIndicator(name: String) {
+        binding.tvModeIndicator.text = name
+        binding.tvModeIndicator.visibility = View.VISIBLE
+        binding.tvModeIndicator.removeCallbacks(indicatorRunnable)
+        binding.tvModeIndicator.postDelayed(indicatorRunnable, 500)
+    }
+
+    private val indicatorRunnable = Runnable {
+        binding.tvModeIndicator.visibility = View.GONE
+    }
+
     private fun setupLifecycleObserver() {
         lifecycle.addObserver(CameraLifecycleObserver(
             onResumeAction = { handleOnResume() },
@@ -334,6 +387,9 @@ class MainActivity : AppCompatActivity(),
 
     private fun setupListeners() {
         binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
+        binding.bottomActionBar.btnModePanel.setOnClickListener { 
+            uiController.showModePanel(it, cameraModes, currentModeIndex)
+        }
         binding.btnStopAutoCapture.setOnClickListener { 
             exitPowerSaveMode()
             coordinator.stopAutoCapture() 
@@ -346,8 +402,6 @@ class MainActivity : AppCompatActivity(),
         binding.topToolbar.btnSettings.setOnClickListener { 
             startActivity(android.content.Intent(this, SettingsActivity::class.java))
         }
-        binding.bottomActionBar.btnModeSwitch.setOnClickListener { onModeSwitch() }
-        binding.bottomActionBar.btnModeSwitch.setOnLongClickListener { onModeReset(); true }
         binding.bottomActionBar.btnGallery.setOnClickListener { galleryController.openRecentPhotoInGallery() }
         binding.cameraPreview.setOnTouchListener { _, event ->
             gestureManager.handleTouch(event)
@@ -376,6 +430,10 @@ class MainActivity : AppCompatActivity(),
         aspectController.setInitialCropScale(zoomScale)
         aspectController.setRatio(cropRatio)
         
+        // Initial mode index
+        currentModeIndex = if (viewModel.isPhotoMode.value) 0 else 4
+        binding.bottomActionBar.btnModePanel.text = cameraModes[currentModeIndex]
+        
         lensController.refreshUi(currentLogicalCameraId, currentPhysicalCameraId)
         updateTimerButtonHighlight()
         updateCropOverlayUI()
@@ -400,12 +458,10 @@ class MainActivity : AppCompatActivity(),
             uiController.updateResolutionText(binding.topToolbar.btnResolution, selectedPhotoRatioStr, selectedPhotoRatioStr != "4:3")
             binding.bottomActionBar.btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
             overlayController.setCropOverlayVisible(true)
-            binding.bottomActionBar.btnModeSwitch.text = getString(R.string.switch_to) + getString(R.string.mode_video)
         } else {
             uiController.updateResolutionText(binding.topToolbar.btnResolution, selectedVideoRatioStr, true)
             binding.bottomActionBar.btnShutter.setBackgroundResource(R.drawable.bg_shutter_video)
             overlayController.setCropOverlayVisible(false)
-            binding.bottomActionBar.btnModeSwitch.text = getString(R.string.switch_to) + getString(R.string.mode_photo)
         }
         set.applyTo(binding.main)
     }
@@ -564,12 +620,7 @@ class MainActivity : AppCompatActivity(),
     }
     override fun onGridToggle() { viewModel.setGridVisible(!viewModel.isGridVisible.value); preferenceManager.saveBoolean(PreferenceManager.KEY_GRID_VISIBLE, viewModel.isGridVisible.value) }
     override fun onResolutionClick(view: View) { if (viewModel.isPhotoMode.value) aspectController.showPhotoRatioPopup(view) else showVideoParamsPopup(view) }
-    override fun onModeSwitch() {
-        viewModel.setPhotoMode(!viewModel.isPhotoMode.value)
-        preferenceManager.saveBoolean(PreferenceManager.KEY_IS_PHOTO_MODE, viewModel.isPhotoMode.value)
-        coordinator.closeCamera(); openCamera()
-    }
-    override fun onModeReset() { preferenceManager.clear(); showToast(getString(R.string.toast_settings_reset)); loadSettings(); coordinator.closeCamera(); openCamera() }
+    override fun onModeReset() { /* Long click removed */ }
     
     // CoordinatorListener implementation
     override fun onCameraOpened(characteristics: CameraCharacteristics) {
@@ -819,7 +870,7 @@ class MainActivity : AppCompatActivity(),
             binding.topToolbar.btnGridLines,
             binding.topToolbar.btnResolution,
             binding.topToolbar.btnSettings,
-            binding.bottomActionBar.btnModeSwitch,
+            binding.bottomActionBar.btnModePanel,
             binding.bottomActionBar.btnGallery,
             binding.paramBar.layoutParamEv,
             binding.paramBar.layoutParamWb,
