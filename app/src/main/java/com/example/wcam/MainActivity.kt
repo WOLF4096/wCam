@@ -93,6 +93,7 @@ class MainActivity : AppCompatActivity(),
     private var isAeAfLocked = false
     private var cropRatio = 4f / 3f
     private var currentCropRectInSensor: Rect? = null
+    private var lastStreamSize: Size? = null
 
     private val cameraModes = listOf(
         "RAW拍摄",
@@ -530,60 +531,32 @@ class MainActivity : AppCompatActivity(),
         val matrix = android.graphics.Matrix()
         val viewW = binding.cameraPreview.width.toFloat()
         val viewH = binding.cameraPreview.height.toFloat()
-        if (viewW == 0f || viewH == 0f) return
-
-        val displayRotation = windowManager.defaultDisplay.rotation
-        val sensorOrientation = currentSensorOrientation
         
-        // 1. 获取流的原始比例
-        val bufferRatio = viewWidth.toFloat() / viewHeight.toFloat()
-        val viewRatio = viewW / viewH
-        
-        // 2. 预测目标比例 (考虑传感器旋转)
-        // 大部分 Android 传感器是 90 或 270 度，这意味着 1920(W)x1440(H) 的流在竖屏显示时是 1440x1920
-        val isSensorPortrait = (sensorOrientation % 180 != 0)
-        val expectedPortraitRatio = if (isSensorPortrait) viewHeight.toFloat() / viewWidth.toFloat() else bufferRatio
-
-        Log.d("VideoStreamDebug", "--- Comprehensive Transform Analysis ---")
-        Log.d("VideoStreamDebug", "[Hardware] Sensor Orientation: $sensorOrientation, Display Rotation: $displayRotation")
-        Log.d("VideoStreamDebug", "[Buffer] Incoming Stream: ${viewWidth}x${viewHeight} (Ratio: ${String.format("%.3f", bufferRatio)})")
-        Log.d("VideoStreamDebug", "[UI View] TextureView Size: ${viewW.toInt()}x${viewH.toInt()} (Ratio: ${String.format("%.3f", viewRatio)})")
-        Log.d("VideoStreamDebug", "[UI View] LayoutParams: W=${binding.cameraPreview.layoutParams.width}, H=${binding.cameraPreview.layoutParams.height}")
-        Log.d("VideoStreamDebug", "[Target] Calculated Target Ratio: ${String.format("%.3f", expectedPortraitRatio)}")
-
-        var scaleX = 1.0f
-        var scaleY = 1.0f
-        
-        if (expectedPortraitRatio > viewRatio) {
-            scaleY = (viewW / expectedPortraitRatio) / viewH
-        } else {
-            scaleX = (viewH * expectedPortraitRatio) / viewW
+        if (viewW <= 0f || viewH <= 0f) {
+            // 如果 View 还没准备好，延迟 50ms 再试一次，防止随机拉伸
+            binding.cameraPreview.postDelayed({ configureTransform(viewWidth, viewHeight) }, 50)
+            return
         }
 
-        // 检查 View 自身是否有异常缩放
-        val viewScaleX = binding.cameraPreview.scaleX
-        val viewScaleY = binding.cameraPreview.scaleY
-        if (viewScaleX != 1.0f || viewScaleY != 1.0f) {
-            Log.w("VideoStreamDebug", "!!! View properties have scale: ${viewScaleX}x${viewScaleY}")
+        // 还原为参考代码 docs/07200042.kt 的鲁棒算法
+        // viewHeight/viewWidth 是流的原始比例（如 1440/1920 = 0.75）
+        val streamRatio = viewHeight.toFloat() / viewWidth.toFloat()
+        val viewRatio = viewW / viewH
+        
+        var scaleX = 1.0f
+        var scaleY = 1.0f
+
+        // 核心逻辑：直接对比流比例和视图比例，补齐短板
+        if (streamRatio > viewRatio) {
+            scaleY = (viewW / streamRatio) / viewH
+        } else {
+            scaleX = (viewH * streamRatio) / viewW
         }
 
         matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
-        
-        // 在应用前检查 Matrix
-        val currentMatrix = android.graphics.Matrix()
-        binding.cameraPreview.getTransform(currentMatrix)
-        Log.d("VideoStreamDebug", "[Matrix] Pre-apply matrix is identity: ${currentMatrix.isIdentity}")
-
         binding.cameraPreview.setTransform(matrix)
         
-        val finalEffectiveW = viewW * scaleX
-        val finalEffectiveH = viewH * scaleY
-        Log.d("VideoStreamDebug", "[Result] Final Screen Pixels: ${finalEffectiveW.toInt()}x${finalEffectiveH.toInt()} (Ratio: ${String.format("%.3f", finalEffectiveW/finalEffectiveH)})")
-        
-        if (Math.abs((finalEffectiveW/finalEffectiveH) - expectedPortraitRatio) > 0.01) {
-            Log.e("VideoStreamDebug", "!!! LOGICAL STRETCH DETECTED !!!")
-        }
-        Log.d("VideoStreamDebug", "---------------------------------------")
+        Log.d("VideoStreamDebug", "Transform Applied: Stream(${viewWidth}x${viewHeight}), View(${viewW.toInt()}x${viewH.toInt()}), Scale(${scaleX}, ${scaleY})")
     }
 
     private fun setupParamGestures() { refreshParamViews(viewModel.photoParamState.value) }
@@ -638,6 +611,7 @@ class MainActivity : AppCompatActivity(),
     }
 
     override fun onPreviewReady(size: Size) {
+        lastStreamSize = size
         Log.d("VideoStreamDebug", ">>> [Camera Stream] Actual Surface Size: ${size.width}x${size.height} (Ratio: ${String.format("%.3f", size.width.toFloat()/size.height)})")
         if (!viewModel.isPhotoMode.value) {
             Log.d("VideoStreamDebug", ">>> [UI Display] Selected Video Config: $selectedVideoSizeStr @ ${selectedVideoFps}fps (Ratio: $selectedVideoRatioStr)")
@@ -939,7 +913,9 @@ class MainActivity : AppCompatActivity(),
             coordinator.createPreviewSession() 
         }
         override fun onSurfaceTextureSizeChanged(t: SurfaceTexture, w: Int, h: Int) {
-            configureTransform(w, h)
+            // FIX: DO NOT pass w, h (View size) as Stream size.
+            // Use last known stream size to re-calculate transform.
+            lastStreamSize?.let { configureTransform(it.width, it.height) }
         }
         override fun onSurfaceTextureDestroyed(t: SurfaceTexture): Boolean = true
         override fun onSurfaceTextureUpdated(t: SurfaceTexture) {}
@@ -963,7 +939,7 @@ class MainActivity : AppCompatActivity(),
             } else info.ratioStr
         }
 
-        val common = listOf("4:3", "16:9")
+        val common = listOf("4:3")
         val sortedRatios = ratioMap.keys.toList().sortedWith { a, b ->
             val aIn = common.indexOf(a)
             val bIn = common.indexOf(b)
