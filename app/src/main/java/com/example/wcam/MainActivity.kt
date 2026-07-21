@@ -679,8 +679,43 @@ class MainActivity : AppCompatActivity(),
     override fun isHistogramVisible(): Boolean = viewModel.isHistogramVisible.value
     override fun isCaptureInProgress(): Boolean = coordinator.isCaptureInProgress()
 
-    override fun onSingleTap(x: Float, y: Float) { 
-        binding.viewFocusRing.x = x - binding.viewFocusRing.width / 2; binding.viewFocusRing.y = y - binding.viewFocusRing.height / 2 + binding.cameraPreview.top; binding.viewFocusRing.visibility = View.VISIBLE; binding.viewFocusRing.alpha = 1f; binding.viewFocusRing.scaleX = 1.2f; binding.viewFocusRing.scaleY = 1.2f; binding.viewFocusRing.animate().scaleX(1f).scaleY(1f).alpha(0.5f).setDuration(300).withEndAction { binding.viewFocusRing.postDelayed({ binding.viewFocusRing.visibility = View.GONE }, 1000) }.start()
+    override fun onSingleTap(x: Float, y: Float) {
+        if (binding.viewFocusRing.visibility == View.VISIBLE && binding.viewFocusRing.alpha > 0.1f) {
+            val ringCenterX = binding.viewFocusRing.x + binding.viewFocusRing.width / 2f
+            val ringCenterY = binding.viewFocusRing.y + binding.viewFocusRing.height / 2f
+            
+            // Adjust y as tap coordinates are relative to preview, but ring is relative to container
+            val tapYInContainer = y + binding.cameraPreview.top
+            
+            val dx = x - ringCenterX
+            val dy = tapYInContainer - ringCenterY
+            val distanceSq = dx * dx + dy * dy
+            val radius = binding.viewFocusRing.width / 2f
+            
+            if (distanceSq < radius * radius) {
+                // Clicked inside the ring! Trigger capture.
+                coordinator.capturePhoto()
+                return
+            }
+        }
+
+        binding.viewFocusRing.x = x - binding.viewFocusRing.width / 2
+        binding.viewFocusRing.y = y - binding.viewFocusRing.height / 2 + binding.cameraPreview.top
+        binding.viewFocusRing.visibility = View.VISIBLE
+        binding.viewFocusRing.alpha = 1f
+        binding.viewFocusRing.scaleX = 1.2f
+        binding.viewFocusRing.scaleY = 1.2f
+        binding.viewFocusRing.animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .alpha(0.5f)
+            .setDuration(300)
+            .withEndAction { 
+                binding.viewFocusRing.postDelayed({ 
+                    binding.viewFocusRing.visibility = View.GONE 
+                }, 1000) 
+            }.start()
+
         coordinator.triggerFocus(x, y, binding.cameraPreview, previewCaptureCallback)
         resumePreview()
     }
