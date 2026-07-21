@@ -3,16 +3,19 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- The filled flash icon -->
     <path
         android:pathData="M13 2L3 14h9l-1 8 10-12h-9l1-8z"
-        android:strokeWidth="2"
-        android:strokeColor="#FFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
+        android:fillColor="#FFFFFF" />
+    <!-- The diagonal line to indicate 'OFF' (Top-Left to Bottom-Right) -->
     <path
-        android:pathData="M2 2L22 22"
+        android:pathData="M5 5L19 19"
         android:strokeWidth="2"
+        android:strokeColor="#000000"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M5 5L19 19"
+        android:strokeWidth="1.2"
         android:strokeColor="#FFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
+        android:strokeLineCap="round" />
 </vector>
