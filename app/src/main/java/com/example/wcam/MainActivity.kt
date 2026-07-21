@@ -105,6 +105,35 @@ class MainActivity : AppCompatActivity(),
     )
     private var currentModeIndex = 0
 
+    private var panelDx = 100f
+    private var panelDy = 100f
+    private val movementHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val movementRunnable = object : Runnable {
+        override fun run() {
+            if (binding.powerSaveOverlay.visibility != View.VISIBLE) return
+            
+            val panel = binding.autoCapturePanel
+            val parent = binding.main
+            
+            // Screen limits for translation
+            val limitX = (parent.width - panel.width) / 2f
+            val limitY = (parent.height - panel.height) / 2f
+            
+            if (limitX <= 0 || limitY <= 0) return // View not measured
+            
+            val curTx = panel.translationX
+            val curTy = panel.translationY
+            
+            if (curTx <= -limitX || curTx >= limitX) panelDx = -panelDx
+            if (curTy <= -limitY || curTy >= limitY) panelDy = -panelDy
+            
+            panel.translationX = (curTx + panelDx).coerceIn(-limitX, limitX)
+            panel.translationY = (curTy + panelDy).coerceIn(-limitY, limitY)
+            
+            movementHandler.postDelayed(this, 100) // 1px per second
+        }
+    }
+
     private val powerSaveHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val powerSaveRunnable = Runnable {
         if (coordinator.isAutoCaptureRunning() && preferenceManager.getBoolean(PreferenceManager.KEY_AUTO_BLACK_SCREEN, false)) {
@@ -116,6 +145,26 @@ class MainActivity : AppCompatActivity(),
         runOnUiThread {
             binding.powerSaveOverlay.visibility = View.VISIBLE
             coordinator.pausePreview()
+            
+            // Adjust panel for power save
+            val dimColor = Color.parseColor("#777777")
+            binding.tvAutoCaptureTitle.setTextColor(dimColor)
+            binding.tvTotalProgress.setTextColor(dimColor)
+            binding.tvNextCapture.setTextColor(dimColor)
+            binding.tvCaptureCount.setTextColor(dimColor)
+            binding.btnStopAutoCapture.setTextColor(dimColor)
+            
+            // Dim progress bars
+            binding.pbTotalProgress.alpha = 0.3f
+            binding.pbNextCapture.alpha = 0.3f
+            binding.pbCaptureCount.alpha = 0.3f
+            
+            // Random initial direction
+            panelDx = if (java.util.Random().nextBoolean()) 1f else -1f
+            panelDy = if (java.util.Random().nextBoolean()) 1f else -1f
+            
+            movementHandler.removeCallbacks(movementRunnable)
+            movementHandler.post(movementRunnable)
         }
     }
 
@@ -124,6 +173,25 @@ class MainActivity : AppCompatActivity(),
             if (binding.powerSaveOverlay.visibility == View.VISIBLE) {
                 binding.powerSaveOverlay.visibility = View.GONE
                 resumePreview()
+                
+                // Reset panel UI
+                val whiteColor = Color.WHITE
+                val grayColor = Color.parseColor("#CCCCCC")
+                binding.tvAutoCaptureTitle.setTextColor(whiteColor)
+                binding.tvTotalProgress.setTextColor(grayColor)
+                binding.tvNextCapture.setTextColor(grayColor)
+                binding.tvCaptureCount.setTextColor(grayColor)
+                binding.btnStopAutoCapture.setTextColor(whiteColor)
+                
+                binding.pbTotalProgress.alpha = 1.0f
+                binding.pbNextCapture.alpha = 1.0f
+                binding.pbCaptureCount.alpha = 1.0f
+                
+                movementHandler.removeCallbacks(movementRunnable)
+                
+                // Reset panel position
+                binding.autoCapturePanel.translationX = 0f
+                binding.autoCapturePanel.translationY = 0f
             }
         }
     }
