@@ -21,6 +21,7 @@ class GestureManager(
         fun onSingleTap(x: Float, y: Float)
         fun onLongPress()
         fun onZoomChanged(scale: Float)
+        fun onScroll(distanceX: Float, distanceY: Float)
     }
 
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
@@ -31,6 +32,11 @@ class GestureManager(
 
         override fun onLongPress(e: MotionEvent) {
             listener.onLongPress()
+        }
+
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+            listener.onScroll(distanceX, distanceY)
+            return true
         }
     })
 

@@ -727,10 +727,39 @@ class MainActivity : AppCompatActivity(),
         showToast(if (isAeAfLocked) getString(R.string.ae_af_locked) else getString(R.string.ae_af_unlocked))
         applyPhotoParamsToPreview() 
     }
-    override fun onZoomChanged(scale: Float) { 
+    override fun onZoomChanged(scale: Float) {
         aspectController.setCropScale(scale)
         preferenceManager.saveFloat(PreferenceManager.KEY_ZOOM_SCALE, aspectController.getCropScale())
-        updateCropOverlayUI() 
+        updateCropOverlayUI()
+    }
+
+    private var accumulatedScrollY = 0f
+    override fun onScroll(distanceX: Float, distanceY: Float) {
+        // 只有当对焦环（黄圈）可见时，才允许滑动调节 EV
+        if (binding.viewFocusRing.visibility != View.VISIBLE) return
+
+        accumulatedScrollY += distanceY
+        val threshold = 50f // 灵敏度阈值
+        if (Math.abs(accumulatedScrollY) > threshold) {
+            val steps = (accumulatedScrollY / threshold).toInt()
+            adjustEvBySteps(steps)
+            accumulatedScrollY %= threshold
+        }
+    }
+
+    private fun adjustEvBySteps(steps: Int) {
+        val state = viewModel.photoParamState.value
+        val currentEv = state.ev.displayValue.toFloatOrNull() ?: 0f
+        val stepSize = cameraCapabilities.aeCompensationStep ?: 0.1f
+        val newEvVal = currentEv + (steps * stepSize)
+        
+        val range = cameraCapabilities.aeCompensationRange
+        val step = cameraCapabilities.aeCompensationStep
+        if (range != null && step != null && step > 0f) {
+            val index = Math.round(newEvVal / step).coerceIn(range.lower, range.upper)
+            val finalEvStr = String.format(java.util.Locale.US, "%+.1f", index * step)
+            onParamManualStep(ParamKey.EV, finalEvStr)
+        }
     }
     override fun showRatioPanel(anchor: View, options: List<String>, currentLabel: String, showCustom: Boolean, onSelected: (String) -> Unit) {
         uiController.showRatioPanel(anchor, options, currentLabel, showCustom, onSelected)
