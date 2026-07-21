@@ -130,21 +130,23 @@ inline float tonemap(float x) {
 
 inline uint16_t float_to_half(float f) {
     uint32_t i = *(uint32_t*)&f;
-    uint32_t s = (i >> 16) & 0x00008000;
-    int32_t e = ((i >> 23) & 0x000000ff) - (127 - 15);
-    uint32_t m = i & 0x007fffff;
-    if (e <= 0) {
-        if (e < -10) return (uint16_t)s;
-        m |= 0x00800000;
+    uint32_t s = (i >> 16) & 0x8000;
+    int32_t e = ((i >> 23) & 0xff) - 127;
+    uint32_t m = i & 0x7fffff;
+
+    if (e <= -15) {
+        if (e < -24) return (uint16_t)s;
+        m |= 0x800000;
         int32_t t = 14 - e;
-        uint32_t a = (1 << (t - 1)) - 1;
-        uint32_t b = (m >> t) & 1;
-        m = (m + a + b) >> t;
+        m >>= t;
         return (uint16_t)(s | m);
-    } else if (e >= 31) { return (uint16_t)(s | 0x7c00); }
-    uint32_t a = 0x00000fff; uint32_t b = (m >> 13) & 1;
-    m = (m + a + b) >> 13;
-    return (uint16_t)(s | (e << 10) | (m & 0x03ff));
+    } else if (e >= 16) {
+        // Prevent Infinity/NaN by clamping to max half-float value (0x7bff)
+        return (uint16_t)(s | 0x7bff);
+    }
+
+    // Normal case: safely shift and handle precision
+    return (uint16_t)(s | ((e + 15) << 10) | (m >> 13));
 }
 
 inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParams& p) {
@@ -196,11 +198,12 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
     float sat = 1.15f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
 
-    // Apply sRGB Gamma even in 16-bit path to ensure normal brightness in galleries
-    // while maintaining high precision for highlights and shadows.
-    float sR = to_srgb_f(std::clamp(rr, 0.0f, 1.0f));
-    float sG = to_srgb_f(std::clamp(gg, 0.0f, 1.0f));
-    float sB = to_srgb_f(std::clamp(bb, 0.0f, 1.0f));
+    // Apply sRGB Gamma and clamp to safe floating point range
+    // 1.0f is full white, but half-float can technically go much higher.
+    // We clamp to a safe range to ensure the encoder never sees an "out of range" value.
+    float sR = to_srgb_f(std::clamp(rr, 0.0f, 60000.0f));
+    float sG = to_srgb_f(std::clamp(gg, 0.0f, 60000.0f));
+    float sB = to_srgb_f(std::clamp(bb, 0.0f, 60000.0f));
 
     return (uint64_t)float_to_half(sR) | ((uint64_t)float_to_half(sG) << 16) | ((uint64_t)float_to_half(sB) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
 }
