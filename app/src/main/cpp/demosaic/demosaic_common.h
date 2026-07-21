@@ -173,6 +173,7 @@ inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParam
 }
 
 inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicParams& p) {
+    float exposure = 1.0f; r *= exposure; g *= exposure; b *= exposure;
     float rr, gg, bb;
     if (p.hasCombinedCCM) {
         rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
@@ -184,10 +185,24 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
         bb = -0.05f * r - 0.65f * g + 1.70f * b;
     }
 
-    // TRUE 12-bit+ LINEAR PATH:
-    // We skip Tonemap and Gamma to preserve the full linear dynamic range.
-    // The data is stored in float16 which can represent values > 1.0 (highlights).
-    return (uint64_t)float_to_half(rr) | ((uint64_t)float_to_half(gg) << 16) | ((uint64_t)float_to_half(bb) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
+    rr = tonemap(std::max(0.0f, rr)); gg = tonemap(std::max(0.0f, gg)); bb = tonemap(std::max(0.0f, bb));
+    float peak = std::max({rr, gg, bb});
+    if (peak > 0.88f) {
+        float blend = std::min(1.0f, (peak - 0.88f) / 0.12f);
+        float gray = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
+        rr = rr * (1.0f - blend) + gray * blend; gg = gg * (1.0f - blend) + gray * blend; bb = bb * (1.0f - blend) + gray * blend;
+        rr = rr + (peak - rr) * blend * 0.8f; gg = gg + (peak - gg) * blend * 0.8f; bb = bb + (peak - bb) * blend * 0.8f;
+    }
+    float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
+    float sat = 1.0f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
+
+    // Apply sRGB Gamma even in 16-bit path to ensure normal brightness in galleries
+    // while maintaining high precision for highlights and shadows.
+    float sR = to_srgb_f(std::clamp(rr, 0.0f, 1.0f));
+    float sG = to_srgb_f(std::clamp(gg, 0.0f, 1.0f));
+    float sB = to_srgb_f(std::clamp(bb, 0.0f, 1.0f));
+
+    return (uint64_t)float_to_half(sR) | ((uint64_t)float_to_half(sG) << 16) | ((uint64_t)float_to_half(sB) << 32) | ((uint64_t)float_to_half(1.0f) << 48);
 }
 
 inline void write_pixel(const DemosaicParams& p, void* pixels, int index, float r, float g, float b) {
