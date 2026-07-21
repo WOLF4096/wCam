@@ -69,17 +69,20 @@ class CameraUiController(
         val etIntervalSec = popupView.findViewById<EditText>(R.id.et_interval_sec)
         val etIntervalDuration = popupView.findViewById<EditText>(R.id.et_interval_duration)
         val etContinuousCount = popupView.findViewById<EditText>(R.id.et_continuous_count)
+        val panelBlackScreen = popupView.findViewById<View>(R.id.panel_auto_black_screen)
+        val switchBlackScreen = popupView.findViewById<Switch>(R.id.switch_auto_black_screen)
 
         val cdX10 = preferenceManager.getInt("countdown_val_x10", 0)
         seekbarCountdown.progress = cdX10
         tvCountdownVal.text = if (cdX10 % 10 == 0) "${cdX10 / 10}s" else String.format(Locale.US, "%.1fs", cdX10 / 10f)
 
         val autoMode = preferenceManager.getString("auto_capture_mode", "None")
-        updateAutoModeSelection(autoMode, segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+        updateAutoModeSelection(autoMode, segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous, panelBlackScreen)
         
         etIntervalSec.setText(preferenceManager.getString("auto_interval_sec", "5"))
         etIntervalDuration.setText(preferenceManager.getString("auto_interval_duration", "60"))
         etContinuousCount.setText(preferenceManager.getString("auto_continuous_count", "10"))
+        switchBlackScreen.isChecked = preferenceManager.getBoolean(com.example.wcam.PreferenceManager.KEY_AUTO_BLACK_SCREEN, false)
 
         seekbarCountdown.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -94,15 +97,19 @@ class CameraUiController(
 
         segAutoNone.setOnClickListener {
             preferenceManager.saveString("auto_capture_mode", "None")
-            updateAutoModeSelection("None", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+            updateAutoModeSelection("None", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous, panelBlackScreen)
         }
         segAutoInterval.setOnClickListener {
             preferenceManager.saveString("auto_capture_mode", "Interval")
-            updateAutoModeSelection("Interval", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+            updateAutoModeSelection("Interval", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous, panelBlackScreen)
         }
         segAutoContinuous.setOnClickListener {
             preferenceManager.saveString("auto_capture_mode", "Continuous")
-            updateAutoModeSelection("Continuous", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous)
+            updateAutoModeSelection("Continuous", segAutoNone, segAutoInterval, segAutoContinuous, panelInterval, panelContinuous, panelBlackScreen)
+        }
+
+        switchBlackScreen.setOnCheckedChangeListener { _, isChecked ->
+            preferenceManager.saveBoolean(com.example.wcam.PreferenceManager.KEY_AUTO_BLACK_SCREEN, isChecked)
         }
 
         etIntervalSec.addTextChangedListener(object : android.text.TextWatcher {
@@ -125,12 +132,13 @@ class CameraUiController(
         popupWindow.showAsDropDown(anchor, 0, 10)
     }
 
-    private fun updateAutoModeSelection(mode: String, none: TextView, interval: TextView, continuous: TextView, panelI: View, panelC: View) {
+    private fun updateAutoModeSelection(mode: String, none: TextView, interval: TextView, continuous: TextView, panelI: View, panelC: View, panelB: View) {
         none.isSelected = mode == "None"
         interval.isSelected = mode == "Interval"
         continuous.isSelected = mode == "Continuous"
         panelI.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
         panelC.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
+        panelB.visibility = if (mode != "None") View.VISIBLE else View.GONE
     }
 
     fun showRatioPanel(anchor: View, options: List<String>, currentLabel: String, showCustom: Boolean, onSelected: (String) -> Unit) {

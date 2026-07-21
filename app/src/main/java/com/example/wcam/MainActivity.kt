@@ -100,7 +100,6 @@ class MainActivity : AppCompatActivity(),
         runOnUiThread {
             binding.powerSaveOverlay.visibility = View.VISIBLE
             coordinator.pausePreview()
-            showToast("已进入省电模式（黑屏）")
         }
     }
 
@@ -109,7 +108,6 @@ class MainActivity : AppCompatActivity(),
             if (binding.powerSaveOverlay.visibility == View.VISIBLE) {
                 binding.powerSaveOverlay.visibility = View.GONE
                 resumePreview()
-                showToast("已恢复预览")
             }
         }
     }

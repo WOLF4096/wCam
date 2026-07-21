@@ -99,11 +99,6 @@ class SettingsActivity : AppCompatActivity() {
         }
         binding.etWmCustom.addTextChangedListener { preferenceManager.saveString("wm_custom_text", it.toString()) }
 
-        // Automation
-        binding.switchAutoBlackScreen.setOnCheckedChangeListener { _, isChecked ->
-            preferenceManager.saveBoolean(PreferenceManager.KEY_AUTO_BLACK_SCREEN, isChecked)
-        }
-
         // Camera Info
         binding.btnGetCameraInfo.setOnClickListener { getCameraDetailedInfo() }
         
@@ -372,9 +367,6 @@ class SettingsActivity : AppCompatActivity() {
 
         // Histogram
         binding.switchHistogram.isChecked = preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false)
-
-        // Automation
-        binding.switchAutoBlackScreen.isChecked = preferenceManager.getBoolean(PreferenceManager.KEY_AUTO_BLACK_SCREEN, false)
 
         // Watermark
         selectWmMode(preferenceManager.getString("wm_mode", "None"))
