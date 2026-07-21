@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity(),
         "JPG直出\n(开发中)",
         "高速连拍\n(开发中)",
         "RAW录制\n(开发中)",
-        "视频录制",
+        "视频录制\n(开发中)",
         "高速视频\n(开发中)"
     )
     private var currentModeIndex = 0
