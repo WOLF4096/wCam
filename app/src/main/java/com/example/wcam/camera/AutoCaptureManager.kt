@@ -58,7 +58,12 @@ class AutoCaptureManager(
             val l = listener ?: return
             if (mode == "Interval") {
                 val now = System.currentTimeMillis()
-                val elapsed = (now - startTime).coerceAtMost(durationMs)
+                val elapsed = now - startTime
+                if (elapsed >= durationMs) {
+                    l.onIntervalUpdate(durationMs, durationMs, 0, intervalMs)
+                    stop()
+                    return
+                }
                 val nextIn = (nextCaptureTime - now).coerceAtLeast(0)
                 l.onIntervalUpdate(elapsed, durationMs, nextIn, intervalMs)
             } else if (mode == "Continuous") {
