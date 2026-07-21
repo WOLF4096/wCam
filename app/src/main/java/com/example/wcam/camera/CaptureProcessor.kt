@@ -186,9 +186,8 @@ class CaptureProcessor(
             val exifBytes = extractExifBytes(finalBitmap.width, finalBitmap.height, characteristics, captureResult, location)
             
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                // To achieve the highest possible quality for HEIF:
-                // We use INPUT_MODE_BITMAP with an RGBA_F16 bitmap.
-                val heifQuality = quality
+                // Boost HEIF quality by 5% over the UI slider to counter HEVC's aggressive smoothing.
+                val heifQuality = (quality + 5).coerceAtMost(100)
 
                 val builder = HeifWriter.Builder(pfd.fileDescriptor, finalBitmap.width, finalBitmap.height, HeifWriter.INPUT_MODE_BITMAP)
                     .setQuality(heifQuality)

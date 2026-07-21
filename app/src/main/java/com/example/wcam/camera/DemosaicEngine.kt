@@ -77,9 +77,8 @@ object DemosaicEngine {
         
         val config = if (highBitDepth) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
         
-        // Use Display P3 for both paths to ensure consistent brightness.
-        // The NDK now handles Gamma application for the 16-bit path to look "normal".
-        val colorSpace = android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.DISPLAY_P3)
+        // Match the exact Gamma curve from NDK (sRGB) to avoid system re-sampling blur.
+        val colorSpace = android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)
         val bitmap = Bitmap.createBitmap(resW, resH, config, true, colorSpace)
         
         val pixelSize = if (highBitDepth) 8 else 4

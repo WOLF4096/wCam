@@ -168,7 +168,7 @@ inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParam
         rr = rr + (peak - rr) * blend * 0.8f; gg = gg + (peak - gg) * blend * 0.8f; bb = bb + (peak - bb) * blend * 0.8f;
     }
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.0f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
+    float sat = 1.15f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
     return 0xFF000000 | (to_srgb(bb) << 16) | (to_srgb(gg) << 8) | to_srgb(rr);
 }
 
@@ -194,7 +194,7 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
         rr = rr + (peak - rr) * blend * 0.8f; gg = gg + (peak - gg) * blend * 0.8f; bb = bb + (peak - bb) * blend * 0.8f;
     }
     float luma = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
-    float sat = 1.0f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
+    float sat = 1.15f; rr = luma + sat * (rr - luma); gg = luma + sat * (gg - luma); bb = luma + sat * (bb - luma);
 
     // Apply sRGB Gamma even in 16-bit path to ensure normal brightness in galleries
     // while maintaining high precision for highlights and shadows.
