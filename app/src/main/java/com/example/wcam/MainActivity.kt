@@ -704,6 +704,7 @@ class MainActivity : AppCompatActivity(),
 
     override fun onAutoCaptureStarted(mode: String) {
         runOnUiThread {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             binding.autoCapturePanel.visibility = View.VISIBLE
             binding.layoutIntervalProgress.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
             binding.layoutContinuousProgress.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
@@ -738,6 +739,7 @@ class MainActivity : AppCompatActivity(),
 
     override fun onAutoCaptureStopped() {
         runOnUiThread {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             powerSaveHandler.removeCallbacks(powerSaveRunnable)
             exitPowerSaveMode()
             binding.autoCapturePanel.visibility = View.GONE
