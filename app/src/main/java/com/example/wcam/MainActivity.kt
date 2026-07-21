@@ -455,6 +455,11 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun setupListeners() {
+        // 强约束核心：监听预览框的任何尺寸变化（如返回、旋转、约束更新）
+        binding.cameraPreview.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            lastStreamSize?.let { configureTransform(it.width, it.height) }
+        }
+
         binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
         binding.bottomActionBar.btnModePanel.setOnClickListener { 
             uiController.showModePanel(it, cameraModes, currentModeIndex)
@@ -522,7 +527,13 @@ class MainActivity : AppCompatActivity(),
 
     private fun updateModeUI(isPhotoMode: Boolean) {
         val set = ConstraintSet(); set.clone(binding.main)
-        set.setDimensionRatio(binding.previewContainer.id, "3:4")
+        
+        // 显式根据当前选择的比例模式应用约束
+        val ratioStr = if (isPhotoMode) selectedPhotoRatioStr else selectedVideoRatioStr
+        // 将 "4:3" 转为 "3:4" 以适配竖屏约束
+        val constraintRatio = ratioStr.split(":").reversed().joinToString(":")
+        set.setDimensionRatio(binding.previewContainer.id, constraintRatio)
+
         if (isPhotoMode) {
             uiController.updateResolutionText(binding.topToolbar.btnResolution, selectedPhotoRatioStr, selectedPhotoRatioStr != "4:3")
             binding.bottomActionBar.btnShutter.setBackgroundResource(R.drawable.bg_shutter_modern)
@@ -533,6 +544,9 @@ class MainActivity : AppCompatActivity(),
             overlayController.setCropOverlayVisible(false)
         }
         set.applyTo(binding.main)
+        
+        // 关键：布局应用后，强制重刷一次 Matrix
+        lastStreamSize?.let { configureTransform(it.width, it.height) }
     }
 
     private fun openCamera() {
@@ -596,35 +610,52 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun configureTransform(viewWidth: Int, viewHeight: Int) {
-        val matrix = android.graphics.Matrix()
-        val viewW = binding.cameraPreview.width.toFloat()
-        val viewH = binding.cameraPreview.height.toFloat()
-        
-        if (viewW <= 0f || viewH <= 0f) {
-            // 如果 View 还没准备好，延迟 50ms 再试一次，防止随机拉伸
-            binding.cameraPreview.postDelayed({ configureTransform(viewWidth, viewHeight) }, 50)
-            return
+        val view = binding.cameraPreview
+        // 关键：通过 post 确保在 ConstraintLayout 彻底完成布局 pass 后再取值
+        view.post {
+            val viewW = view.width.toFloat()
+            val viewH = view.height.toFloat()
+            
+            if (viewW <= 0f || viewH <= 0f) return@post
+
+            // 强约束：清除所有基础缩放，回归 Matrix 纯净态
+            view.scaleX = 1.0f
+            view.scaleY = 1.0f
+
+            val matrix = android.graphics.Matrix()
+            
+            // 采用“长短边物理比”算法，彻底无视传感器方向干扰
+            val streamMax = Math.max(viewWidth, viewHeight).toFloat()
+            val streamMin = Math.min(viewWidth, viewHeight).toFloat()
+            val streamAspectRatio = streamMax / streamMin // 如 1.333
+            
+            val viewMax = Math.max(viewW, viewH)
+            val viewMin = Math.min(viewW, viewH)
+            val viewAspectRatio = viewMax / viewMin
+            
+            var scaleX = 1.0f
+            var scaleY = 1.0f
+
+            // 核心修复逻辑：
+            // 如果 View 的物理比例和流的物理比例不一致，说明正在经历“全屏返回”的拉伸状态
+            // 我们通过计算缩放因子，强行将画面拉回流的原始比例
+            if (Math.abs(viewAspectRatio - streamAspectRatio) > 0.001) {
+                if (viewAspectRatio > streamAspectRatio) {
+                    // 容器太“修长”（如 16:9 容器显示 4:3 流），缩小长边
+                    if (viewW < viewH) scaleY = streamAspectRatio / viewAspectRatio
+                    else scaleX = streamAspectRatio / viewAspectRatio
+                } else {
+                    // 容器太“扁”（极端情况），缩小短边
+                    if (viewW < viewH) scaleX = viewAspectRatio / streamAspectRatio
+                    else scaleY = viewAspectRatio / streamAspectRatio
+                }
+            }
+
+            matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+            view.setTransform(matrix)
+            
+            Log.d("VideoStreamDebug", "Matrix Enforced on Post: View(${viewW.toInt()}x${viewH.toInt()}) vs Stream(${viewWidth}x${viewHeight}), Scale(${scaleX}, ${scaleY})")
         }
-
-        // 还原为参考代码 docs/07200042.kt 的鲁棒算法
-        // viewHeight/viewWidth 是流的原始比例（如 1440/1920 = 0.75）
-        val streamRatio = viewHeight.toFloat() / viewWidth.toFloat()
-        val viewRatio = viewW / viewH
-        
-        var scaleX = 1.0f
-        var scaleY = 1.0f
-
-        // 核心逻辑：直接对比流比例和视图比例，补齐短板
-        if (streamRatio > viewRatio) {
-            scaleY = (viewW / streamRatio) / viewH
-        } else {
-            scaleX = (viewH * streamRatio) / viewW
-        }
-
-        matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
-        binding.cameraPreview.setTransform(matrix)
-        
-        Log.d("VideoStreamDebug", "Transform Applied: Stream(${viewWidth}x${viewHeight}), View(${viewW.toInt()}x${viewH.toInt()}), Scale(${scaleX}, ${scaleY})")
     }
 
     private fun setupParamGestures() { refreshParamViews(viewModel.photoParamState.value) }
