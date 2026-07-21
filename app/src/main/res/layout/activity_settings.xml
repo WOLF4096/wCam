@@ -254,6 +254,57 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- 3. Automation Card -->
+            <LinearLayout
+                android:id="@+id/card_automation"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_settings_card"
+                android:orientation="vertical"
+                android:padding="14dp"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="自动化拍摄"
+                    android:textColor="@color/settings_text_main"
+                    android:textSize="13sp"
+                    android:layout_marginBottom="10dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="长时间连拍黑屏显示"
+                            android:textColor="@color/settings_text_main"
+                            android:textSize="13sp" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="连拍10s后全屏显示黑色并关闭视频流以节省电量"
+                            android:textColor="@color/settings_text_main"
+                            android:textSize="10sp"
+                            android:alpha="0.6" />
+                    </LinearLayout>
+                    <Switch
+                        android:id="@+id/switch_auto_black_screen"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:thumbTint="@color/white"
+                        android:trackTint="@drawable/sl_switch_track" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- 5. Watermark Card -->
             <LinearLayout
                 android:id="@+id/card_watermark"

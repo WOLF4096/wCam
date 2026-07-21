@@ -309,6 +309,14 @@ class CameraCoordinator(
         }
     }
 
+    fun pausePreview() {
+        try {
+            captureSession?.stopRepeating()
+        } catch (e: Exception) {
+            Log.e("CameraCoordinator", "Failed to pause preview", e)
+        }
+    }
+
     fun resumePreview(callback: CameraCaptureSession.CaptureCallback) {
         val session = captureSession ?: return
         val request = previewRequestBuilder ?: return

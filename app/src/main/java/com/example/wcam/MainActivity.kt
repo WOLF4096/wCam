@@ -89,6 +89,31 @@ class MainActivity : AppCompatActivity(),
     private var cropRatio = 4f / 3f
     private var currentCropRectInSensor: Rect? = null
 
+    private val powerSaveHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val powerSaveRunnable = Runnable {
+        if (coordinator.isAutoCaptureRunning() && preferenceManager.getBoolean(PreferenceManager.KEY_AUTO_BLACK_SCREEN, false)) {
+            enterPowerSaveMode()
+        }
+    }
+
+    private fun enterPowerSaveMode() {
+        runOnUiThread {
+            binding.powerSaveOverlay.visibility = View.VISIBLE
+            coordinator.pausePreview()
+            showToast("已进入省电模式（黑屏）")
+        }
+    }
+
+    private fun exitPowerSaveMode() {
+        runOnUiThread {
+            if (binding.powerSaveOverlay.visibility == View.VISIBLE) {
+                binding.powerSaveOverlay.visibility = View.GONE
+                resumePreview()
+                showToast("已恢复预览")
+            }
+        }
+    }
+
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
         if (permissions.all { it.value }) {
             initApp()
@@ -311,7 +336,11 @@ class MainActivity : AppCompatActivity(),
 
     private fun setupListeners() {
         binding.bottomActionBar.btnShutter.setOnClickListener { coordinator.capturePhoto() }
-        binding.btnStopAutoCapture.setOnClickListener { coordinator.stopAutoCapture() }
+        binding.btnStopAutoCapture.setOnClickListener { 
+            exitPowerSaveMode()
+            coordinator.stopAutoCapture() 
+        }
+        binding.powerSaveOverlay.setOnClickListener { exitPowerSaveMode() }
         binding.topToolbar.btnFlash.setOnClickListener { cycleFlashMode() }
         binding.topToolbar.btnTimer.setOnClickListener { onTimerClick(it) }
         binding.topToolbar.btnGridLines.setOnClickListener { viewModel.setGridVisible(!viewModel.isGridVisible.value) }
@@ -587,6 +616,12 @@ class MainActivity : AppCompatActivity(),
             binding.autoCapturePanel.visibility = View.VISIBLE
             binding.layoutIntervalProgress.visibility = if (mode == "Interval") View.VISIBLE else View.GONE
             binding.layoutContinuousProgress.visibility = if (mode == "Continuous") View.VISIBLE else View.GONE
+            
+            // Start 10s timer for power saving
+            powerSaveHandler.removeCallbacks(powerSaveRunnable)
+            if (preferenceManager.getBoolean(PreferenceManager.KEY_AUTO_BLACK_SCREEN, false)) {
+                powerSaveHandler.postDelayed(powerSaveRunnable, 10000)
+            }
         }
     }
 
@@ -612,12 +647,22 @@ class MainActivity : AppCompatActivity(),
 
     override fun onAutoCaptureStopped() {
         runOnUiThread {
+            powerSaveHandler.removeCallbacks(powerSaveRunnable)
+            exitPowerSaveMode()
             binding.autoCapturePanel.visibility = View.GONE
         }
     }
     override fun onCaptureCompleted(uri: Uri?) { runOnUiThread { uri?.let { galleryController.updateRecentPhotoPreview(it) } } }
     override fun onCaptureFailed(message: String) { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); showToast(message) } }
-    override fun onReadyToResumePreview() { runOnUiThread { binding.bottomActionBar.btnShutter.isEnabled = true; uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown); resumePreview() } }
+    override fun onReadyToResumePreview() {
+        runOnUiThread {
+            binding.bottomActionBar.btnShutter.isEnabled = true
+            uiController.stopShutterCountdown(binding.bottomActionBar.pbShutterProgress, binding.bottomActionBar.tvShutterCountdown)
+            if (binding.powerSaveOverlay.visibility != View.VISIBLE) {
+                resumePreview()
+            }
+        }
+    }
     override fun onError(message: String) { showToast(message) }
     override fun getPreviewTexture(): TextureView = binding.cameraPreview
     override fun getCountdownTextView(): TextView? = binding.tvCountdownOverlay
