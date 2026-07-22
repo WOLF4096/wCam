@@ -266,12 +266,12 @@ class CaptureManager(
         }
 
         val plane = image.planes[0]
-        val cloneBuffer = ByteBuffer.allocateDirect(plane.buffer.remaining())
-        cloneBuffer.put(plane.buffer)
-        cloneBuffer.position(0)
+        // Use the Image's buffer directly to save memory. 
+        // duplicate() ensures we have an independent position/limit for this task.
+        val buffer = plane.buffer.duplicate()
 
         return CaptureTask(
-            rawBuffer = cloneBuffer,
+            rawBuffer = buffer,
             width = image.width, height = image.height,
             rowStride = plane.rowStride, pixelStride = plane.pixelStride,
             captureStartTime = timestamp,
