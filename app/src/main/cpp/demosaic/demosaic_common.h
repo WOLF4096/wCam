@@ -152,6 +152,17 @@ inline uint16_t float_to_half(float f) {
 
 inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParams& p) {
     float exposure = 1.0f; r *= exposure; g *= exposure; b *= exposure;
+
+    // --- Highlight Recovery (Channel Stealing) ---
+    float inputPeak = std::max({r, g, b});
+    if (inputPeak > 0.85f) {
+        float blend = std::min(1.0f, (inputPeak - 0.85f) / 0.15f);
+        blend = blend * blend; // Smooth transition
+        r = r * (1.0f - blend) + inputPeak * blend;
+        g = g * (1.0f - blend) + inputPeak * blend;
+        b = b * (1.0f - blend) + inputPeak * blend;
+    }
+
     float rr, gg, bb;
     if (p.hasCombinedCCM) {
         rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
@@ -186,6 +197,17 @@ inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParam
 
 inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicParams& p) {
     float exposure = 1.0f; r *= exposure; g *= exposure; b *= exposure;
+
+    // --- Highlight Recovery (Channel Stealing) ---
+    float inputPeak = std::max({r, g, b});
+    if (inputPeak > 0.85f) {
+        float blend = std::min(1.0f, (inputPeak - 0.85f) / 0.15f);
+        blend = blend * blend; // Smooth transition
+        r = r * (1.0f - blend) + inputPeak * blend;
+        g = g * (1.0f - blend) + inputPeak * blend;
+        b = b * (1.0f - blend) + inputPeak * blend;
+    }
+
     float rr, gg, bb;
     if (p.hasCombinedCCM) {
         rr = p.combinedCCM[0] * r + p.combinedCCM[1] * g + p.combinedCCM[2] * b;
