@@ -9,43 +9,7 @@
     android:background="#000000"
     tools:context=".MainActivity">
 
-    <Space
-        android:id="@+id/top_safe_zone"
-        android:layout_width="0dp"
-        android:layout_height="32dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"/>
-
-    <include
-        android:id="@+id/top_toolbar"
-        layout="@layout/layout_top_toolbar"
-        android:layout_width="0dp"
-        android:layout_height="48dp"
-        app:layout_constraintTop_toBottomOf="@id/top_safe_zone"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <include
-        android:id="@+id/bottom_action_bar"
-        layout="@layout/layout_bottom_action_bar"
-        android:layout_width="0dp"
-        android:layout_height="120dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <include
-        android:id="@+id/param_bar"
-        layout="@layout/layout_param_bar"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginBottom="16dp"
-        app:layout_constraintBottom_toTopOf="@id/bottom_action_bar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
+    <!-- 1. Preview Layer (Bottom of Z-Stack) -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/preview_container"
         android:layout_width="match_parent"
@@ -152,6 +116,44 @@
             app:layout_constraintEnd_toEndOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <!-- 2. UI Controls Layer (Top of Z-Stack) -->
+    <Space
+        android:id="@+id/top_safe_zone"
+        android:layout_width="0dp"
+        android:layout_height="32dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <include
+        android:id="@+id/top_toolbar"
+        layout="@layout/layout_top_toolbar"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        app:layout_constraintTop_toBottomOf="@id/top_safe_zone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <include
+        android:id="@+id/bottom_action_bar"
+        layout="@layout/layout_bottom_action_bar"
+        android:layout_width="0dp"
+        android:layout_height="120dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <include
+        android:id="@+id/param_bar"
+        layout="@layout/layout_param_bar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintBottom_toTopOf="@id/bottom_action_bar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <include
         android:id="@+id/lens_selector"
         layout="@layout/layout_lens_selector"
@@ -162,6 +164,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- 3. Overlays (Highest Z-Stack) -->
     <View
         android:id="@+id/power_save_overlay"
         android:layout_width="match_parent"
