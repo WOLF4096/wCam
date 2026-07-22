@@ -36,6 +36,7 @@ class PreferenceManager(context: Context) {
         const val KEY_AE_AF_LOCKED = "ae_af_locked"
         const val KEY_ZOOM_SCALE = "zoom_scale"
         const val KEY_AUTO_BLACK_SCREEN = "auto_black_screen"
+        const val KEY_ENCODING_MODE = "settings_encoding_mode" // "Linear" or "Gamma"
 
         // Manual Param Keys
         const val KEY_PARAM_EV_AUTO = "param_ev_auto"

@@ -84,6 +84,10 @@ class SettingsActivity : AppCompatActivity() {
             preferenceManager.saveBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, isChecked)
         }
 
+        // Encoding Mode
+        binding.segEncodingLinear.setOnClickListener { saveEncodingMode("Linear") }
+        binding.segEncodingGamma.setOnClickListener { saveEncodingMode("Gamma") }
+
         // Watermark
         binding.segWmNone.setOnClickListener { selectWmMode("None") }
         binding.segWmInternal.setOnClickListener { selectWmMode("Internal") }
@@ -368,6 +372,9 @@ class SettingsActivity : AppCompatActivity() {
         // Histogram
         binding.switchHistogram.isChecked = preferenceManager.getBoolean(PreferenceManager.KEY_HISTOGRAM_VISIBLE, false)
 
+        val encodingMode = preferenceManager.getString(PreferenceManager.KEY_ENCODING_MODE, "Gamma")
+        updateEncodingModeUI(encodingMode)
+
         // Watermark
         selectWmMode(preferenceManager.getString("wm_mode", "None"))
         binding.chipWmTime.isSelected = preferenceManager.getBoolean("wm_show_time", true)
@@ -430,6 +437,16 @@ class SettingsActivity : AppCompatActivity() {
         val algoKey = if (isSimple) "algo_simple_choice" else "algo_demosaic_choice"
         val fallback = if (isSimple) "RGB通道" else "Fast"
         preferenceManager.saveString(PreferenceManager.KEY_DEMOSAIC_ALGO, preferenceManager.getString(algoKey, fallback))
+    }
+
+    private fun saveEncodingMode(mode: String) {
+        preferenceManager.saveString(PreferenceManager.KEY_ENCODING_MODE, mode)
+        updateEncodingModeUI(mode)
+    }
+
+    private fun updateEncodingModeUI(mode: String) {
+        binding.segEncodingLinear.isSelected = (mode == "Linear")
+        binding.segEncodingGamma.isSelected = (mode == "Gamma")
     }
 
     private fun selectAlgoInGrid(grid: GridLayout, name: String) {

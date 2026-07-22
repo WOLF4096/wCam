@@ -33,7 +33,8 @@ object DemosaicEngine {
         cropWidth: Int,
         cropHeight: Int,
         rotation: Int,
-        highBitDepth: Boolean 
+        highBitDepth: Boolean,
+        useLinear: Boolean
     )
 
     fun processFromBuffer(
@@ -53,7 +54,8 @@ object DemosaicEngine {
         lscStrength: Float = 0.0f,
         cropRect: android.graphics.Rect? = null,
         rotation: Int = 0,
-        highBitDepth: Boolean = false
+        highBitDepth: Boolean = false,
+        useLinear: Boolean = false
     ): Bitmap {
         val cRect = cropRect ?: android.graphics.Rect(0, 0, width, height)
         val left = (cRect.left.coerceIn(0, width - 2) / 2) * 2
@@ -93,7 +95,7 @@ object DemosaicEngine {
                 bayerPattern, blackLevel, whiteLevel,
                 lscStrength,
                 left, top, rawCropW, rawCropH, rotation,
-                highBitDepth
+                highBitDepth, useLinear
             )
             outputBuffer.rewind()
             bitmap.copyPixelsFromBuffer(outputBuffer)

@@ -37,6 +37,7 @@ struct DemosaicParams {
     float opticalCenterY;
     float maxDistSq;
     bool highBitDepth;
+    bool useLinear;
 };
 
 extern float gamma_lut[1024];
@@ -161,6 +162,15 @@ inline uint32_t rgb_to_pixel_8bit(float r, float g, float b, const DemosaicParam
         gg = -0.25f * r + 1.55f * g - 0.30f * b;
         bb = -0.05f * r - 0.65f * g + 1.70f * b;
     }
+
+    if (p.useLinear) {
+        // Skip tonemapping and gamma for linear output
+        return 0xFF000000 |
+               ((uint32_t)std::clamp(bb * 255.0f, 0.0f, 255.0f) << 16) |
+               ((uint32_t)std::clamp(gg * 255.0f, 0.0f, 255.0f) << 8) |
+                (uint32_t)std::clamp(rr * 255.0f, 0.0f, 255.0f);
+    }
+
     rr = tonemap(std::max(0.0f, rr)); gg = tonemap(std::max(0.0f, gg)); bb = tonemap(std::max(0.0f, bb));
     float peak = std::max({rr, gg, bb});
     if (peak > 0.88f) {
@@ -185,6 +195,14 @@ inline uint64_t rgb_to_pixel_16bit(float r, float g, float b, const DemosaicPara
         rr = 1.65f * r - 0.55f * g - 0.10f * b;
         gg = -0.25f * r + 1.55f * g - 0.30f * b;
         bb = -0.05f * r - 0.65f * g + 1.70f * b;
+    }
+
+    if (p.useLinear) {
+        // Pure linear 16-bit float (scRGB style)
+        return (uint64_t)float_to_half(rr) |
+               ((uint64_t)float_to_half(gg) << 16) |
+               ((uint64_t)float_to_half(bb) << 32) |
+               ((uint64_t)float_to_half(1.0f) << 48);
     }
 
     rr = tonemap(std::max(0.0f, rr)); gg = tonemap(std::max(0.0f, gg)); bb = tonemap(std::max(0.0f, bb));

@@ -283,7 +283,8 @@ class CaptureManager(
         val wallTime = task.captureStartTime
         try {
             val demosaicStart = System.currentTimeMillis()
-            
+            val useLinear = preferenceManager.getString(PreferenceManager.KEY_ENCODING_MODE, "Gamma") == "Linear"
+
             // 8-bit Bitmap for JPEG
             var bitmap8: Bitmap? = null
             if (formats.contains("JPG")) {
@@ -293,11 +294,12 @@ class CaptureManager(
                     task.metadata.shadingMap, task.metadata.shadingMapSize,
                     task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
                     task.cropRect, task.rotationDegrees,
-                    highBitDepth = false
+                    highBitDepth = false,
+                    useLinear = useLinear
                 )
             }
 
-            // 16-bit Bitmap for HEIF
+            // 16-bit Bitmap for HEIF (Always 16-bit regardless of linear/gamma)
             var bitmap16: Bitmap? = null
             if (formats.contains("HEIF")) {
                 bitmap16 = DemosaicEngine.processFromBuffer(
@@ -306,7 +308,8 @@ class CaptureManager(
                     task.metadata.shadingMap, task.metadata.shadingMapSize,
                     task.metadata.bayerPattern, task.metadata.blackLevel, task.metadata.whiteLevel, task.metadata.lscStrength,
                     task.cropRect, task.rotationDegrees,
-                    highBitDepth = true
+                    highBitDepth = true,
+                    useLinear = useLinear
                 )
             }
             Log.d("CaptureTimer", "[$wallTime] Demosaic finished in ${System.currentTimeMillis() - demosaicStart}ms")

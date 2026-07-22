@@ -18,7 +18,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
         jfloatArray shadingMapArray, jint smWidth, jint smHeight,
         jint bayerPattern, jint blackLevel, jint whiteLevel, jfloat lscStrength,
         jint cropLeft, jint cropTop, jint cropWidth, jint cropHeight, jint rotation,
-        jboolean highBitDepth) {
+        jboolean highBitDepth, jboolean useLinear) {
 
     init_lut();
     uint8_t* rawData = (uint8_t*)env->GetDirectBufferAddress(buffer);
@@ -64,6 +64,7 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
     p.opticalCenterY = (float)height / 2.0f;
     p.maxDistSq = p.opticalCenterX * p.opticalCenterX + p.opticalCenterY * p.opticalCenterY;
     p.highBitDepth = highBitDepth;
+    p.useLinear = useLinear;
 
     float diff = (float)(whiteLevel - blackLevel);
     p.normFactor = (diff > 0) ? (1.0f / diff) : 1.0f;
