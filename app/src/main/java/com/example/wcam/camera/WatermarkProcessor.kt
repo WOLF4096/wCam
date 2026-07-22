@@ -179,8 +179,10 @@ class WatermarkProcessor {
     }
 
     private fun createCompatibleBitmap(width: Int, height: Int, sourceBitmap: Bitmap): Bitmap {
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && sourceBitmap.config == Bitmap.Config.RGBA_F16) {
-            Bitmap.createBitmap(width, height, Bitmap.Config.RGBA_F16)
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val colorSpace = sourceBitmap.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+            val config = sourceBitmap.config ?: Bitmap.Config.ARGB_8888
+            Bitmap.createBitmap(width, height, config, sourceBitmap.hasAlpha(), colorSpace)
         } else {
             Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         }

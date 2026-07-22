@@ -81,12 +81,20 @@ Java_com_example_wcam_camera_DemosaicEngine_nativeProcess(
             -0.8294890f,  1.7626641f,  0.0236247f,
              0.0358458f, -0.0761724f,  0.9568845f
         };
+        const float xyz2srgb[] = {
+             3.2404542f, -1.5371385f, -0.4985314f,
+            -0.9692660f,  1.8760108f,  0.0415560f,
+             0.0556434f, -0.2040259f,  1.0572252f
+        };
+
+        const float* targetXYZ = highBitDepth ? xyz2p3 : xyz2srgb;
+
         float mTemp[9];
         for (int i = 0; i < 3; ++i) {
             for (int j = 0; j < 3; ++j) {
-                mTemp[i * 3 + j] = xyz2p3[i * 3 + 0] * bradford[0 * 3 + j] +
-                                   xyz2p3[i * 3 + 1] * bradford[1 * 3 + j] +
-                                   xyz2p3[i * 3 + 2] * bradford[2 * 3 + j];
+                mTemp[i * 3 + j] = targetXYZ[i * 3 + 0] * bradford[0 * 3 + j] +
+                                   targetXYZ[i * 3 + 1] * bradford[1 * 3 + j] +
+                                   targetXYZ[i * 3 + 2] * bradford[2 * 3 + j];
             }
         }
         for (int i = 0; i < 3; ++i) {

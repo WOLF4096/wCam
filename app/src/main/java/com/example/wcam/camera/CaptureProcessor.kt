@@ -102,7 +102,7 @@ class CaptureProcessor(
         try {
             contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                 val exif = ExifInterface(pfd.fileDescriptor)
-                writeExifMetadata(exif, characteristics, captureResult)
+                writeExifMetadata(exif, characteristics, captureResult, isWideGamut = false)
                 
                 // 显式写入分辨率，防止扫描器识别延迟
                 exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, finalBitmap.width.toString())
@@ -253,7 +253,7 @@ class CaptureProcessor(
             dummy.recycle()
             
             val exif = ExifInterface(tempFile.absolutePath)
-            writeExifMetadata(exif, characteristics, result)
+            writeExifMetadata(exif, characteristics, result, isWideGamut = true)
             
             // Set actual dimensions to fix "1x1px" identification issue in gallery
             exif.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, width.toString())
@@ -285,7 +285,7 @@ class CaptureProcessor(
         return null
     }
 
-    private fun writeExifMetadata(exif: ExifInterface, characteristics: CameraCharacteristics?, result: TotalCaptureResult?) {
+    private fun writeExifMetadata(exif: ExifInterface, characteristics: CameraCharacteristics?, result: TotalCaptureResult?, isWideGamut: Boolean) {
         if (result == null || characteristics == null) return
 
         exif.setAttribute(ExifInterface.TAG_MAKE, Build.MANUFACTURER)
@@ -367,8 +367,8 @@ class CaptureProcessor(
         // Metering Mode (2 = Center-weighted average as default)
         exif.setAttribute(ExifInterface.TAG_METERING_MODE, "2")
         
-        // Color Space (65535 = Uncalibrated/Wide Gamut, such as Display P3)
-        exif.setAttribute(ExifInterface.TAG_COLOR_SPACE, "65535")
+        // Color Space (1 = sRGB, 65535 = Uncalibrated/Wide Gamut)
+        exif.setAttribute(ExifInterface.TAG_COLOR_SPACE, if (isWideGamut) "65535" else "1")
 
         val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
         val now = Date()
