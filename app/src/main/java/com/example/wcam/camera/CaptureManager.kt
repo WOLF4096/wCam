@@ -60,7 +60,7 @@ class CaptureManager(
     var isCaptureInProgress = false
         private set
 
-    private val MAX_PENDING_TASKS = 3 // Limit to prevent OOM
+    private val MAX_PENDING_TASKS = 12 // Increased for high-end devices with 16GB+ RAM
     private val pendingTaskCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     fun capturePhoto(camera: CameraDevice, session: CameraCaptureSession, previewSurface: Surface?) {
@@ -210,7 +210,11 @@ class CaptureManager(
                 if (formats.contains("JPG") || formats.contains("HEIF")) {
                     executeCaptureTask(task, chars, result, formats)
                 }
+            } catch (e: Exception) {
+                FileLogger.e("CaptureManager", "Background task failed", e)
             } finally {
+                // 处理完成后释放 Image，配合 CameraManager 中 maxImages=30 的设置，
+                // 即使不立即释放也能支撑大量连拍。
                 image.close()
                 pendingTaskCount.decrementAndGet()
             }

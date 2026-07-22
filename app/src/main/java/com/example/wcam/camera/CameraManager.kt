@@ -87,9 +87,8 @@ class CameraManager(
 
         if (rawImageReader == null || rawImageReader!!.width != rawWidth || rawImageReader!!.height != rawHeight) {
             rawImageReader?.close()
-            // REDUCED BUFFER COUNT: Xiaomi mid-range devices (like Note 12 Turbo) 
-            // often fail session config if RAW buffers are > 2 or 3.
-            rawImageReader = ImageReader.newInstance(rawWidth, rawHeight, ImageFormat.RAW_SENSOR, 2)
+            // High-capacity buffer for burst capture: 30 images (~750MB for 12.5MP)
+            rawImageReader = ImageReader.newInstance(rawWidth, rawHeight, ImageFormat.RAW_SENSOR, 30)
         }
         
         rawImageReader?.setOnImageAvailableListener({ reader ->
