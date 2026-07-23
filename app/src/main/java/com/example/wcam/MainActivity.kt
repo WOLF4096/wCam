@@ -528,11 +528,8 @@ class MainActivity : AppCompatActivity(),
     private fun updateModeUI(isPhotoMode: Boolean) {
         val set = ConstraintSet(); set.clone(binding.main)
         
-        // 显式根据当前选择的比例模式应用约束
-        val ratioStr = if (isPhotoMode) selectedPhotoRatioStr else selectedVideoRatioStr
-        // 将 "4:3" 转为 "3:4" 以适配竖屏约束
-        val constraintRatio = ratioStr.split(":").reversed().joinToString(":")
-        set.setDimensionRatio(binding.previewContainer.id, constraintRatio)
+        // 预览画面的比例始终不变，固定为 3:4
+        set.setDimensionRatio(binding.previewContainer.id, "3:4")
 
         if (isPhotoMode) {
             uiController.updateResolutionText(binding.topToolbar.btnResolution, selectedPhotoRatioStr, selectedPhotoRatioStr != "4:3")
