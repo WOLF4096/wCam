@@ -97,9 +97,11 @@ class HistogramView @JvmOverloads constructor(
         val step = w / 255f
         for (i in 0 until 256) {
             val x = i * step
-            // Enhanced normalization: Log-ish Square Root for better dynamic range visibility
-            val normalized = Math.sqrt(data[i].toDouble()) / Math.sqrt(maxVal.toDouble())
-            val pixelH = (normalized.toFloat() * (h - 12f)).coerceAtLeast(0f)
+            // Non-linear scaling: Power of 1.2 to suppress noise floor and highlight peaks
+            val ratio = data[i] / maxVal
+            val normalized = Math.pow(ratio.toDouble(), 1.2).toFloat()
+            
+            val pixelH = (normalized * (h - 12f)).coerceAtLeast(0f)
             val y = h - pixelH - 4f
             
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
