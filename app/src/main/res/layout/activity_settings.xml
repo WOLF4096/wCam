@@ -219,7 +219,7 @@
                     android:id="@+id/grid_algo_demosaic"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:columnCount="5"
+                    android:columnCount="4"
                     android:rowCount="2"
                     android:alignmentMode="alignBounds"
                     android:columnOrderPreserved="false"

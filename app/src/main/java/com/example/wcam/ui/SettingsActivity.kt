@@ -29,7 +29,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var preferenceManager: PreferenceManager
 
     private val simpleAlgos = listOf("RGB通道", "原始拜尔", "灰度", "亮度", "4合1", "9合1", "16合1", "4倍亮度")
-    private val demosaicAlgos = listOf("AMaZE", "RCD", "DCB", "LMMSE", "EAHD", "AHD", "VNG4", "IGV", "HPHD", "Fast")
+    private val demosaicAlgos = listOf("AMaZE", "RCD", "DCB", "LMMSE", "EAHD", "IGV", "HPHD", "Fast")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
