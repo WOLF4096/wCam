@@ -25,9 +25,12 @@ class HistogramView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
-    private var rData: IntArray? = null
-    private var gData: IntArray? = null
-    private var bData: IntArray? = null
+    // Smoothed data for rendering
+    private var rSmooth = FloatArray(256)
+    private var gSmooth = FloatArray(256)
+    private var bSmooth = FloatArray(256)
+    
+    private val temporalAlpha = 0.65f // 0.0 (no smoothing) to 1.0 (frozen)
     
     private val path = Path()
 
@@ -40,45 +43,61 @@ class HistogramView @JvmOverloads constructor(
     }
 
     fun updateData(r: IntArray, g: IntArray, b: IntArray) {
-        rData = r
-        gData = g
-        bData = b
+        // 1. Temporal Smoothing (EMA)
+        for (i in 0 until 256) {
+            rSmooth[i] = rSmooth[i] * temporalAlpha + r[i].toFloat() * (1f - temporalAlpha)
+            gSmooth[i] = gSmooth[i] * temporalAlpha + g[i].toFloat() * (1f - temporalAlpha)
+            bSmooth[i] = bSmooth[i] * temporalAlpha + b[i].toFloat() * (1f - temporalAlpha)
+        }
+        
+        // 2. Spatial Smoothing (3-tap box filter)
+        rSmooth = applySpatialSmoothing(rSmooth)
+        gSmooth = applySpatialSmoothing(gSmooth)
+        bSmooth = applySpatialSmoothing(bSmooth)
+
         postInvalidateOnAnimation()
+    }
+
+    private fun applySpatialSmoothing(data: FloatArray): FloatArray {
+        val out = FloatArray(256)
+        for (i in 0 until 256) {
+            val prev = if (i > 0) data[i - 1] else data[i]
+            val next = if (i < 255) data[i + 1] else data[i]
+            out[i] = (prev + data[i] + next) / 3f
+        }
+        return out
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val r = rData ?: return
-        val g = gData ?: return
-        val b = bData ?: return
         
         val w = width.toFloat()
         val h = height.toFloat()
         
         // Use a common max for all channels to maintain relative scale
-        val maxVal = maxOf(
-            r.maxOrNull() ?: 1,
-            g.maxOrNull() ?: 1,
-            b.maxOrNull() ?: 1
-        ).toFloat().coerceAtLeast(10f)
+        var maxVal = 10f
+        for (i in 0 until 256) {
+            maxVal = maxOf(maxVal, rSmooth[i], gSmooth[i], bSmooth[i])
+        }
 
         // Draw fills with SCREEN mode
-        drawChannel(canvas, r, rPaint, maxVal, w, h, fill = true)
-        drawChannel(canvas, g, gPaint, maxVal, w, h, fill = true)
-        drawChannel(canvas, b, bPaint, maxVal, w, h, fill = true)
+        drawChannel(canvas, rSmooth, rPaint, maxVal, w, h, fill = true)
+        drawChannel(canvas, gSmooth, gPaint, maxVal, w, h, fill = true)
+        drawChannel(canvas, bSmooth, bPaint, maxVal, w, h, fill = true)
         
         // Draw strokes on top
-        drawChannel(canvas, r, strokePaint, maxVal, w, h, fill = false)
-        drawChannel(canvas, g, strokePaint, maxVal, w, h, fill = false)
-        drawChannel(canvas, b, strokePaint, maxVal, w, h, fill = false)
+        drawChannel(canvas, rSmooth, strokePaint, maxVal, w, h, fill = false)
+        drawChannel(canvas, gSmooth, strokePaint, maxVal, w, h, fill = false)
+        drawChannel(canvas, bSmooth, strokePaint, maxVal, w, h, fill = false)
     }
 
-    private fun drawChannel(canvas: Canvas, data: IntArray, paint: Paint, maxVal: Float, w: Float, h: Float, fill: Boolean) {
+    private fun drawChannel(canvas: Canvas, data: FloatArray, paint: Paint, maxVal: Float, w: Float, h: Float, fill: Boolean) {
         path.reset()
         
         val step = w / 255f
         for (i in 0 until 256) {
             val x = i * step
+            // Enhanced normalization: Log-ish Square Root for better dynamic range visibility
             val normalized = Math.sqrt(data[i].toDouble()) / Math.sqrt(maxVal.toDouble())
             val pixelH = (normalized.toFloat() * (h - 12f)).coerceAtLeast(0f)
             val y = h - pixelH - 4f
@@ -92,7 +111,6 @@ class HistogramView @JvmOverloads constructor(
             path.close()
             canvas.drawPath(path, paint)
         } else {
-            // Just draw the line on top
             canvas.drawPath(path, paint)
         }
     }
